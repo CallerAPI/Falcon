@@ -125,6 +125,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/rules/", s.withAuth(s.handleRule))
 	mux.HandleFunc("/v1/stream", s.withAuth(s.handleStream))
 	mux.HandleFunc("/v1/reload", s.withAuth(s.handleReload))
+	mux.HandleFunc("/v1/demo", s.withAuth(s.handleDemo))
 	mux.HandleFunc("/v1/settings", s.withAuth(s.handleSettings))
 	mux.HandleFunc("/v1/audit", s.withAuth(s.handleAudit))
 	mux.HandleFunc("/v1/alerts", s.withAuth(s.handleAlerts))
@@ -742,11 +743,15 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"raw_sip_stored": s.Cfg.StoreRawSIP,
 		"thresholds":     map[string]int{"flag": s.Engine.Thresh.Flag, "challenge": s.Engine.Thresh.Challenge, "reject": s.Engine.Thresh.Reject},
 		"spam_feed": map[string]any{
-			"configured": s.Cfg.FeedEnabled(),
+			"configured": s.Cfg.FeedEnabled() || (s.Cfg.Demo && s.Cfg.DemoProfile == "paid" && feedCount > 0),
 			"count":      feedCount,
 			"loaded_at":  feedAt,
 			"error":      feedErr,
 			"upsell_url": s.Cfg.UpsellFeedURL,
+		},
+		"demo": map[string]any{
+			"enabled": s.Cfg.Demo,
+			"profile": s.Cfg.DemoProfile,
 		},
 		"voice_firewall": map[string]any{
 			"configured": s.Cfg.FirewallEnabled(),

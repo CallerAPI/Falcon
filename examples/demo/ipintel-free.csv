@@ -1,0 +1,8 @@
+cidr,provider,risk,tags,source
+18.136.0.0/13,Datacenter,suspicious,datacenter|cloud,fraud
+3.0.0.0/8,Datacenter,suspicious,datacenter|cloud,fraud
+13.0.0.0/8,Datacenter,suspicious,datacenter|cloud,fraud
+4.150.0.0/16,VoIP abuse,block,voip|datacenter,fraud
+5.62.60.0/22,VoIP abuse,block,voip|datacenter,fraud
+121.244.0.0/16,Datacenter,suspicious,datacenter,fraud
+162.211.102.0/24,Datacenter,suspicious,datacenter,fraud

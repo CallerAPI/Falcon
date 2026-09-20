@@ -92,6 +92,16 @@ func (t *Table) Enabled() bool {
 	return t != nil && (t.FilePath != "" || t.URL != "")
 }
 
+// SetFile points the table at a local CSV. Call Load after.
+func (t *Table) SetFile(path string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.FilePath = strings.TrimSpace(path)
+	t.mu.Unlock()
+}
+
 // Lookup returns the longest matching row for ip.
 func (t *Table) Lookup(ip string) (Match, bool) {
 	if t == nil {

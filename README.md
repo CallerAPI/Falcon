@@ -368,9 +368,8 @@ The table is a CSV of CIDR blocks:
 
 ```
 cidr,provider,risk,tags,source
-203.0.113.0/24,Example Wholesale,neutral,carrier|us,local
-203.0.113.128/25,Example Gateway LLC,hostile,gateway|attest-c,local
-198.51.100.7,Known Scanner Host,block,scanner,local
+18.139.118.128/27,8x8 Inc,trusted,official|voice,provider
+4.150.191.0/24,Unregistered cloud voice,block,voip,fraud
 ```
 
 `risk` is `trusted`, `neutral`, `suspicious`, `hostile`, or `block`. A `block`
@@ -379,13 +378,17 @@ wins. A bare IP is a `/32`.
 
 ```
 FALCON_IP_INTEL_FILE=/data/ipintel.csv
-FALCON_IP_INTEL_URL=https://example.com/ipintel.csv
+FALCON_IP_INTEL_URL=https://api.callerapi.com/api/ip-intel/v1/list.csv
 FALCON_IP_INTEL_REFRESH=1h
 ```
 
 Load a file, a URL, or both. A local row overrides a hosted one. With a
-CallerAPI key, `FALCON_IP_INTEL=true` loads the hosted table. The switch gets
-`X-Falcon-Provider`. A starter file is in `examples/ipintel.csv`.
+CallerAPI key, `FALCON_IP_INTEL=true` loads the hosted table. A key alone
+gets the fraud list. The provider overlay needs the admin switch. The switch
+gets `X-Falcon-Provider`. A starter file is in `examples/ipintel.csv`.
+
+Zoom walkthrough: `falcon demo seed`, then `FALCON_DEMO=true` and
+`falcon demo swap paid`. See `examples/demo/README.md`.
 
 ## Lists
 
