@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/hero.png" alt="CallerAPI Falcon" width="100%">
+  <img src="images/hero.webp" alt="CallerAPI Falcon" width="100%">
 </p>
 
 # CallerAPI Falcon
