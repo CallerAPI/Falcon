@@ -48,7 +48,8 @@ button { font: inherit; color: inherit; }
 /* Sidebar */
 .side { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; padding: 18px 14px; border-right: 1px solid var(--line); background: var(--bg-2); }
 .brand { display: flex; align-items: center; gap: 10px; padding: 6px 8px 18px; }
-.mark { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: linear-gradient(135deg, var(--accent), #8b5cf6); color: #fff; box-shadow: 0 6px 18px rgba(99, 102, 241, 0.35); }
+.mark { width: 36px; height: 36px; display: grid; place-items: center; }
+.mark img { width: 32px; height: 32px; display: block; }
 .brand-text { display: flex; flex-direction: column; line-height: 1.1; }
 .brand-text strong { font-size: 16px; letter-spacing: 0.01em; }
 .brand-text small { color: var(--muted); font-size: 11px; margin-top: 3px; }

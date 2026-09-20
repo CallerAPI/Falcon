@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="images/hero.png" alt="CallerAPI Falcon" width="100%">
+</p>
+
 # CallerAPI Falcon
 
 Falcon is a SIP risk engine that runs next to your switch. It reads each
