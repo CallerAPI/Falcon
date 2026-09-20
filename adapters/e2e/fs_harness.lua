@@ -30,13 +30,16 @@ end
 local function run(caller, callee)
   local vars = {
     sip_invite_method = "INVITE",
-    sip_req_uri = callee .. "@carrier.example",
+    sip_req_uri = "sip:" .. callee .. "@carrier.example",
     network_addr = "203.0.113.9",
-    sip_from_uri = caller .. "@203.0.113.9",
-    sip_to_uri = callee .. "@carrier.example",
+    sip_from_uri = "sip:" .. caller .. "@203.0.113.9",
+    sip_to_uri = "sip:" .. callee .. "@carrier.example",
     sip_call_id = "fs-e2e-" .. caller .. "@203.0.113.9",
     sip_user_agent = "e2e-harness/1.0",
-    sip_contact_uri = caller .. "@203.0.113.9",
+    sip_contact_uri = "sip:" .. caller .. "@203.0.113.9",
+    sip_h_From = "<sip:" .. caller .. "@203.0.113.9>;tag=1",
+    sip_h_To = "<sip:" .. callee .. "@carrier.example>",
+    ["sip_h_Max-Forwards"] = "70",
   }
   local set, hung = {}, nil
   _G.session = {

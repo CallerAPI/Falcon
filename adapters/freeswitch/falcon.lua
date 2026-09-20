@@ -8,6 +8,18 @@ local function hdr(name)
   return session:getVariable("sip_h_" .. name) or ""
 end
 
+-- Falcon's SIP parser only extracts numbers from sip:, sips:, or tel:
+-- URIs. Channel variables sometimes omit the scheme.
+local function asSIP(v)
+  if v == nil or v == "" then
+    return ""
+  end
+  if v:find("[Ss][Ii][Pp][Ss]?:") or v:find("[Tt][Ee][Ll]:") then
+    return v
+  end
+  return "sip:" .. v
+end
+
 -- Direction and customer. Set falcon_direction=outbound and
 -- falcon_customer=<account id> in the dialplan for calls your own
 -- customers place; Falcon then checks the caller id against the numbers
@@ -20,16 +32,16 @@ local payload = {
   direction = direction,
   customer = customer,
   method = session:getVariable("sip_invite_method") or "INVITE",
-  request_uri = session:getVariable("sip_req_uri") or "",
+  request_uri = asSIP(session:getVariable("sip_req_uri") or ""),
   source_ip = session:getVariable("network_addr") or "",
   headers = {
-    From = hdr("From") ~= "" and hdr("From") or (session:getVariable("sip_from_uri") or ""),
-    To = hdr("To") ~= "" and hdr("To") or (session:getVariable("sip_to_uri") or ""),
+    From = asSIP(hdr("From") ~= "" and hdr("From") or (session:getVariable("sip_from_uri") or "")),
+    To = asSIP(hdr("To") ~= "" and hdr("To") or (session:getVariable("sip_to_uri") or "")),
     ["Call-ID"] = session:getVariable("sip_call_id") or "",
     ["User-Agent"] = session:getVariable("sip_user_agent") or "",
     ["P-Asserted-Identity"] = hdr("P-Asserted-Identity"),
     Identity = hdr("Identity"),
-    Contact = session:getVariable("sip_contact_uri") or "",
+    Contact = asSIP(session:getVariable("sip_contact_uri") or ""),
     ["Max-Forwards"] = hdr("Max-Forwards"),
   },
 }
