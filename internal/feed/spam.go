@@ -58,6 +58,27 @@ func (s *Spam) Contains(num string) bool {
 	return ok
 }
 
+// LoadNumbers replaces the in-memory set. Used by the Zoom demo swap.
+func (s *Spam) LoadNumbers(nums []string) {
+	if s == nil {
+		return
+	}
+	next := make(map[string]struct{}, len(nums)*2)
+	for _, raw := range nums {
+		n := normalize(raw)
+		if n == "" {
+			continue
+		}
+		next[n] = struct{}{}
+		next[strings.TrimPrefix(n, "+")] = struct{}{}
+	}
+	s.mu.Lock()
+	s.numbers = next
+	s.loadedAt = time.Now().UTC()
+	s.lastErr = ""
+	s.mu.Unlock()
+}
+
 func (s *Spam) Status() (count int, loadedAt time.Time, lastErr string) {
 	if s == nil {
 		return 0, time.Time{}, ""

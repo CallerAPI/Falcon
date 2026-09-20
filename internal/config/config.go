@@ -119,6 +119,11 @@ type Config struct {
 
 	UpsellFeedURL     string
 	UpsellFirewallURL string
+
+	// Demo enables the Zoom profile swap (POST /v1/demo and falcon demo).
+	Demo        bool
+	DemoDir     string
+	DemoProfile string
 }
 
 func Load() Config {
@@ -201,6 +206,10 @@ func Load() Config {
 
 		UpsellFeedURL:     env("FALCON_UPSELL_FEED_URL", "https://callerapi.com"),
 		UpsellFirewallURL: env("FALCON_UPSELL_FIREWALL_URL", "https://callerapi.com/sip-firewall"),
+
+		Demo:        envBool("FALCON_DEMO", false),
+		DemoDir:     env("FALCON_DEMO_DIR", ""),
+		DemoProfile: env("FALCON_DEMO_PROFILE", "free"),
 	}
 }
 
@@ -271,6 +280,7 @@ func (c Config) Redacted() map[string]any {
 			"assistant": map[string]any{"provider": c.AssistantProvider, "base": c.AssistantBaseURL, "model": c.AssistantModel, "key": set(c.AssistantAPIKey)},
 			"behaviour": map[string]any{"fanout_per_hour": c.FanoutPerHour, "sequential_n": c.SequentialN}, "feed_refresh": c.FeedRefresh.String()},
 		"ip_intel":       map[string]any{"enabled": c.IPIntelEnabled(), "file": c.IPIntelFile, "url": c.IPIntelSource(), "refresh": c.IPIntelRefresh.String()},
+		"demo":           map[string]any{"enabled": c.Demo, "dir": c.DemoDir, "profile": c.DemoProfile},
 		"shaken":         map[string]any{"enabled": c.Shaken, "ca_url": c.ShakenCAURL, "ca_file": c.ShakenCAFile, "crl_url": c.ShakenCRLURL, "budget": c.ShakenBudget.String(), "allow_http": c.ShakenAllowHTTP, "verify_list": c.ShakenVerifyList, "pa_pin": set(c.ShakenPAPin), "pa_root_file": c.ShakenPARootFile},
 		"retention_days": c.RetentionDays,
 		"raw_sip":        map[string]any{"stored": c.StoreRawSIP, "retention_days": c.RawSIPRetentionDays},

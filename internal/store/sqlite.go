@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,20 +24,72 @@ type SQLite struct {
 }
 
 func OpenSQLite(path string) (*SQLite, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	s := &SQLite{db: db}
-	if err := s.migrate(); err != nil {
-		_ = db.Close()
+	s := &SQLite{}
+	if err := s.open(path); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+func (s *SQLite) open(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	if err != nil {
+		return err
+	}
+	db.SetMaxOpenConns(1)
+	s.db = db
+	if err := s.migrate(); err != nil {
+		_ = db.Close()
+		s.db = nil
+		return err
+	}
+	return nil
+}
+
+// Checkpoint flushes WAL so a copy of the file is complete.
+func (s *SQLite) Checkpoint() error {
+	if s.db == nil {
+		return nil
+	}
+	_, err := s.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+	return err
+}
+
+// ReplaceFile closes the current file, copies src onto dest, and opens dest.
+func (s *SQLite) ReplaceFile(src, dest string) error {
+	if s.db != nil {
+		_ = s.Checkpoint()
+		if err := s.db.Close(); err != nil {
+			return err
+		}
+		s.db = nil
+	}
+	for _, p := range []string{dest, dest + "-wal", dest + "-shm"} {
+		_ = os.Remove(p)
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	out, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return s.open(dest)
 }
 
 const eventColumns = `id, received_at, action, risk_score, source_ip, from_num, to_num, call_id, user_agent, attest,

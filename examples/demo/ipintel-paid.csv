@@ -1,0 +1,183 @@
+cidr,provider,risk,tags,source
+137.192.1.0/24,"ANPI Business, LLC",trusted,official|voice|gateway|intermediate|stir-complete,provider
+137.192.1.0/24,"ANPI, LLC",trusted,official|voice|gateway|intermediate|stir-complete,provider
+137.192.1.0/24,"Inteliquent, Inc.",trusted,official|voice|gateway|intermediate|stir-complete,provider
+137.192.1.0/24,"Onvoy Spectrum, LLC",trusted,official|voice|gateway|intermediate|stir-complete,provider
+137.192.1.0/24,"Onvoy, LLC",trusted,official|voice|gateway|intermediate|stir-complete,provider
+137.192.1.0/24,"Voyant Communications, LLC",trusted,official|voice|gateway|intermediate|stir-complete,provider
+137.192.1.0/24,"Voyant Solutions, LLC",trusted,official|voice|gateway|intermediate|stir-complete,provider
+198.174.211.0/24,"ANPI Business, LLC",trusted,official|voice|gateway|intermediate|stir-complete,provider
+198.174.211.0/24,"ANPI, LLC",trusted,official|voice|gateway|intermediate|stir-complete,provider
+198.174.211.0/24,"Inteliquent, Inc.",trusted,official|voice|gateway|intermediate|stir-complete,provider
+198.174.211.0/24,"Onvoy Spectrum, LLC",trusted,official|voice|gateway|intermediate|stir-complete,provider
+198.174.211.0/24,"Onvoy, LLC",trusted,official|voice|gateway|intermediate|stir-complete,provider
+198.174.211.0/24,"Voyant Communications, LLC",trusted,official|voice|gateway|intermediate|stir-complete,provider
+198.174.211.0/24,"Voyant Solutions, LLC",trusted,official|voice|gateway|intermediate|stir-complete,provider
+18.139.118.128/27,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+101.227.59.128/27,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+121.244.203.192/27,"Zoom Voice Communications, Inc.",trusted,official|voice|stir-complete,provider
+23.167.192.0/24,"Impact Telecom, LLC",neutral,voice|gateway|intermediate|stir-complete,provider
+135.84.127.0/24,Piratel llc,neutral,voice|gateway|intermediate|stir-complete,provider
+23.167.192.0/24,Versatel LLC,neutral,voice|gateway|intermediate|stir-complete,provider
+162.211.102.0/24,9053-6590 QUEBEC INC.,suspicious,voice|foreign|stir-none,provider
+162.211.102.0/24,9171-5573 Quebec Inc,suspicious,voice|foreign|stir-complete,provider
+162.211.102.0/24,9311-8560 QUEBEC INC,suspicious,voice|foreign|stir-none,provider
+162.211.102.0/24,9326-9108 QUEBEC INC.,suspicious,voice|foreign|stir-none,provider
+8.28.0.0/22,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+3.9.41.96/27,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+3.9.159.0/27,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+8.5.248.0/23,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+3.80.20.0/25,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+3.80.20.0/25,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+8.5.128.0/24,"Zoom Voice Communications, Inc.",trusted,official|voice|stir-complete,provider
+3.14.30.96/27,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+3.44.193.0/27,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+8.21.164.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+3.7.35.128/25,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+3.7.35.128/25,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+156.45.0.0/17,"Zoom Voice Communications, Inc.",trusted,official|voice|stir-complete,provider
+50.100.15.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+63.209.12.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+66.81.216.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+66.81.220.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+109.70.58.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+109.70.59.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+132.226.0.0/26,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+152.67.21.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+152.67.22.0/26,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+192.84.16.0/22,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+209.94.72.0/22,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+206.144.2.0/24,"Inteliquent, Inc.",trusted,official|voice|gateway|intermediate|stir-complete,provider
+64.16.226.0/24,"Telnyx, LLC",trusted,official|voice|stir-complete,provider
+64.16.227.0/24,"Telnyx, LLC",trusted,official|voice|stir-complete,provider
+64.16.228.0/24,"Telnyx, LLC",trusted,official|voice|stir-complete,provider
+64.16.229.0/24,"Telnyx, LLC",trusted,official|voice|stir-complete,provider
+64.16.230.0/24,"Telnyx, LLC",trusted,official|voice|stir-complete,provider
+64.16.239.0/24,"Telnyx, LLC",trusted,official|voice|stir-complete,provider
+64.16.248.0/24,"Telnyx, LLC",trusted,official|voice|stir-complete,provider
+64.16.249.0/24,"Telnyx, LLC",trusted,official|voice|stir-complete,provider
+3.25.42.128/25,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+13.56.21.64/26,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+44.234.69.0/25,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+52.59.186.0/27,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+52.66.194.0/26,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+54.172.60.0/23,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+54.244.51.0/24,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+198.24.47.0/26,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+3.25.42.128/25,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+13.56.21.64/26,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+44.234.69.0/25,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+52.59.186.0/27,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+52.66.194.0/26,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+54.172.60.0/23,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+54.244.51.0/24,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+198.24.47.0/26,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+216.147.0.0/18,Vonage America LLC,trusted,official|voice|stir-complete,provider
+216.147.0.0/18,Vonage Business Inc.,trusted,official|voice|stir-complete,provider
+216.147.0.0/18,Vonage Holdings Corp.,trusted,official|voice|stir-complete,provider
+64.224.32.0/19,"Zoom Voice Communications, Inc.",trusted,official|voice|stir-complete,provider
+134.224.0.0/16,"Zoom Voice Communications, Inc.",trusted,official|voice|stir-complete,provider
+144.195.0.0/16,"Zoom Voice Communications, Inc.",trusted,official|voice|stir-complete,provider
+149.137.0.0/17,"Zoom Voice Communications, Inc.",trusted,official|voice|stir-complete,provider
+159.124.0.0/16,"Zoom Voice Communications, Inc.",trusted,official|voice|stir-complete,provider
+170.114.0.0/16,"Zoom Voice Communications, Inc.",trusted,official|voice|stir-complete,provider
+206.247.0.0/16,"Zoom Voice Communications, Inc.",trusted,official|voice|stir-complete,provider
+3.106.23.128/27,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+3.123.12.160/27,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+3.219.176.32/27,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+64.95.100.96/28,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+91.236.117.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+129.151.79.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+129.159.80.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+129.159.81.0/26,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+130.61.162.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+130.61.163.0/25,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+152.67.22.64/26,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+152.67.144.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+152.67.145.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+152.67.146.0/26,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+152.67.181.0/26,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+158.101.40.0/25,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+158.101.41.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+162.223.96.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+168.138.20.0/25,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+193.122.65.0/26,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+216.59.136.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+216.59.141.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+217.163.57.0/24,"8x8, Inc.",trusted,official|voice|stir-complete,provider
+137.192.76.0/24,"Inteliquent, Inc.",trusted,official|voice|gateway|intermediate|stir-complete,provider
+137.192.77.0/24,"Inteliquent, Inc.",trusted,official|voice|gateway|intermediate|stir-complete,provider
+137.192.78.0/24,"Inteliquent, Inc.",trusted,official|voice|gateway|intermediate|stir-complete,provider
+137.192.80.0/24,"Inteliquent, Inc.",trusted,official|voice|gateway|intermediate|stir-complete,provider
+198.74.62.80/28,"Inteliquent, Inc.",trusted,official|voice|gateway|intermediate|stir-complete,provider
+204.220.52.0/24,"Inteliquent, Inc.",trusted,official|voice|gateway|intermediate|stir-complete,provider
+204.220.62.0/24,"Inteliquent, Inc.",trusted,official|voice|gateway|intermediate|stir-complete,provider
+50.114.144.0/21,"Telnyx, LLC",trusted,official|voice|stir-complete,provider
+64.16.246.96/27,"Telnyx, LLC",trusted,official|voice|stir-complete,provider
+185.246.41.0/29,"Telnyx, LLC",trusted,official|voice|stir-complete,provider
+185.246.41.8/29,"Telnyx, LLC",trusted,official|voice|stir-complete,provider
+3.249.63.128/25,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+13.115.244.0/27,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+13.210.2.128/27,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+13.229.255.0/27,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+18.230.125.0/25,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+34.203.250.0/23,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+34.203.253.0/24,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+34.203.254.0/24,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+52.66.193.96/27,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+52.215.127.0/24,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+52.215.253.0/26,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+54.65.63.192/26,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+54.69.63.128/26,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+54.69.63.192/26,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+54.172.63.64/26,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+67.213.136.0/22,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+89.202.21.88/29,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+168.86.128.0/18,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+208.78.112.0/22,Twilio Inc,trusted,official|voice|intermediate|stir-complete,provider
+3.249.63.128/25,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+13.115.244.0/27,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+13.210.2.128/27,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+13.229.255.0/27,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+18.230.125.0/25,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+34.203.250.0/23,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+34.203.253.0/24,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+34.203.254.0/24,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+52.66.193.96/27,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+52.215.127.0/24,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+52.215.253.0/26,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+54.65.63.192/26,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+54.69.63.128/26,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+54.69.63.192/26,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+54.172.63.64/26,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+67.213.136.0/22,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+89.202.21.88/29,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+168.86.128.0/18,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+208.78.112.0/22,"Twilio US Technology, Inc.",trusted,official|voice|intermediate|stir-complete,provider
+74.116.145.0/24,Vonage America LLC,trusted,official|voice|stir-complete,provider
+74.116.147.0/24,Vonage America LLC,trusted,official|voice|stir-complete,provider
+168.100.64.0/18,Vonage America LLC,trusted,official|voice|stir-complete,provider
+216.115.17.0/24,Vonage America LLC,trusted,official|voice|stir-complete,provider
+216.115.20.0/24,Vonage America LLC,trusted,official|voice|stir-complete,provider
+216.115.22.0/24,Vonage America LLC,trusted,official|voice|stir-complete,provider
+216.115.23.0/24,Vonage America LLC,trusted,official|voice|stir-complete,provider
+74.116.145.0/24,Vonage Business Inc.,trusted,official|voice|stir-complete,provider
+74.116.147.0/24,Vonage Business Inc.,trusted,official|voice|stir-complete,provider
+168.100.64.0/18,Vonage Business Inc.,trusted,official|voice|stir-complete,provider
+216.115.17.0/24,Vonage Business Inc.,trusted,official|voice|stir-complete,provider
+216.115.20.0/24,Vonage Business Inc.,trusted,official|voice|stir-complete,provider
+216.115.22.0/24,Vonage Business Inc.,trusted,official|voice|stir-complete,provider
+216.115.23.0/24,Vonage Business Inc.,trusted,official|voice|stir-complete,provider
+74.116.145.0/24,Vonage Holdings Corp.,trusted,official|voice|stir-complete,provider
+74.116.147.0/24,Vonage Holdings Corp.,trusted,official|voice|stir-complete,provider
+168.100.64.0/18,Vonage Holdings Corp.,trusted,official|voice|stir-complete,provider
+216.115.17.0/24,Vonage Holdings Corp.,trusted,official|voice|stir-complete,provider
+216.115.20.0/24,Vonage Holdings Corp.,trusted,official|voice|stir-complete,provider
+216.115.22.0/24,Vonage Holdings Corp.,trusted,official|voice|stir-complete,provider
+216.115.23.0/24,Vonage Holdings Corp.,trusted,official|voice|stir-complete,provider
+64.211.144.0/24,"Zoom Voice Communications, Inc.",trusted,official|voice|stir-complete,provider
+69.174.108.0/22,"Zoom Voice Communications, Inc.",trusted,official|voice|stir-complete,provider
+101.36.167.0/24,"Zoom Voice Communications, Inc.",trusted,official|voice|stir-complete,provider
+137.66.128.0/17,"Zoom Voice Communications, Inc.",trusted,official|voice|stir-complete,provider
+4.150.191.0/24,Unregistered cloud voice,block,voip|datacenter,fraud
+5.62.61.0/24,Unregistered cloud voice,block,voip|datacenter,fraud

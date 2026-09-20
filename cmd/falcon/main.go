@@ -18,6 +18,7 @@ import (
 
 	"github.com/callerapi/falcon/internal/alerts"
 	"github.com/callerapi/falcon/internal/config"
+	"github.com/callerapi/falcon/internal/demo"
 	"github.com/callerapi/falcon/internal/export"
 	"github.com/callerapi/falcon/internal/feed"
 	"github.com/callerapi/falcon/internal/httpapi"
@@ -34,8 +35,19 @@ import (
 var version = "dev"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "demo" {
+		if err := demo.Main(os.Args[2:]); err != nil {
+			log.Fatalf("falcon demo: %v", err)
+		}
+		return
+	}
 	httpapi.Version = version
 	cfg := config.Load()
+	if cfg.Demo {
+		if err := prepareDemo(&cfg); err != nil {
+			log.Fatalf("falcon demo: %v", err)
+		}
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -59,6 +71,11 @@ func main() {
 	if cfg.FeedEnabled() {
 		spam = feed.NewSpam(cfg.CallerAPIBase, cfg.CallerAPIKey, cfg.FeedRefresh)
 		go spam.Run(ctx)
+	} else if cfg.Demo && cfg.DemoProfile == demo.ProfilePaid {
+		spam = feed.NewSpam("", "demo", cfg.FeedRefresh)
+		if nums, err := demo.SpamDIDs(cfg.DemoDir); err == nil {
+			spam.LoadNumbers(nums)
+		}
 	}
 	var live *feed.Live
 	if cfg.FirewallEnabled() {
@@ -281,6 +298,31 @@ func ensureSecret(ctx context.Context, db store.Store, key string) ([]byte, erro
 		return nil, err
 	}
 	return b[:], db.KVSet(ctx, key, hex.EncodeToString(b[:]))
+}
+
+func prepareDemo(cfg *config.Config) error {
+	dir := demo.Dir(cfg.DemoDir)
+	cfg.DemoDir = dir
+	profile, err := demo.Normalize(cfg.DemoProfile)
+	if err != nil {
+		profile = demo.ProfileFree
+	}
+	cfg.DemoProfile = profile
+	if _, err := os.Stat(demo.DBPath(dir, profile)); err != nil {
+		log.Printf("falcon demo: seeding %s", dir)
+		if err := demo.Seed(dir); err != nil {
+			return err
+		}
+	}
+	if cfg.IPIntelFile == "" {
+		cfg.IPIntelFile = demo.IntelPath(dir, profile)
+	}
+	if _, err := os.Stat(cfg.DBPath); err != nil {
+		if _, err := demo.Swap(dir, cfg.DBPath, profile); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ensureInstallID(ctx context.Context, db store.Store, configured string) (string, error) {
