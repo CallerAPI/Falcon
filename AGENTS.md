@@ -74,6 +74,7 @@ for Kamailio). Expected: `asterisk agi adapter: PASS`.
 | --- | --- | --- |
 | `FALCON_TOKEN` | Always. An empty token on a non-loopback listen refuses to start. | empty |
 | `FALCON_LISTEN` | The switch is on another host. Keep it on a private network. | `127.0.0.1:8090` |
+| `FALCON_SIP_LISTEN`, `FALCON_SIP_PEERS` | The switch cannot run a script and routes INVITEs to Falcon as a SIP redirect server. Peers are required off loopback. | empty |
 | `FALCON_SHARE` | The operator opts out of redacted telemetry. | `true` |
 | `CALLERAPI_API_KEY` | The operator has a CallerAPI account: credits telemetry, enables the paid feed, the voice scan provider, and the assistant. | empty |
 | `FALCON_VOICE_PROVIDER` | Audio clips should be transcribed and classified: `openai` (any OpenAI-compatible speech and chat pair) or `callerapi`. | `off` |

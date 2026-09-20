@@ -293,10 +293,30 @@ curl -sS -X POST http://127.0.0.1:8090/v1/screen \
   -d '{"switch":"curl","source_ip":"198.51.100.20","raw_sip":"INVITE sip:+15551212@ex SIP/2.0\r\nVia: SIP/2.0/UDP 198.51.100.20;branch=z9hG4bK1\r\nFrom: <sip:+14155550100@ex>;tag=1\r\nTo: <sip:+15551212@ex>\r\nCall-ID: demo\r\nUser-Agent: friendly-scanner\r\nMax-Forwards: 70\r\n\r\n"}'
 ```
 
-Switch adapters for Asterisk, FreeSWITCH, and Kamailio live in `adapters/`.
+Switch adapters for Asterisk (and the FreePBX family), FreeSWITCH (and
+FusionPBX), Kamailio, OpenSIPS, and ConnexCS live in `adapters/`. Each one
+is tested in CI against a live Falcon; Kamailio and OpenSIPS against real
+containers.
 
 Falcon fails open when it cannot parse the request. The switch continues the
 call.
+
+## Screen over SIP, no script
+
+A switch or SBC with no script hook routes the INVITE to Falcon first, as
+it would to a redirect server. Falcon answers `302` to continue or `603`
+to drop and is out of the dialog. Signaling and media stay on the switch.
+
+```
+FALCON_SIP_LISTEN=0.0.0.0:5060
+FALCON_SIP_PEERS=203.0.113.10,198.51.100.0/24
+```
+
+`FALCON_SIP_PEERS` is the gate: only those IPs and CIDRs get an answer.
+`OPTIONS` gets `200 OK` for health probes. UDP and TCP on one port. This is
+the path for Sansay, Sippy, PortaSwitch, Metaswitch, Ribbon, Oracle,
+AudioCodes, Cisco CUBE, and any proprietary class 4 platform. Details and
+per-vendor notes are in `adapters/README.md`.
 
 ## Score
 

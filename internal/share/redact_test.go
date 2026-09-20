@@ -115,6 +115,28 @@ func TestRedactHidesFromWhenItEqualsTo(t *testing.T) {
 	}
 }
 
+func TestRedactHidesFromWhenItContainsCalledDigits(t *testing.T) {
+	ev := event()
+	ev.To = "0000000"
+	ev.From = "1111000000000000000000"
+	ev.CallID = "000"
+	ev.UserAgent = ev.To
+	ev.Switch = ev.To
+	ev.RawSIP = "000\r\n\r\n"
+	ev.Reasons = []score.Reason{{Code: "x", Detail: "000"}}
+	out := Redact(ev, []byte("k"))
+	fields := []string{out.To, out.From, out.CallID, out.UserAgent, out.Switch, out.RawSIP}
+	for _, r := range out.Reasons {
+		fields = append(fields, r.Detail)
+	}
+	if strings.Contains(strings.Join(fields, "\n"), "0000000") {
+		t.Fatalf("called digits leaked: %q", fields)
+	}
+	if out.From == ev.From {
+		t.Fatalf("from still contains called zeros: %q", out.From)
+	}
+}
+
 func TestRedactNonNumericSubscriber(t *testing.T) {
 	ev := event()
 	ev.To = "alice.ops"

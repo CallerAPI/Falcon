@@ -146,6 +146,11 @@ func Redact(ev store.Event, key []byte) Event {
 		out.FromEqualsTo = true
 	}
 	scrub := newScrubber(called, calledUser)
+	// From can still carry the called digits as a run inside a longer
+	// number. The same pass used on Call-ID applies here.
+	if out.From != Redacted {
+		out.From = scrub.text(ev.From)
+	}
 	// Some switches build the Call-ID from the called number.
 	out.CallID = scrub.text(ev.CallID)
 	out.UserAgent = scrub.text(ev.UserAgent)

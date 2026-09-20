@@ -27,6 +27,7 @@ import (
 	"github.com/callerapi/falcon/internal/reputation"
 	"github.com/callerapi/falcon/internal/score"
 	"github.com/callerapi/falcon/internal/shaken"
+	"github.com/callerapi/falcon/internal/sipserver"
 	"github.com/callerapi/falcon/internal/store"
 	"github.com/callerapi/falcon/internal/voice"
 )
@@ -264,10 +265,41 @@ func main() {
 		}
 	}()
 
+	if cfg.SIPEnabled() {
+		startSIP(ctx, cfg, api)
+	}
+
 	<-ctx.Done()
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdown)
+}
+
+// startSIP binds the SIP redirect listener. A non-loopback listen with no
+// peer allowlist is refused: SIP has no token, so the allowlist is the
+// only gate.
+func startSIP(ctx context.Context, cfg config.Config, api *httpapi.Server) {
+	peers, err := sipserver.ParsePeers(cfg.SIPPeers)
+	if err != nil {
+		log.Fatalf("falcon sip: %v", err)
+	}
+	if len(peers) == 0 && !cfg.SIPListensOnLoopback() {
+		log.Fatalf("falcon sip: FALCON_SIP_LISTEN=%s is not loopback and FALCON_SIP_PEERS is empty. List the switch IPs or CIDRs that may send INVITEs.", cfg.SIPListen)
+	}
+	sip, err := sipserver.New(sipserver.Config{
+		Listen:       cfg.SIPListen,
+		Peers:        peers,
+		RedirectHost: cfg.SIPRedirectHost,
+		Timeout:      cfg.SIPTimeout,
+		Version:      version,
+	}, api)
+	if err != nil {
+		log.Fatalf("falcon sip: %v", err)
+	}
+	go func() {
+		log.Printf("falcon sip redirect listening on %s (udp+tcp, peers=%d, 302 continue / 603 reject)", cfg.SIPListen, len(peers))
+		_ = sip.Serve(ctx)
+	}()
 }
 
 // logSharing prints the telemetry state on every boot so nobody learns

@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+Added
+
+- SIP redirect listener (`FALCON_SIP_LISTEN`, `FALCON_SIP_PEERS`,
+  `FALCON_SIP_REDIRECT_HOST`, `FALCON_SIP_TIMEOUT`). Falcon answers INVITE
+  over UDP and TCP with 302 to continue or 603 to drop, 200 to OPTIONS,
+  and drops peers outside the allowlist. For switches with no script hook.
+- OpenSIPS 3.x adapter (`adapters/opensips/falcon.cfg`), tested against a
+  real OpenSIPS 3.6 container.
+- ConnexCS ScriptForge App (`adapters/connexcs/falcon.js`), tested with a
+  Node harness.
+- Adapter platform matrix in `adapters/README.md`.
+- `adapters/e2e/run.sh` runs every adapter against a Falcon with a token,
+  so an adapter that drops the token fails the build.
+
+Fixed
+
+- FreeSWITCH adapter used a `mod_curl` grammar that does not exist.
+  `headers` prints response headers; request headers are `append_headers`
+  and the type is `content-type`. With a token set, every screen failed
+  open. The body is now percent-encoded, so quotes and `%` in a display
+  name survive `mod_curl`'s split and decode. The fallback JSON encoder
+  now escapes quotes and control characters.
+- Kamailio adapter: `httpcon` (not `connection`), a `{}` seed and a
+  `headers` object for `jansson_set`, unquoted `$var(falcon)` for
+  `jansson_get`, and `http_client_query` with a header block so the token
+  is sent. `http_connect` cannot add headers.
+- `source_ip` with a port (`203.0.113.9:5060`, what Asterisk
+  `CHANNEL(pjsip,remote_addr)` returns) made every IP intel and IP rule
+  lookup miss. The port is stripped.
+- Data race in the outbound spoof test. Telemetry redaction: From is
+  scrubbed when it contains the called digits as a run.
+
 ## 0.9.0
 
 First release under the Falcon name. Formerly sipari.

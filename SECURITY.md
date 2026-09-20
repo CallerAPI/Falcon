@@ -55,7 +55,10 @@ placed in the page. The Content Security Policy allows scripts from the host
 only and forbids framing. No third-party script, font, or image is loaded.
 
 **Running open by accident.** An empty `FALCON_TOKEN` on a listen address
-other than loopback stops startup unless `FALCON_ALLOW_OPEN=true`.
+other than loopback stops startup unless `FALCON_ALLOW_OPEN=true`. The SIP
+listener has no token: a `FALCON_SIP_LISTEN` off loopback with an empty
+`FALCON_SIP_PEERS` stops startup, and a request from a peer outside the
+list gets no reply at all, so Falcon cannot be used as a reflector.
 
 **SQL injection.** Every query is parameterised. Column names in aggregate
 queries come from a fixed list.

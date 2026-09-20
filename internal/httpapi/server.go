@@ -9,6 +9,7 @@ import (
 	"crypto/subtle"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -260,7 +261,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type screenRequest struct {
+// ScreenRequest is one SIP request to score. Every transport builds one:
+// the HTTP API from JSON or a raw body, the SIP listener from the wire.
+type ScreenRequest struct {
 	RawSIP     string `json:"raw_sip"`
 	SourceIP   string `json:"source_ip"`
 	SourcePort int    `json:"source_port"`
@@ -275,12 +278,15 @@ type screenRequest struct {
 	Body       string            `json:"body"`
 }
 
+// ErrParse means the request was not a SIP message Falcon can read. The
+// caller fails open.
+var ErrParse = errors.New("parse sip")
+
 func (s *Server) handleScreen(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
 		return
 	}
-	started := time.Now()
 	raw, err := io.ReadAll(io.LimitReader(r.Body, MaxBody+1))
 	if err != nil {
 		s.failOpen(w, "read body")
@@ -291,7 +297,7 @@ func (s *Server) handleScreen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req screenRequest
+	var req ScreenRequest
 	ct := r.Header.Get("Content-Type")
 	if strings.Contains(ct, "application/json") || looksJSON(raw) {
 		if err := json.Unmarshal(raw, &req); err != nil {
@@ -309,17 +315,28 @@ func (s *Server) handleScreen(w http.ResponseWriter, r *http.Request) {
 		req.SourceIP = headerOr(r, "X-Source-IP", clientIP(r))
 	}
 
-	msg, err := buildMessage(req)
+	result, err := s.Screen(r.Context(), req)
 	if err != nil {
-		s.failOpen(w, "parse sip")
+		s.failOpen(w, err.Error())
 		return
 	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// Screen scores one request, records the event, and fans out alerts and
+// the live stream. The HTTP API and the SIP listener both end here.
+func (s *Server) Screen(ctx context.Context, req ScreenRequest) (score.Result, error) {
+	started := time.Now()
+	msg, err := buildMessage(req)
+	if err != nil {
+		return score.Result{}, ErrParse
+	}
 	snap := sipmsg.SnapshotFrom(msg, req.SourceIP)
-	en, verification := s.enrich(r.Context(), snap)
+	en, verification := s.enrich(ctx, snap)
 	en.Network = s.network(en, fingerprint.Compute(msg))
-	s.behaviour(r.Context(), req, snap, &en)
+	s.behaviour(ctx, req, snap, &en)
 	result := s.Engine.Score(snap, en)
-	sample, trigger := s.Sampler.Decide(r.Context(), result, strings.TrimSpace(req.Customer))
+	sample, trigger := s.Sampler.Decide(ctx, result, strings.TrimSpace(req.Customer))
 	if sample {
 		result.Sample = true
 		result.Headers["X-Falcon-Sample"] = "1"
@@ -374,7 +391,7 @@ func (s *Server) handleScreen(w http.ResponseWriter, r *http.Request) {
 		}
 	}(ev)
 
-	writeJSON(w, http.StatusOK, result)
+	return result, nil
 }
 
 // enrich gathers everything outside the SIP message: verification, operator
@@ -913,7 +930,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	s.metrics.write(w, s)
 }
 
-func buildMessage(req screenRequest) (*sipmsg.Message, error) {
+func buildMessage(req ScreenRequest) (*sipmsg.Message, error) {
 	if strings.TrimSpace(req.RawSIP) != "" {
 		return sipmsg.Parse(req.RawSIP)
 	}

@@ -118,6 +118,27 @@ func TestNormalizeE164(t *testing.T) {
 	}
 }
 
+func TestSourceIPDropsPort(t *testing.T) {
+	m, err := Parse("INVITE sip:+15551212@x SIP/2.0\r\nFrom: <sip:+14155550100@x>;tag=1\r\n\r\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]string{
+		"203.0.113.9:5060":     "203.0.113.9",
+		" 203.0.113.9 ":        "203.0.113.9",
+		"[2001:db8::1]:5060":   "2001:db8::1",
+		"2001:db8::1":          "2001:db8::1",
+		"":                     "",
+		"203.0.113.9":          "203.0.113.9",
+		"203.0.113.9:5060;x=1": "203.0.113.9",
+	}
+	for in, want := range cases {
+		if got := SnapshotFrom(m, in).SourceIP; got != want {
+			t.Errorf("SnapshotFrom(%q).SourceIP = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestEmptyRejected(t *testing.T) {
 	if _, err := Parse("   "); err == nil {
 		t.Fatal("expected error")

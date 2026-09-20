@@ -70,7 +70,7 @@ func SnapshotFrom(m *Message, sourceIP string) Snapshot {
 		Identity:    parseIdentity(m.Get("Identity")),
 		HasSDP:      strings.Contains(strings.ToLower(m.Get("Content-Type")), "sdp") || looksLikeSDP(m.Body),
 		SDPZero:     strings.Contains(m.Body, "c=IN IP4 0.0.0.0") || strings.Contains(m.Body, "c=IN IP6 ::"),
-		SourceIP:    strings.TrimSpace(sourceIP),
+		SourceIP:    HostOnly(sourceIP),
 	}
 	s.FromUser, s.FromHost = uriUserHost(s.FromRaw)
 	s.ToUser, s.ToHost = uriUserHost(s.ToRaw)
@@ -135,6 +135,13 @@ func splitUserHost(scheme, rest string) (user, host string) {
 		hostPart = hostPart[:i]
 	}
 	return NormalizeE164(userPart), strings.Trim(hostPart, "[]")
+}
+
+// HostOnly reduces a source address to its IP. Switches often report the
+// peer as "ip:port" (Asterisk CHANNEL(pjsip,remote_addr), Kamailio $si:$sp).
+// A port left on the address makes every IP lookup miss.
+func HostOnly(addr string) string {
+	return hostOnly(addr)
 }
 
 func hostOnly(raw string) string {

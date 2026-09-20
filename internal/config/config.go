@@ -117,6 +117,15 @@ type Config struct {
 	// MaxBody caps one screened SIP message in bytes.
 	MaxBody int64
 
+	// SIPListen turns on the SIP redirect listener (UDP and TCP) for
+	// switches with no script hook. Empty is off. SIPPeers is the list of
+	// IPs and CIDRs that may send to it. SIPRedirectHost rewrites the host
+	// in the Contact of a 302; empty echoes the Request-URI.
+	SIPListen       string
+	SIPPeers        string
+	SIPRedirectHost string
+	SIPTimeout      time.Duration
+
 	UpsellFeedURL     string
 	UpsellFirewallURL string
 
@@ -204,6 +213,11 @@ func Load() Config {
 		AllowOpen:           envBool("FALCON_ALLOW_OPEN", false),
 		MaxBody:             int64(envInt("FALCON_MAX_BODY_BYTES", 64*1024)),
 
+		SIPListen:       env("FALCON_SIP_LISTEN", ""),
+		SIPPeers:        env("FALCON_SIP_PEERS", ""),
+		SIPRedirectHost: env("FALCON_SIP_REDIRECT_HOST", ""),
+		SIPTimeout:      envDuration("FALCON_SIP_TIMEOUT", 2*time.Second),
+
 		UpsellFeedURL:     env("FALCON_UPSELL_FEED_URL", "https://callerapi.com"),
 		UpsellFirewallURL: env("FALCON_UPSELL_FIREWALL_URL", "https://callerapi.com/sip-firewall"),
 
@@ -245,7 +259,21 @@ func (c Config) IPIntelEnabled() bool {
 
 // ListensOnLoopback reports whether the listen address is local only.
 func (c Config) ListensOnLoopback() bool {
-	host, _, err := net.SplitHostPort(c.Listen)
+	return addrIsLoopback(c.Listen)
+}
+
+// SIPEnabled reports whether the SIP redirect listener is on.
+func (c Config) SIPEnabled() bool {
+	return strings.TrimSpace(c.SIPListen) != ""
+}
+
+// SIPListensOnLoopback reports whether the SIP listener is local only.
+func (c Config) SIPListensOnLoopback() bool {
+	return addrIsLoopback(c.SIPListen)
+}
+
+func addrIsLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return false
 	}
@@ -286,6 +314,7 @@ func (c Config) Redacted() map[string]any {
 		"raw_sip":        map[string]any{"stored": c.StoreRawSIP, "retention_days": c.RawSIPRetentionDays},
 		"allow_open":     c.AllowOpen,
 		"max_body_bytes": c.MaxBody,
+		"sip":            map[string]any{"enabled": c.SIPEnabled(), "listen": c.SIPListen, "peers": c.SIPPeers, "redirect_host": c.SIPRedirectHost, "timeout": c.SIPTimeout.String()},
 	}
 }
 

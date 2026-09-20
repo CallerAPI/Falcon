@@ -17,6 +17,8 @@ func FuzzRedact(f *testing.F) {
 	f.Add("INVITE sip:4155550123@x SIP/2.0\r\nTo: 4155550123\r\nX: 14155550123;tel:+1-415-555-0123\r\n\r\n", "4155550123", "+13125550188")
 	f.Add("garbage\x00\xff\r\n\r\n", "+14155550123", "")
 	f.Add("", "", "")
+	// CI found this: From has a long zero run, To is seven zeros.
+	f.Add("000\r\n\r\n", "0000000", "1111000000000000000000")
 	f.Fuzz(func(t *testing.T, raw, to, from string) {
 		ev := store.Event{
 			ReceivedAt: time.Now(), Action: score.ActionReject, From: from, To: to,

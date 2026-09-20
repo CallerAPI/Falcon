@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -45,14 +46,41 @@ func screenJSON(t *testing.T, srv *Server, body map[string]any) score.Result {
 	return res
 }
 
-func withHook(t *testing.T, srv *Server) *[]map[string]any {
+// hookSink records webhook bodies from FireNow, which runs on a goroutine
+// after /v1/screen returns. Tests must read through these methods.
+type hookSink struct {
+	mu sync.Mutex
+	v  []map[string]any
+}
+
+func (h *hookSink) add(m map[string]any) {
+	h.mu.Lock()
+	h.v = append(h.v, m)
+	h.mu.Unlock()
+}
+
+func (h *hookSink) len() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.v)
+}
+
+func (h *hookSink) snapshot() []map[string]any {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]map[string]any, len(h.v))
+	copy(out, h.v)
+	return out
+}
+
+func withHook(t *testing.T, srv *Server) *hookSink {
 	t.Helper()
-	var got []map[string]any
+	hooks := &hookSink{}
 	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		var m map[string]any
 		_ = json.Unmarshal(b, &m)
-		got = append(got, m)
+		hooks.add(m)
 	}))
 	t.Cleanup(hook.Close)
 	th := alerts.Defaults()
@@ -60,7 +88,7 @@ func withHook(t *testing.T, srv *Server) *[]map[string]any {
 	b, _ := json.Marshal(th)
 	_ = srv.Store.KVSet(context.Background(), kvAlertSettings, string(b))
 	srv.Alerts = &alerts.Watcher{Sources: alerts.Sources{Store: srv.Store, Thresholds: srv.AlertThresholds}}
-	return &got
+	return hooks
 }
 
 func TestOutboundSpoofIsRejectedAndPaged(t *testing.T) {
@@ -78,13 +106,14 @@ func TestOutboundSpoofIsRejectedAndPaged(t *testing.T) {
 		t.Fatalf("spoof: %+v %v", spoof.Action, spoof.Headers)
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for len(*hooks) == 0 && time.Now().Before(deadline) {
+	for hooks.len() == 0 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
-	if len(*hooks) != 1 {
-		t.Fatalf("spoof alert webhooks = %d", len(*hooks))
+	got := hooks.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("spoof alert webhooks = %d", len(got))
 	}
-	data := (*hooks)[0]["falcon"].(map[string]any)["data"].(map[string]any)
+	data := got[0]["falcon"].(map[string]any)["data"].(map[string]any)
 	if data["kind"] != "outbound_spoof" || data["customer_id"] != "acme" || data["calling_number"] != "+18005551234" || data["suggested_action"] == "" {
 		t.Fatalf("webhook data: %v", data)
 	}
@@ -214,7 +243,7 @@ func TestAudioClipRepeatDetectionAndClassification(t *testing.T) {
 		t.Fatalf("samples: %+v calls=%d", list, fp.calls)
 	}
 	kinds := map[string]bool{}
-	for _, h := range *hooks {
+	for _, h := range hooks.snapshot() {
 		d := h["falcon"].(map[string]any)["data"].(map[string]any)
 		kinds[d["kind"].(string)] = true
 	}

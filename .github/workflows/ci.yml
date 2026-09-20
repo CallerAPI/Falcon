@@ -31,13 +31,29 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends lua5.4 curl python3
-      # Asterisk AGI and FreeSWITCH Lua adapters against a live Falcon.
+      # SIP redirect listener, Asterisk AGI, FreeSWITCH Lua (real mod_curl
+      # argument rules), and the ConnexCS ScriptForge app against a live
+      # Falcon with a token.
       - run: bash adapters/e2e/run.sh
 
   kamailio:
     # Real Kamailio in a container, host network, screening through Falcon.
-    # Promote to required once the image and modules are confirmed green.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends curl python3
+      - run: KAMAILIO_IMAGE=kamailio/kamailio-ci:5.5.2 bash adapters/e2e/run.sh
+
+  opensips:
+    # Real OpenSIPS in a container. The image installs rest_client and json
+    # from apt.opensips.org at start, so this job depends on that mirror.
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -46,4 +62,4 @@ jobs:
         with:
           go-version: "1.22"
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends curl python3
-      - run: KAMAILIO_IMAGE=kamailio/kamailio-ci:5.5.2 bash adapters/e2e/run.sh
+      - run: OPENSIPS_IMAGE=opensips/opensips:3.6 bash adapters/e2e/run.sh

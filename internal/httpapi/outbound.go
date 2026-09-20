@@ -24,7 +24,7 @@ const MaxClipBytes = 4 << 20
 
 // behaviour fills the direction, customer, honeypot, and caller activity
 // parts of the enrichment. All of it comes from this install's own store.
-func (s *Server) behaviour(ctx context.Context, req screenRequest, snap sipmsg.Snapshot, en *score.Enrichment) {
+func (s *Server) behaviour(ctx context.Context, req ScreenRequest, snap sipmsg.Snapshot, en *score.Enrichment) {
 	en.Direction = "inbound"
 	if strings.EqualFold(strings.TrimSpace(req.Direction), "outbound") {
 		en.Direction = "outbound"
