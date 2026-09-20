@@ -50,8 +50,10 @@ else
   )
 end
 
+-- mod_curl args start with the URL. The command name is the first
+-- argument to api:execute, not part of this string.
 local curl = string.format(
-  "curl %s timeout 2s headers 'Content-Type: application/json%s' post '%s'",
+  "%s timeout 2s headers 'Content-Type: application/json%s' post '%s'",
   url,
   token ~= "" and ("','X-Falcon-Token: " .. token) or "",
   encoded:gsub("'", "\\'")

@@ -37,18 +37,30 @@ if [ -n "${KAMAILIO_IMAGE:-}" ]; then
   echo "== kamailio ${KAMAILIO_IMAGE}"
   go build -o /tmp/sipsend ./adapters/e2e/sipsend
   docker rm -f falcon-e2e-kamailio >/dev/null 2>&1 || true
+  # kamailio-ci ENTRYPOINT is already "kamailio -DD -E". Extra "kamailio"
+  # here made the process exit before it bound UDP/5060.
   docker run -d --name falcon-e2e-kamailio --network host \
     -v "$PWD/adapters/e2e/kamailio.cfg:/etc/kamailio/kamailio.cfg:ro" \
     -v "$PWD/adapters/kamailio/falcon.cfg:/etc/kamailio/falcon.cfg:ro" \
-    "$KAMAILIO_IMAGE" kamailio -DD -E -f /etc/kamailio/kamailio.cfg >/dev/null
+    "$KAMAILIO_IMAGE" -f /etc/kamailio/kamailio.cfg >/dev/null
   trap 'kill $FALCON_PID 2>/dev/null || true; docker rm -f falcon-e2e-kamailio >/dev/null 2>&1 || true' EXIT
-  sleep 3
+  for _ in $(seq 1 20); do
+    if docker inspect -f '{{.State.Running}}' falcon-e2e-kamailio 2>/dev/null | grep -q true; then
+      break
+    fi
+    sleep 0.25
+  done
+  sleep 1
+  set +e
   denied=$(/tmp/sipsend -to 127.0.0.1:5060 -from "$DENY")
+  deny_rc=$?
   allowed=$(/tmp/sipsend -to 127.0.0.1:5060 -from "$CLEAN")
+  allow_rc=$?
+  set -e
   echo "denied=${denied} allowed=${allowed}"
-  if [ "$denied" != "603" ] || [ "$allowed" != "404" ]; then
+  if [ "$deny_rc" -ne 0 ] || [ "$allow_rc" -ne 0 ] || [ "$denied" != "603" ] || [ "$allowed" != "404" ]; then
     echo "kamailio adapter: FAIL"
-    docker logs falcon-e2e-kamailio | tail -n 50
+    docker logs falcon-e2e-kamailio | tail -n 80
     exit 1
   fi
   echo "kamailio adapter: PASS"
