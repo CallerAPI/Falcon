@@ -1,0 +1,16 @@
+services:
+  falcon:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    env_file:
+      - .env
+    environment:
+      FALCON_LISTEN: 0.0.0.0:8090
+      FALCON_DB_PATH: /data/falcon.db
+    volumes:
+      - falcon-data:/data
+
+volumes:
+  falcon-data:

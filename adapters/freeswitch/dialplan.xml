@@ -1,0 +1,8 @@
+<include>
+  <extension name="falcon-inbound">
+    <condition field="destination_number" expression="^(\+?\d+)$">
+      <action application="lua" data="falcon.lua"/>
+      <action application="bridge" data="user/$1"/>
+    </condition>
+  </extension>
+</include>

@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Asterisk AGI. Screen the current channel through a local Falcon process."""
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+FALCON_URL = os.environ.get("FALCON_URL", "http://127.0.0.1:8090/v1/screen")
+FALCON_TOKEN = os.environ.get("FALCON_TOKEN", "")
+
+
+def agi_read_env():
+    env = {}
+    while True:
+        line = sys.stdin.readline()
+        if not line or line in ("\n", "\r\n"):
+            break
+        if ":" in line:
+            k, v = line.split(":", 1)
+            env[k.strip()] = v.strip()
+    return env
+
+
+def agi(cmd):
+    sys.stdout.write(cmd + "\n")
+    sys.stdout.flush()
+    return sys.stdin.readline().strip()
+
+
+def var(name):
+    line = agi('GET VARIABLE %s' % name)
+    if "200" in line and "(" in line and line.endswith(")"):
+        return line[line.find("(") + 1 : -1]
+    return ""
+
+
+def header(name):
+    value = var("PJSIP_HEADER(read,%s)" % name)
+    if value in ("", "(null)"):
+        value = var("SIP_HEADER(%s)" % name)
+    if value == "(null)":
+        return ""
+    return value
+
+
+def main():
+    agi_read_env()
+    headers = {}
+    for name in (
+        "From",
+        "To",
+        "Call-ID",
+        "User-Agent",
+        "P-Asserted-Identity",
+        "Remote-Party-ID",
+        "Contact",
+        "Via",
+        "Identity",
+        "Privacy",
+        "Max-Forwards",
+    ):
+        value = header(name)
+        if value:
+            headers[name] = value
+
+    payload = {
+        "switch": "asterisk",
+        "direction": var("FALCON_DIRECTION") or "inbound",
+        "customer": var("FALCON_CUSTOMER") or "",
+        "method": "INVITE",
+        "request_uri": "sip:%s@localhost" % (var("EXTEN") or "unknown"),
+        "source_ip": var("CHANNEL(pjsip,remote_addr)") or var("CHANNEL(peerip)") or "",
+        "headers": headers,
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(FALCON_URL, data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+    if FALCON_TOKEN:
+        req.add_header("X-Falcon-Token", FALCON_TOKEN)
+
+    action = "allow"
+    score = "0"
+    reasons = ""
+    hangup = "0"
+    sample = "0"
+    seconds = "20"
+    try:
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+        action = body.get("action") or "allow"
+        score = str(body.get("risk_score") or 0)
+        reasons = ",".join(r.get("code", "") for r in body.get("reasons") or [])
+        hangup = str((body.get("switch_hints") or {}).get("asterisk_hangup_cause") or 0)
+        sample = "1" if body.get("sample") else "0"
+        seconds = str((body.get("headers_to_set") or {}).get("X-Falcon-Sample-Seconds") or 20)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError):
+        action = "allow"
+
+    agi('SET VARIABLE FALCON_ACTION "%s"' % action)
+    agi('SET VARIABLE FALCON_SCORE "%s"' % score)
+    agi('SET VARIABLE FALCON_REASONS "%s"' % reasons.replace('"', ""))
+    agi('SET VARIABLE FALCON_HANGUP_CAUSE "%s"' % hangup)
+    agi('SET VARIABLE FALCON_SAMPLE "%s"' % sample)
+    agi('SET VARIABLE FALCON_SAMPLE_SECONDS "%s"' % seconds)
+    agi('SET VARIABLE FALCON_CALL_ID "%s"' % (headers.get("Call-ID") or "").replace('"', ""))
+
+
+if __name__ == "__main__":
+    main()

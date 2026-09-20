@@ -1,0 +1,6 @@
+# Used by goreleaser: the binary is already built for the target platform.
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY falcon /falcon
+USER nonroot
+EXPOSE 8090
+ENTRYPOINT ["/falcon"]

@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: gofmt -l . && test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -race ./...
+      # Short fuzz passes on the three parsers of hostile input. A crash here
+      # is a crash in production.
+      - run: go test -run '^$' -fuzz=FuzzParse -fuzztime=20s ./internal/sipmsg/
+      - run: go test -run '^$' -fuzz=FuzzRedact -fuzztime=20s ./internal/share/
+      - run: go test -run '^$' -fuzz=FuzzCompute -fuzztime=20s ./internal/fingerprint/
+
+  adapters:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends lua5.4 curl python3
+      # Asterisk AGI and FreeSWITCH Lua adapters against a live Falcon.
+      - run: bash adapters/e2e/run.sh
+
+  kamailio:
+    # Real Kamailio in a container, host network, screening through Falcon.
+    # Promote to required once the image and modules are confirmed green.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends curl python3
+      - run: KAMAILIO_IMAGE=kamailio/kamailio-ci:5.5.2 bash adapters/e2e/run.sh
