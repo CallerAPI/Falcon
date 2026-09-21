@@ -560,11 +560,12 @@ host that the System view does not list.
 
 ## Releases
 
-Tagged releases (`v*`) publish binaries for linux and darwin on amd64 and
-arm64, a `checksums.txt` signed with cosign (keyless, GitHub OIDC), an SBOM
-per archive, and multi-arch images at `ghcr.io/callerapi/falcon:<version>`
+A push to `main` tags the next patch (`v0.9.1`, then `v0.9.2`) and publishes
+it. That release has binaries for linux and darwin on amd64 and arm64, a
+`checksums.txt` signed with cosign (keyless, GitHub OIDC), an SBOM per
+archive, and multi-arch images at `ghcr.io/callerapi/falcon:<version>`
 signed the same way. The release notes carry the verify commands. Pin a
-version in production and read `CHANGELOG.md` before moving.
+version in production. An install does not update itself.
 
 ## Build
 
