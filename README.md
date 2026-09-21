@@ -295,8 +295,12 @@ curl -sS -X POST http://127.0.0.1:8090/v1/screen \
 
 Switch adapters for Asterisk (and the FreePBX family), FreeSWITCH (and
 FusionPBX), Kamailio, OpenSIPS, and ConnexCS live in `adapters/`. Each one
-is tested in CI against a live Falcon; Kamailio and OpenSIPS against real
-containers.
+is tested in CI against a live Falcon on a real switch container.
+
+On a class 4 or wholesale ingress run `FALCON_PROFILE=carrier`. The default
+scoring is tuned for a PBX trunk and rejects a normal call center CLI
+within its first hour there. The carrier profile keeps hard blocks and
+turns everything else into a flag. See `adapters/README.md`.
 
 Falcon fails open when it cannot parse the request. The switch continues the
 call.

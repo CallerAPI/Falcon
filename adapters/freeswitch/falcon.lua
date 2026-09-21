@@ -130,7 +130,7 @@ if raw and raw ~= "" and freeswitch.JSON then
 end
 if decoded and decoded.action then
   action = decoded.action
-  score = tostring(decoded.risk_score or 0)
+  score = string.format("%d", math.floor(tonumber(decoded.risk_score) or 0))
   cause = (decoded.switch_hints or {}).freeswitch_hangup_cause or cause
   sample = decoded.sample == true
   seconds = tonumber((decoded.headers_to_set or {})["X-Falcon-Sample-Seconds"] or "20") or 20
@@ -140,7 +140,12 @@ elseif raw and raw:find('"action"') then
   cause = raw:match('"freeswitch_hangup_cause"%s*:%s*"([%w_]+)"') or cause
   sample = raw:match('"sample"%s*:%s*true') ~= nil
   seconds = tonumber(raw:match('"X%-Falcon%-Sample%-Seconds"%s*:%s*"(%d+)"') or "20") or 20
+else
+  -- Fail open, and say so. A wrong token or URL must not be silent.
+  freeswitch.consoleLog("WARNING", string.format("falcon: no decision from %s, call continues. Reply: %s\n",
+    url, tostring(raw or ""):sub(1, 300)))
 end
+freeswitch.consoleLog("INFO", string.format("falcon: %s score=%s call-id=%s\n", action, score, var("sip_call_id") or ""))
 
 session:setVariable("falcon_action", action)
 session:setVariable("falcon_score", score)

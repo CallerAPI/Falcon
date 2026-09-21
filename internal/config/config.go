@@ -10,6 +10,7 @@ import (
 
 // Config is process configuration from the environment.
 type Config struct {
+	Profile           string
 	Listen            string
 	Token             string
 	DashboardUser     string
@@ -135,8 +136,33 @@ type Config struct {
 	DemoProfile string
 }
 
+// Profile names a set of defaults for where Falcon sits.
+//
+//	trunk    The default. An inbound trunk into a PBX or an enterprise. Per-IP
+//	         and per-CLI velocity rules catch scanners. Scores reject.
+//	carrier  A class 4 or wholesale ingress. One customer IP sends hundreds of
+//	         calls a minute and one CLI reaches thousands of numbers. Velocity
+//	         rules are off and scores only flag. Hard blocks still reject: deny
+//	         rules, the spam feed, IP intel block rows, and a caller id the
+//	         customer does not own.
+//
+// Every value a profile sets is still overridden by its own variable.
+const (
+	ProfileTrunk   = "trunk"
+	ProfileCarrier = "carrier"
+)
+
 func Load() Config {
+	profile := strings.ToLower(env("FALCON_PROFILE", ProfileTrunk))
+	challenge, reject := 60, 80
+	velIP, velFrom, velScan := 30, 20, 15
+	if profile == ProfileCarrier {
+		// 101 is above the 100 cap, so a score alone never reaches it.
+		challenge, reject = 101, 101
+		velIP, velFrom, velScan = 0, 0, 0
+	}
 	return Config{
+		Profile:           profile,
 		Listen:            env("FALCON_LISTEN", "127.0.0.1:8090"),
 		Token:             env("FALCON_TOKEN", ""),
 		DashboardUser:     env("FALCON_DASHBOARD_USER", "admin"),
@@ -146,13 +172,13 @@ func Load() Config {
 		FailOpen:          envBool("FALCON_FAIL_OPEN", true),
 
 		FlagScore:      envInt("FALCON_FLAG_SCORE", 40),
-		ChallengeScore: envInt("FALCON_CHALLENGE_SCORE", 60),
-		RejectScore:    envInt("FALCON_REJECT_SCORE", 80),
+		ChallengeScore: envInt("FALCON_CHALLENGE_SCORE", challenge),
+		RejectScore:    envInt("FALCON_REJECT_SCORE", reject),
 
 		VelocityWindow: envDuration("FALCON_VELOCITY_WINDOW", 60*time.Second),
-		VelocityIP:     envInt("FALCON_VELOCITY_IP", 30),
-		VelocityFrom:   envInt("FALCON_VELOCITY_FROM", 20),
-		VelocityScan:   envInt("FALCON_VELOCITY_SCAN", 15),
+		VelocityIP:     envInt("FALCON_VELOCITY_IP", velIP),
+		VelocityFrom:   envInt("FALCON_VELOCITY_FROM", velFrom),
+		VelocityScan:   envInt("FALCON_VELOCITY_SCAN", velScan),
 
 		S3Endpoint:  env("FALCON_S3_ENDPOINT", ""),
 		S3Bucket:    env("FALCON_S3_BUCKET", ""),
@@ -294,6 +320,7 @@ func (c Config) Redacted() map[string]any {
 		return "set"
 	}
 	return map[string]any{
+		"profile":            c.Profile,
 		"listen":             c.Listen,
 		"token":              set(c.Token),
 		"dashboard_user":     c.DashboardUser,

@@ -73,6 +73,7 @@ for Kamailio). Expected: `asterisk agi adapter: PASS`.
 | Variable | Set it when | Default |
 | --- | --- | --- |
 | `FALCON_TOKEN` | Always. An empty token on a non-loopback listen refuses to start. | empty |
+| `FALCON_PROFILE` | `carrier` on a class 4 or wholesale ingress. Default scoring rejects normal call center traffic there. | `trunk` |
 | `FALCON_LISTEN` | The switch is on another host. Keep it on a private network. | `127.0.0.1:8090` |
 | `FALCON_SIP_LISTEN`, `FALCON_SIP_PEERS` | The switch cannot run a script and routes INVITEs to Falcon as a SIP redirect server. Peers are required off loopback. | empty |
 | `FALCON_SHARE` | The operator opts out of redacted telemetry. | `true` |

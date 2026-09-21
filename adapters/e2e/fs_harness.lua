@@ -114,6 +114,7 @@ local function run(caller, callee)
     execute = function() end,
   }
   _G.freeswitch = {
+    consoleLog = function(level, msg) io.stderr:write("[" .. level .. "] " .. msg) end,
     API = function()
       return { execute = function(_, name, args)
         assert(name == "curl", "api:execute must call curl")

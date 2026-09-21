@@ -4,6 +4,22 @@
 
 Added
 
+- `FALCON_PROFILE=carrier` for class 4 and wholesale ingress: velocity
+  rules off, scores only flag, hard blocks still reject. The trunk defaults
+  rejected a normal call center CLI within its first hour.
+- Live voice verdicts: `POST /v1/voice/verdict` receives the CallerAPI live
+  filter webhook, verifies the HMAC with the account key, ties the verdict
+  to the screened INVITE by Call-ID, keeps the worst score, shows it in the
+  event drawer, and pages `voice_scam` with `live: true` and a suggested
+  action. Falcon never hears the audio.
+- ConnexCS: `MODE` (`monitor` default, `enforce`), `ENFORCE_HARD_BLOCKS_ONLY`,
+  `ADD_HEADERS` off by default, Timeout Action `200 OK`, and a ConneXML
+  template that forks audio to the CallerAPI live filter.
+- Kamailio and OpenSIPS asynchronous routes (`falcon_async.cfg`) that
+  suspend the transaction while Falcon answers.
+- Real Asterisk 20 and real FreeSWITCH 1.10 containers in CI, next to the
+  real Kamailio and OpenSIPS ones.
+
 - SIP redirect listener (`FALCON_SIP_LISTEN`, `FALCON_SIP_PEERS`,
   `FALCON_SIP_REDIRECT_HOST`, `FALCON_SIP_TIMEOUT`). Falcon answers INVITE
   over UDP and TCP with 302 to continue or 603 to drop, 200 to OPTIONS,
@@ -18,6 +34,11 @@ Added
 
 Fixed
 
+- Asterisk dialplan patterns were `_X.`, which does not match an E.164
+  destination with a plus. Calls to `+1...` got 404 before the AGI ran.
+  Now `_[+0-9]X.`. The AGI files are shipped executable.
+- FreeSWITCH adapter logs a warning when Falcon gives no decision instead
+  of allowing silently.
 - FreeSWITCH adapter used a `mod_curl` grammar that does not exist.
   `headers` prints response headers; request headers are `append_headers`
   and the type is `content-type`. With a token set, every screen failed

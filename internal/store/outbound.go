@@ -313,8 +313,8 @@ func (s *SQLite) AddVoiceSample(ctx context.Context, v VoiceSample) (int64, erro
 
 // UpdateVoiceSample writes the provider's result onto a stored clip.
 func (s *SQLite) UpdateVoiceSample(ctx context.Context, v VoiceSample) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE voice_samples SET transcript = ?, category = ?, score = ?, summary = ?, provider = ?, error = ? WHERE id = ?`,
-		v.Transcript, v.Category, v.Score, v.Summary, v.Provider, v.Error, v.ID)
+	_, err := s.db.ExecContext(ctx, `UPDATE voice_samples SET transcript = ?, category = ?, score = ?, summary = ?, provider = ?, error = ?, seconds = ? WHERE id = ?`,
+		v.Transcript, v.Category, v.Score, v.Summary, v.Provider, v.Error, v.Seconds, v.ID)
 	return err
 }
 
@@ -349,6 +349,16 @@ func (s *SQLite) VoiceSamples(ctx context.Context, limit int) ([]VoiceSample, er
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+// VoiceSampleByCallID returns the newest sample for a Call-ID. Live
+// sessions update one row across their webhook events.
+func (s *SQLite) VoiceSampleByCallID(ctx context.Context, callID string) (VoiceSample, bool, error) {
+	v, err := scanVoice(s.db.QueryRowContext(ctx, `SELECT `+voiceColumns+` FROM voice_samples WHERE call_id = ? ORDER BY id DESC LIMIT 1`, callID))
+	if err == sql.ErrNoRows {
+		return v, false, nil
+	}
+	return v, err == nil, err
 }
 
 // VoiceSampleForEvent returns the clip attached to an event.

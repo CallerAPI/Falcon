@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 // Drive adapters/connexcs/falcon.js the way ScriptForge does, against a
 // live Falcon. Supplies require('axios') on top of Node's fetch, calls
-// main(data) with a routing object, and checks the thrown SIP code and the
-// headers. Usage: connexcs_harness.js <falcon_url> <deny_number> <clean_number>
+// main(data) with a routing object, and checks each MODE:
+//   monitor                   never throws, even on a deny-listed CLI
+//   enforce, hard blocks only throws 603 on the deny list, not on a score
+//   enforce, full             throws on both
+// Usage: connexcs_harness.js <falcon_url> <deny_number> <clean_number>
 
 const fs = require('fs');
 const path = require('path');
@@ -43,47 +46,77 @@ const sandboxRequire = (name) => {
   throw new Error('ScriptForge would not provide module ' + name);
 };
 
-const fakeProcess = { env: { FALCON_URL: url, FALCON_TOKEN: process.env.FALCON_TOKEN || '', FALCON_DIRECTION: 'inbound' } };
-const main = new Function('require', 'process', src + '\nreturn main;')(sandboxRequire, fakeProcess);
+function load(envOverrides) {
+  const fakeProcess = {
+    env: Object.assign(
+      { FALCON_URL: url, FALCON_TOKEN: process.env.FALCON_TOKEN || '', FALCON_DIRECTION: 'inbound' },
+      envOverrides
+    ),
+  };
+  return new Function('require', 'process', src + '\nreturn main;')(sandboxRequire, fakeProcess);
+}
 
-function routing(cli) {
+let n = 0;
+function routing(cli, ua) {
+  n += 1;
   return {
     routing: {
       cli,
       dest_number: '+14155550100',
       account_id: 4242,
       ip: '203.0.113.9',
-      user_agent: 'connexcs-e2e/1.0',
-      call_id: 'cx-e2e-' + cli,
+      user_agent: ua || 'connexcs-e2e/1.0',
+      call_id: 'cx-e2e-' + cli + '-' + n,
       egress_routing: [{ gw: {} }],
     },
   };
 }
 
+async function outcome(main, data) {
+  try {
+    const out = await main(data);
+    return { threw: null, headers: out.headers || null };
+  } catch (e) {
+    return { threw: e.message, headers: null };
+  }
+}
+
 (async () => {
+  const results = [];
+  const check = (label, ok, detail) => {
+    results.push({ label, ok, detail });
+  };
+
+  // monitor: nothing is ever thrown
+  let main = load({ FALCON_MODE: 'monitor' });
+  let r = await outcome(main, routing(deny));
+  check('monitor: deny-listed CLI passes', r.threw === null, r.threw);
+  r = await outcome(main, routing(clean, 'friendly-scanner'));
+  check('monitor: scanner UA passes', r.threw === null, r.threw);
+  check('monitor: no headers added by default', r.headers === null, JSON.stringify(r.headers));
+
+  // enforce, hard blocks only (the default in enforce)
+  main = load({ FALCON_MODE: 'enforce' });
+  r = await outcome(main, routing(deny));
+  check('enforce/hard: deny-listed CLI is 603', /^603 /.test(r.threw || ''), r.threw);
+  r = await outcome(main, routing(clean, 'friendly-scanner'));
+  check('enforce/hard: scanner score alone passes', r.threw === null, r.threw);
+  r = await outcome(main, routing(clean));
+  check('enforce/hard: clean passes', r.threw === null, r.threw);
+
+  // enforce, full scoring
+  main = load({ FALCON_MODE: 'enforce', FALCON_HARD_BLOCKS_ONLY: 'false', FALCON_ADD_HEADERS: 'true' });
+  r = await outcome(main, routing(clean, 'friendly-scanner'));
+  check('enforce/full: scanner score is 603', /^603 /.test(r.threw || ''), r.threw);
+  r = await outcome(main, routing(clean));
+  const action = r.headers && r.headers.find((h) => h.key === 'X-Falcon-Action');
+  check('enforce/full: clean passes with headers', r.threw === null && action && action.value === 'allow', r.threw || JSON.stringify(r.headers));
+
   let ok = true;
-  let denied = 'no throw';
-  try {
-    await main(routing(deny));
-  } catch (e) {
-    denied = e.message;
+  for (const x of results) {
+    console.log((x.ok ? 'ok   ' : 'FAIL ') + x.label + (x.ok ? '' : '  [' + x.detail + ']'));
+    if (!x.ok) ok = false;
   }
-  if (!/^603 /.test(denied)) {
-    ok = false;
-  }
-  let allowed;
-  try {
-    allowed = await main(routing(clean));
-  } catch (e) {
-    allowed = 'threw ' + e.message;
-    ok = false;
-  }
-  const action = allowed && allowed.headers && allowed.headers.find((h) => h.key === 'X-Falcon-Action');
-  if (!action || action.value !== 'allow') {
-    ok = false;
-  }
-  console.log('denied:', denied);
-  console.log('allowed:', allowed && allowed.headers ? JSON.stringify(allowed.headers) : allowed);
   console.log('connexcs scriptforge adapter:', ok ? 'PASS' : 'FAIL');
   process.exit(ok ? 0 : 1);
 })();

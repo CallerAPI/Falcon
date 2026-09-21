@@ -183,6 +183,7 @@ type Store interface {
 	AddVoiceSample(ctx context.Context, v VoiceSample) (int64, error)
 	UpdateVoiceSample(ctx context.Context, v VoiceSample) error
 	VoiceSamples(ctx context.Context, limit int) ([]VoiceSample, error)
+	VoiceSampleByCallID(ctx context.Context, callID string) (VoiceSample, bool, error)
 	VoiceSampleForEvent(ctx context.Context, eventID int64) (VoiceSample, bool, error)
 	RecentPHashes(ctx context.Context, since time.Time, limit int) ([]string, error)
 	SamplesSince(ctx context.Context, since time.Time, customer string) (int, error)

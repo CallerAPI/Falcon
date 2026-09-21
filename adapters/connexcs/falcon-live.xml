@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CallerAPI live voice filter for ConnexCS, as a ConneXML app.
+
+  ConnexCS forks the call audio to CallerAPI while the call runs. CallerAPI
+  transcribes it, runs the scam rules on every line, runs the model when
+  the rules cannot phrase it, and posts a verdict to your Falcon the moment
+  the score changes. Falcon ties the verdict to the INVITE it screened,
+  shows it in the dashboard, pages your webhook, and blocks the next call
+  from that number. Nobody touches the live call.
+
+  Setup:
+  1. Class 5 > Apps > + > ConneXML. Paste this file.
+  2. Replace YOUR_CALLERAPI_KEY and falcon.example.com.
+  3. Route the calls you want listened to through this app. Start with one
+     route or a sampled share. Every call through here is a Class 5 call
+     on ConnexCS and a metered minute on CallerAPI.
+  4. report=true files a confirmed scam caller into the CallerAPI spam
+     database at the end of the call. Start with report=false.
+
+  Confirm with ConnexCS support before go-live, the docs do not state them:
+  - The audio format on the socket. CallerAPI accepts Twilio style JSON
+    frames, its own JSON start line, or bare mu-law or PCM16 frames. Bare
+    frames take call_id and from from the URL, so both are set twice below.
+  - The variable names for the caller, the destination, and the call id in
+    ConneXML. {{ cli }}, {{ dest }}, and {{ call_id }} are placeholders.
+-->
+<Response>
+  <Start>
+    <Stream url="wss://api.callerapi.com/api/voice/filter/stream?key=YOUR_CALLERAPI_KEY&amp;webhook=https://falcon.example.com/v1/voice/verdict&amp;report=false&amp;call_id={{ call_id }}&amp;from={{ cli }}" mix_type="mixed">
+      <Parameter name="call_id" value="{{ call_id }}" />
+      <Parameter name="from" value="{{ cli }}" />
+    </Stream>
+  </Start>
+  <Dial>{{ dest }}</Dial>
+</Response>

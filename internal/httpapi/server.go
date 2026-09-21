@@ -138,6 +138,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/outcome", s.withAuth(s.handleOutcome))
 	mux.HandleFunc("/v1/audio", s.withAuth(s.handleAudio))
 	mux.HandleFunc("/v1/voice/samples", s.withAuth(s.handleVoiceSamples))
+	// Signed by the CallerAPI account key, so it sits outside withAuth and
+	// checks the HMAC itself. The Falcon token is accepted as a fallback.
+	mux.HandleFunc("/v1/voice/verdict", s.handleVoiceVerdict)
 	mux.HandleFunc("/v1/customers", s.withAuth(s.handleCustomers))
 	mux.HandleFunc("/v1/customers/", s.withAuth(s.handleCustomer))
 

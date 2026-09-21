@@ -23,7 +23,7 @@ FALCON_LISTEN="127.0.0.1:${PORT}" FALCON_SIP_LISTEN="127.0.0.1:${SIP_PORT}" FALC
 FALCON_PID=$!
 cleanup() {
   kill "$FALCON_PID" 2>/dev/null || true
-  docker rm -f falcon-e2e-kamailio falcon-e2e-opensips >/dev/null 2>&1 || true
+  docker rm -f falcon-e2e-kamailio falcon-e2e-opensips falcon-e2e-asterisk falcon-e2e-freeswitch >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 for _ in $(seq 1 30); do
@@ -77,8 +77,9 @@ else
   FALCON_IN_CONTAINER="http://host.docker.internal:${PORT}/v1/screen"
 fi
 E2E_TMP="$(mktemp -d)"
-sed "s#http://127.0.0.1:8090/v1/screen#${FALCON_IN_CONTAINER}#" adapters/e2e/kamailio.cfg >"$E2E_TMP/kamailio.cfg"
-sed "s#http://127.0.0.1:8090/v1/screen#${FALCON_IN_CONTAINER}#" adapters/e2e/opensips.cfg >"$E2E_TMP/opensips.cfg"
+for f in kamailio kamailio_async opensips opensips_async; do
+  sed "s#http://127.0.0.1:8090/v1/screen#${FALCON_IN_CONTAINER}#" "adapters/e2e/$f.cfg" >"$E2E_TMP/$f.cfg"
+done
 
 # wait_udp <container> waits for the proxy to answer OPTIONS on 5060.
 wait_udp() {
@@ -109,29 +110,113 @@ proxy_check() {
   docker rm -f "$2" >/dev/null 2>&1 || true
 }
 
-if [ -n "${KAMAILIO_IMAGE:-}" ]; then
-  echo "== kamailio ${KAMAILIO_IMAGE}"
+# kamailio_case <label> <e2e cfg> <adapter cfg>
+kamailio_case() {
+  echo "== kamailio $1 ${KAMAILIO_IMAGE}"
   docker rm -f falcon-e2e-kamailio >/dev/null 2>&1 || true
   # kamailio-ci ENTRYPOINT is already "kamailio -DD -E".
   docker run -d --name falcon-e2e-kamailio "${DOCKER_NET[@]}" \
-    -v "$E2E_TMP/kamailio.cfg:/etc/kamailio/kamailio.cfg:ro" \
-    -v "$PWD/adapters/kamailio/falcon.cfg:/etc/kamailio/falcon.cfg:ro" \
+    -v "$E2E_TMP/$2.cfg:/etc/kamailio/kamailio.cfg:ro" \
+    -v "$PWD/adapters/kamailio/$3.cfg:/etc/kamailio/$3.cfg:ro" \
     "$KAMAILIO_IMAGE" -f /etc/kamailio/kamailio.cfg >/dev/null
   wait_udp falcon-e2e-kamailio || true
-  proxy_check kamailio falcon-e2e-kamailio
-fi
+  proxy_check "kamailio $1" falcon-e2e-kamailio
+}
 
-if [ -n "${OPENSIPS_IMAGE:-}" ]; then
-  echo "== opensips ${OPENSIPS_IMAGE}"
+# opensips_case <label> <e2e cfg> <adapter cfg>
+opensips_case() {
+  echo "== opensips $1 ${OPENSIPS_IMAGE}"
   docker rm -f falcon-e2e-opensips >/dev/null 2>&1 || true
   # The published image carries the core only. rest_client and json are
   # separate Debian packages from the same repository.
   docker run -d --name falcon-e2e-opensips "${DOCKER_NET[@]}" --entrypoint sh \
-    -v "$E2E_TMP/opensips.cfg:/etc/opensips/opensips.cfg:ro" \
-    -v "$PWD/adapters/opensips/falcon.cfg:/etc/opensips/falcon.cfg:ro" \
+    -v "$E2E_TMP/$2.cfg:/etc/opensips/opensips.cfg:ro" \
+    -v "$PWD/adapters/opensips/$3.cfg:/etc/opensips/falcon.cfg:ro" \
     "$OPENSIPS_IMAGE" -c 'apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq opensips-restclient-module opensips-json-module >/dev/null && exec /usr/sbin/opensips -F -f /etc/opensips/opensips.cfg' >/dev/null
   wait_udp falcon-e2e-opensips || true
-  proxy_check opensips falcon-e2e-opensips
+  proxy_check "opensips $1" falcon-e2e-opensips
+}
+
+# switch_check <label> <container> <port> <deny code> <allow code>
+switch_check() {
+  set +e
+  denied=$(/tmp/sipsend -to "127.0.0.1:$3" -from "$DENY" -wait 8s); deny_rc=$?
+  allowed=$(/tmp/sipsend -to "127.0.0.1:$3" -from "$CLEAN" -wait 8s); allow_rc=$?
+  set -e
+  echo "denied=${denied} allowed=${allowed}"
+  if [ "$deny_rc" -ne 0 ] || [ "$allow_rc" -ne 0 ] || [ "$denied" != "$4" ] || [ "$allowed" != "$5" ]; then
+    echo "$1 adapter: FAIL"; fail=1
+    docker logs "$2" 2>&1 | tail -n 60
+  else
+    echo "$1 adapter: PASS"
+  fi
+  docker rm -f "$2" >/dev/null 2>&1 || true
+}
+
+# wait_port <container> <port> waits until an INVITE gets a real answer.
+# A switch answers OPTIONS before its dialplan and script modules are up,
+# and answers 503 in between, so OPTIONS alone is not enough.
+wait_port() {
+  for _ in $(seq 1 90); do
+    if docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null | grep -q true; then
+      code=$(/tmp/sipsend -to "127.0.0.1:$2" -from "+10000000001" -wait 2s 2>/dev/null || true)
+      case "$code" in
+        ""|503|480) ;;
+        *) return 0 ;;
+      esac
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+if [ "$(uname -s)" = "Linux" ]; then
+  FS_NET=(--network host); AST_NET=(--network host)
+else
+  FS_NET=(-p 5080:5080/udp); AST_NET=(-p 5060:5060/udp)
+fi
+
+# Real Asterisk from adapters/e2e/asterisk/Dockerfile. A reject hangs up
+# with cause 21, which is 403 on the wire. An allowed call lands in
+# from-internal and hangs up with cause 1, which is 404.
+if [ "${ASTERISK_E2E:-}" = "1" ]; then
+  echo "== asterisk (real, Alpine package)"
+  docker build -q -t falcon-e2e-asterisk adapters/e2e/asterisk >/dev/null
+  docker rm -f falcon-e2e-asterisk >/dev/null 2>&1 || true
+  docker run -d --name falcon-e2e-asterisk "${AST_NET[@]}" \
+    -e FALCON_URL="${FALCON_IN_CONTAINER}" -e FALCON_TOKEN="$TOKEN" \
+    -v "$PWD/adapters/asterisk/extensions.conf:/etc/asterisk/falcon-extensions.conf:ro" \
+    -v "$PWD/adapters/asterisk/falcon.agi:/var/lib/asterisk/agi-bin/falcon.agi:ro" \
+    -v "$PWD/adapters/asterisk/falcon_hangup.agi:/var/lib/asterisk/agi-bin/falcon_hangup.agi:ro" \
+    falcon-e2e-asterisk >/dev/null
+  wait_port falcon-e2e-asterisk 5060 || true
+  switch_check "asterisk real" falcon-e2e-asterisk 5060 403 404
+fi
+
+# Real FreeSWITCH with mod_curl and mod_lua. A reject hangs up with
+# CALL_REJECTED, which sofia sends as 603. An allowed call gets 404 from
+# the test dialplan.
+if [ -n "${FREESWITCH_IMAGE:-}" ]; then
+  echo "== freeswitch (real) ${FREESWITCH_IMAGE}"
+  docker rm -f falcon-e2e-freeswitch >/dev/null 2>&1 || true
+  docker run -d --name falcon-e2e-freeswitch "${FS_NET[@]}" \
+    -e FALCON_URL="${FALCON_IN_CONTAINER}" -e FALCON_TOKEN="$TOKEN" \
+    -v "$PWD/adapters/e2e/freeswitch:/etc/freeswitch:ro" \
+    -v "$PWD/adapters/freeswitch/falcon.lua:/usr/share/freeswitch/scripts/falcon.lua:ro" \
+    -v "$PWD/adapters/freeswitch/falcon_hangup.lua:/usr/share/freeswitch/scripts/falcon_hangup.lua:ro" \
+    --entrypoint freeswitch "$FREESWITCH_IMAGE" -nonat -nf -nc -conf /etc/freeswitch -log /tmp -db /tmp -run /tmp >/dev/null
+  wait_port falcon-e2e-freeswitch 5080 || true
+  switch_check "freeswitch real" falcon-e2e-freeswitch 5080 603 404
+fi
+
+if [ -n "${KAMAILIO_IMAGE:-}" ]; then
+  kamailio_case sync kamailio falcon
+  kamailio_case async kamailio_async falcon_async
+fi
+
+if [ -n "${OPENSIPS_IMAGE:-}" ]; then
+  opensips_case sync opensips falcon
+  opensips_case async opensips_async falcon_async
 fi
 
 if [ "$fail" -ne 0 ]; then

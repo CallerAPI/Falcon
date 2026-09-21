@@ -259,7 +259,7 @@ func main() {
 		MaxHeaderBytes: 64 * 1024,
 	}
 	go func() {
-		log.Printf("falcon %s listening on %s (dashboard /, screen POST /v1/screen, shaken=%v ipintel=%v)", version, cfg.Listen, cfg.Shaken, cfg.IPIntelEnabled())
+		log.Printf("falcon %s listening on %s (profile=%s, dashboard /, screen POST /v1/screen, shaken=%v ipintel=%v)", version, cfg.Listen, cfg.Profile, cfg.Shaken, cfg.IPIntelEnabled())
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("falcon http: %v", err)
 		}
