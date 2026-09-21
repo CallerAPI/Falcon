@@ -21,38 +21,61 @@ type Queue struct {
 	apiFailures int
 }
 
+// batchSize is one export call. maxBatchesPerTick bounds one tick, so a
+// carrier ingress at tens of calls a second drains between ticks instead
+// of falling behind by a fixed 100 events every 30 s.
+const (
+	batchSize         = 100
+	maxBatchesPerTick = 50
+)
+
 func (q *Queue) Run(ctx context.Context) {
 	if q.Interval <= 0 {
 		q.Interval = 30 * time.Second
 	}
 	t := time.NewTicker(q.Interval)
 	defer t.Stop()
-	q.flush(ctx)
+	q.drain(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			q.flush(ctx)
+			q.drain(ctx)
 		}
 	}
 }
 
-func (q *Queue) flush(ctx context.Context) {
+// drain flushes until the backlog is below one batch or the per-tick cap
+// is reached. A failed flush stops the tick; the next one retries.
+func (q *Queue) drain(ctx context.Context) {
+	for i := 0; i < maxBatchesPerTick; i++ {
+		if n := q.flush(ctx); n < batchSize {
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
+	}
+}
+
+// flush exports one batch and returns how many events it marked. Zero
+// means nothing waited or the export failed.
+func (q *Queue) flush(ctx context.Context) int {
 	wantS3 := q.S3 != nil && q.S3.Enabled()
 	wantAPI := q.CallerAPI != nil && q.CallerAPI.Enabled() && (q.CallerAPIReady == nil || q.CallerAPIReady(ctx))
 	if !wantS3 && !wantAPI {
-		return
+		return 0
 	}
-	events, err := q.Store.Unexported(ctx, 100)
+	events, err := q.Store.Unexported(ctx, batchSize)
 	if err != nil || len(events) == 0 {
-		return
+		return 0
 	}
 
 	if wantS3 {
 		if err := q.putS3(ctx, events); err != nil {
 			log.Printf("falcon export s3: %v", err)
-			return
+			return 0
 		}
 	}
 	if wantAPI {
@@ -71,7 +94,7 @@ func (q *Queue) flush(ctx context.Context) {
 			if q.apiFailures == 1 || q.apiFailures%120 == 0 {
 				log.Printf("falcon telemetry: %v (%d attempts, %d events waiting, retrying every %s)", err, q.apiFailures, len(events), q.Interval)
 			}
-			return
+			return 0
 		}
 		if q.apiFailures > 0 {
 			log.Printf("falcon telemetry: reachable again after %d attempts", q.apiFailures)
@@ -84,7 +107,9 @@ func (q *Queue) flush(ctx context.Context) {
 	}
 	if err := q.Store.MarkExported(ctx, ids); err != nil {
 		log.Printf("falcon export mark: %v", err)
+		return 0
 	}
+	return len(events)
 }
 
 func (q *Queue) putS3(ctx context.Context, events []store.Event) error {

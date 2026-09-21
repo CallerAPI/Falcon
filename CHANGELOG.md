@@ -34,6 +34,9 @@ Added
 
 Fixed
 
+- Telemetry drained 100 events per 30 s and nothing more, so a carrier
+  ingress fell behind for the life of the process. One tick now drains up
+  to 50 batches and stops at the first failure.
 - Asterisk dialplan patterns were `_X.`, which does not match an E.164
   destination with a plus. Calls to `+1...` got 404 before the AGI ran.
   Now `_[+0-9]X.`. The AGI files are shipped executable.
