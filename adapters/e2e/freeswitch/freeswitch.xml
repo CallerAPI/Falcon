@@ -65,7 +65,8 @@
         <profile name="external">
           <settings>
             <param name="sip-port" value="5080"/>
-            <param name="sip-ip" value="0.0.0.0"/>
+            <!-- run.sh sets this: 127.0.0.1 on a host network, 0.0.0.0 behind a published port. -->
+            <param name="sip-ip" value="FALCON_E2E_SIP_IP"/>
             <param name="rtp-ip" value="$${local_ip_v4}"/>
             <param name="ext-sip-ip" value="$${local_ip_v4}"/>
             <param name="ext-rtp-ip" value="$${local_ip_v4}"/>

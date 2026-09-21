@@ -171,10 +171,12 @@ wait_port() {
 }
 
 if [ "$(uname -s)" = "Linux" ]; then
-  FS_NET=(--network host); AST_NET=(--network host)
+  FS_NET=(--network host); AST_NET=(--network host); FS_SIP_IP=127.0.0.1
 else
-  FS_NET=(-p 5080:5080/udp); AST_NET=(-p 5060:5060/udp)
+  FS_NET=(-p 5080:5080/udp); AST_NET=(-p 5060:5060/udp); FS_SIP_IP=0.0.0.0
 fi
+mkdir -p "$E2E_TMP/freeswitch"
+sed "s#FALCON_E2E_SIP_IP#${FS_SIP_IP}#" adapters/e2e/freeswitch/freeswitch.xml >"$E2E_TMP/freeswitch/freeswitch.xml"
 
 # Real Asterisk from adapters/e2e/asterisk/Dockerfile. A reject hangs up
 # with cause 21, which is 403 on the wire. An allowed call lands in
@@ -201,7 +203,7 @@ if [ -n "${FREESWITCH_IMAGE:-}" ]; then
   docker rm -f falcon-e2e-freeswitch >/dev/null 2>&1 || true
   docker run -d --name falcon-e2e-freeswitch "${FS_NET[@]}" \
     -e FALCON_URL="${FALCON_IN_CONTAINER}" -e FALCON_TOKEN="$TOKEN" \
-    -v "$PWD/adapters/e2e/freeswitch:/etc/freeswitch:ro" \
+    -v "$E2E_TMP/freeswitch:/etc/freeswitch:ro" \
     -v "$PWD/adapters/freeswitch/falcon.lua:/usr/share/freeswitch/scripts/falcon.lua:ro" \
     -v "$PWD/adapters/freeswitch/falcon_hangup.lua:/usr/share/freeswitch/scripts/falcon_hangup.lua:ro" \
     --entrypoint freeswitch "$FREESWITCH_IMAGE" -nonat -nf -nc -conf /etc/freeswitch -log /tmp -db /tmp -run /tmp >/dev/null
