@@ -41,6 +41,19 @@ type Enrichment struct {
 	// Honeypot marks a call to a number the operator listed as unassigned.
 	// Nobody legitimate dials an unassigned number.
 	Honeypot bool
+	// BCID is the CallerAPI proof check. Nil when the key is missing, the
+	// flag is off, or the check failed open.
+	BCID *BCID
+}
+
+// BCID is one CallerAPI verify answer used during scoring.
+type BCID struct {
+	Verdict  string
+	Action   string
+	Reason   string
+	Name     string
+	Verified bool
+	LogoURL  string
 }
 
 // CustomerCtx is the operator's own account and whether it may present
@@ -323,6 +336,13 @@ func (e *Engine) Score(s sipmsg.Snapshot, en Enrichment) Result {
 	if en.FirewallSpam {
 		add("voice_firewall_spam", "firewall", "Voice firewall marked this caller as spam", 55)
 	}
+	if en.BCID != nil && en.BCID.Action == "drop" {
+		add("bcid_spoofed", "bcid", "Business Caller ID marked this calling number as spoofed", 100)
+		hardBlock = true
+		if blockSource == "" {
+			blockSource = "bcid"
+		}
+	}
 	if en.IP != nil {
 		who := en.IP.Provider
 		if who == "" {
@@ -483,6 +503,21 @@ func (e *Engine) finish(s sipmsg.Snapshot, en Enrichment, reasons []Reason, tota
 		sig.ListRule = en.List.RuleID
 		sig.ListKind = en.List.Kind
 	}
+	if en.BCID != nil && en.BCID.Verdict != "" {
+		sig.BCID = en.BCID.Verdict
+		sig.BCIDName = sanitizeHeaderValue(en.BCID.Name)
+		headers["X-Falcon-BCID"] = en.BCID.Verdict
+		if sig.BCIDName != "" {
+			headers["X-Falcon-BCID-Name"] = sig.BCIDName
+			if rpid := remotePartyID(sig.BCIDName, s.FromUser, s.FromHost); rpid != "" {
+				headers["Remote-Party-ID"] = rpid
+			}
+		}
+		if en.BCID.Verified && en.BCID.LogoURL != "" {
+			headers["X-Falcon-BCID-Logo"] = en.BCID.LogoURL
+			headers["Call-Info"] = "<" + en.BCID.LogoURL + ">;purpose=icon"
+		}
+	}
 
 	return Result{
 		Action:      action,
@@ -495,7 +530,29 @@ func (e *Engine) finish(s sipmsg.Snapshot, en Enrichment, reasons []Reason, tota
 		Headers:     headers,
 		SwitchHints: action.Hints(),
 		Upsell:      buildUpsell(en),
+		BCID:        sig.BCID,
+		BCIDName:    sig.BCIDName,
 	}
+}
+
+func sanitizeHeaderValue(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 32 || r == 127 || r == '"' || r == '\\' {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(s))
+}
+
+func remotePartyID(name, user, host string) string {
+	name = sanitizeHeaderValue(name)
+	if name == "" || user == "" {
+		return ""
+	}
+	if host == "" {
+		host = "invalid"
+	}
+	return fmt.Sprintf(`"%s" <sip:%s@%s>;party=calling;screen=yes`, name, user, host)
 }
 
 func buildUpsell(en Enrichment) Upsell {

@@ -58,6 +58,7 @@ def main():
         "Contact",
         "Via",
         "Identity",
+        "X-BCID-Assertion",
         "Privacy",
         "Max-Forwards",
     ):
@@ -86,6 +87,7 @@ def main():
     hangup = "0"
     sample = "0"
     seconds = "20"
+    body = {}
     try:
         with urllib.request.urlopen(req, timeout=2) as resp:
             body = json.loads(resp.read().decode("utf-8"))
@@ -105,6 +107,21 @@ def main():
     agi('SET VARIABLE FALCON_SAMPLE "%s"' % sample)
     agi('SET VARIABLE FALCON_SAMPLE_SECONDS "%s"' % seconds)
     agi('SET VARIABLE FALCON_CALL_ID "%s"' % (headers.get("Call-ID") or "").replace('"', ""))
+
+    to_set = body.get("headers_to_set") or {}
+    bcid = body.get("bcid") or to_set.get("X-Falcon-BCID") or ""
+    bcid_name = body.get("bcid_name") or to_set.get("X-Falcon-BCID-Name") or ""
+    if bcid:
+        agi('SET VARIABLE FALCON_BCID "%s"' % str(bcid).replace('"', ""))
+        agi('SET VARIABLE PJSIP_HEADER(add,X-Falcon-BCID) "%s"' % str(bcid).replace('"', ""))
+    if bcid_name:
+        safe = str(bcid_name).replace('"', "")
+        agi('SET VARIABLE FALCON_BCID_NAME "%s"' % safe)
+        agi('SET VARIABLE CALLERID(name) "%s"' % safe)
+        agi('SET VARIABLE PJSIP_HEADER(add,X-Falcon-BCID-Name) "%s"' % safe)
+        rpid = to_set.get("Remote-Party-ID") or ""
+        if rpid:
+            agi('SET VARIABLE PJSIP_HEADER(add,Remote-Party-ID) "%s"' % str(rpid).replace('"', "'"))
 
 
 if __name__ == "__main__":

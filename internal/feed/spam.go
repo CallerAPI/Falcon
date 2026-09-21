@@ -235,3 +235,62 @@ func (l *Live) Lookup(ctx context.Context, phone string) (Lookup, error) {
 	}
 	return wrap.Data, nil
 }
+
+// BCID is one live CallerAPI /api/bcid/v1/verify answer.
+type BCID struct {
+	Verdict  string        `json:"verdict"`
+	Action   string        `json:"action"`
+	Reason   string        `json:"reason"`
+	Identity *BCIDIdentity `json:"identity"`
+}
+
+// BCIDIdentity is the name the switch may show.
+type BCIDIdentity struct {
+	Verified bool   `json:"verified"`
+	Name     string `json:"name"`
+	LogoID   string `json:"logo_id"`
+	LogoURL  string `json:"logo_url"`
+}
+
+// Verify asks CallerAPI whether the calling number announced this call.
+// The telco is not charged. Fail-open: a transport or HTTP error returns
+// an empty verdict so the switch does not drop the call.
+func (l *Live) Verify(ctx context.Context, from, to, assertion string) (BCID, error) {
+	var out BCID
+	if !l.Enabled() || from == "" || to == "" {
+		return out, nil
+	}
+	body, err := json.Marshal(map[string]string{
+		"from":      from,
+		"to":        to,
+		"assertion": assertion,
+	})
+	if err != nil {
+		return out, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(l.BaseURL, "/")+"/api/bcid/v1/verify", strings.NewReader(string(body)))
+	if err != nil {
+		return out, err
+	}
+	req.Header.Set("X-Auth", l.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+	client := l.HTTP
+	if client == nil {
+		client = &http.Client{Timeout: 2 * time.Second}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return out, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return out, nil
+	}
+	var wrap struct {
+		Data BCID `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wrap); err != nil {
+		return out, err
+	}
+	return wrap.Data, nil
+}

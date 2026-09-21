@@ -108,9 +108,14 @@ Actions:
 4. `reject` - drop the call.
 
 `X-Falcon-Block` is present on a hard reject and names the source:
-`denylist`, `spam_feed`, `ip_intel`, or `caller_id`. Send the `Identity`
-header when the switch has it. Without it Falcon cannot verify STIR/SHAKEN
-or name the signer.
+`denylist`, `spam_feed`, `ip_intel`, `caller_id`, or `bcid`. Send the
+`Identity` header when the switch has it. Without it Falcon cannot verify
+STIR/SHAKEN or name the signer.
+
+When Business Caller ID returns a name, Falcon also sets `bcid`,
+`bcid_name`, `X-Falcon-BCID`, `X-Falcon-BCID-Name`, and
+`Remote-Party-ID`. Apply those headers when the switch can inject them.
+Show `bcid_name` as the caller display name.
 
 ## SIP redirect listener
 

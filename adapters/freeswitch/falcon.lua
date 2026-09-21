@@ -55,6 +55,7 @@ local payload = {
     ["User-Agent"] = var("sip_user_agent") or "",
     ["P-Asserted-Identity"] = first(var("sip_P-Asserted-Identity"), var("sip_h_P-Asserted-Identity")),
     Identity = var("sip_h_Identity") or "",
+    ["X-BCID-Assertion"] = first(var("sip_h_X-BCID-Assertion"), var("sip_h_X-Bcid-Assertion")),
     Contact = asSIP(var("sip_contact_uri")),
     Via = var("sip_full_via") or "",
   },
@@ -153,6 +154,25 @@ session:setVariable("falcon_hangup_cause", cause)
 session:setVariable("falcon_call_id", var("sip_call_id") or "")
 session:setVariable("sip_h_X-Falcon-Action", action)
 session:setVariable("sip_h_X-Falcon-Score", score)
+local toSet = {}
+if decoded and decoded.headers_to_set then
+  toSet = decoded.headers_to_set
+end
+local bcid = (decoded and decoded.bcid) or toSet["X-Falcon-BCID"] or ""
+local bcidName = (decoded and decoded.bcid_name) or toSet["X-Falcon-BCID-Name"] or ""
+if bcid ~= "" then
+  session:setVariable("sip_h_X-Falcon-BCID", bcid)
+end
+if bcidName ~= "" then
+  session:setVariable("sip_h_X-Falcon-BCID-Name", bcidName)
+  session:setVariable("effective_caller_id_name", bcidName)
+end
+if toSet["Remote-Party-ID"] then
+  session:setVariable("sip_h_Remote-Party-ID", toSet["Remote-Party-ID"])
+end
+if toSet["Call-Info"] then
+  session:setVariable("sip_h_Call-Info", toSet["Call-Info"])
+end
 -- Report the outcome at hangup, and the clip when one was taken.
 session:setVariable("api_hangup_hook", "lua falcon_hangup.lua")
 

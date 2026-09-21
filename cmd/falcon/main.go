@@ -79,7 +79,7 @@ func main() {
 		}
 	}
 	var live *feed.Live
-	if cfg.FirewallEnabled() {
+	if cfg.FirewallEnabled() || cfg.BCIDEnabled() {
 		live = &feed.Live{BaseURL: cfg.CallerAPIBase, APIKey: cfg.CallerAPIKey}
 	}
 	var ipTable *ipintel.Table

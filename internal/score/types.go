@@ -33,6 +33,10 @@ type Result struct {
 	Headers     map[string]string `json:"headers_to_set"`
 	SwitchHints SwitchHints       `json:"switch_hints"`
 	Upsell      Upsell            `json:"upsell"`
+	// BCID and BCIDName are copied from headers_to_set so adapters that
+	// only read top-level fields can still show the name.
+	BCID     string `json:"bcid,omitempty"`
+	BCIDName string `json:"bcid_name,omitempty"`
 }
 
 // Signals are extracted facts that back the score.
@@ -75,6 +79,9 @@ type Signals struct {
 	// ListRule and ListKind name the operator rule that decided the call.
 	ListRule int64  `json:"list_rule,omitempty"`
 	ListKind string `json:"list_kind,omitempty"`
+	// BCID is the CallerAPI proof verdict when a key is set.
+	BCID     string `json:"bcid,omitempty"`
+	BCIDName string `json:"bcid_name,omitempty"`
 }
 
 // SwitchHints map the action onto common switch controls.

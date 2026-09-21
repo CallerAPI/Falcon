@@ -77,6 +77,7 @@ The System view lists the live destinations. In full:
 | Your IP intel URL | On the refresh timer | A GET. Only if you set one. |
 | `api.callerapi.com` (feed) | On the refresh timer | A GET for the spam list. Only with a key and `FALCON_SPAM_FEED=true`. |
 | `api.callerapi.com` (live lookup) | Per screened INVITE | The calling number. Only with a key and `FALCON_VOICE_FIREWALL=true`. |
+| `api.callerapi.com` (BCID verify) | Per screened INVITE | The calling number, the called number, and an optional in-band assertion. Only with a key and `FALCON_BCID=true` (the default). Off with `FALCON_BCID=false`. |
 | `api.callerapi.com` (telemetry) | Every 30 seconds | Redacted screening events: decision, score, reasons, calling number, source IP, User-Agent, signer, verification result, SIP headers with the called party replaced by `REDACTED`, no `Identity` header, no SDP. On by default. Off with `FALCON_SHARE=false` or the System view. See the README section "Telemetry". |
 | Your S3 endpoint | Every 30 seconds | Screened events as JSONL, unredacted. Only with your credentials. |
 

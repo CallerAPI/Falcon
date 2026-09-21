@@ -35,6 +35,10 @@ thousand nodes run the same build with the same configuration.
    parties, rules, server-sent events, CSV export, `/metrics` for Prometheus.
 7. **Optional paid connections** to CallerAPI: the spam database feed and the
    live voice firewall lookup.
+8. **Business Caller ID.** On by default when a CallerAPI key is set. Falcon
+   verifies each INVITE for free. A spoofed registered brand is a hard
+   reject. A verified name is put in `X-Falcon-BCID-Name` and
+   `Remote-Party-ID` when the switch can set those headers.
 
 ## Telemetry: on by default, called party redacted
 
@@ -498,9 +502,26 @@ is your storage.
 Telemetry to CallerAPI is separate from both and is described above. It is
 redacted; the S3 export is not, because that bucket is yours.
 
+## Business Caller ID
+
+On when `CALLERAPI_API_KEY` is set. `FALCON_BCID=false` turns it off.
+
+Falcon calls `POST /api/bcid/v1/verify` on each screen. The telco is not
+charged. The registered business pays 2 credits when it announces the
+call. A verified check gives the telco 1 credit.
+
+A spoofed registered brand is a hard reject (`X-Falcon-Block: bcid`).
+A verified or unverified name is returned in `bcid_name` and in
+`headers_to_set`. Adapters that can inject SIP headers set
+`X-Falcon-BCID`, `X-Falcon-BCID-Name`, and `Remote-Party-ID`. The SIP
+redirect listener also copies `Remote-Party-ID` and `Call-Info`.
+
+Do not put a business API key or a publish token on the switch.
+
 ## Paid add-ons
 
-The engine, verification, lists, IP intel, dashboard, and API stay free.
+The engine, verification, lists, IP intel, dashboard, API, and Business
+Caller ID stay free for the telco.
 
 Spam database feed:
 

@@ -394,7 +394,7 @@ func (s *Server) response(req *sipmsg.Message, status int, reason string, extra 
 		b.WriteString("\r\n")
 	}
 	for k, v := range extra {
-		if v == "" || (!strings.HasPrefix(k, "X-Falcon-") && k != "Accept") {
+		if v == "" || !passthroughSIPHeader(k) {
 			continue
 		}
 		b.WriteString(k)
@@ -404,6 +404,15 @@ func (s *Server) response(req *sipmsg.Message, status int, reason string, extra 
 	}
 	b.WriteString("Content-Length: 0\r\n\r\n")
 	return []byte(b.String())
+}
+
+func passthroughSIPHeader(k string) bool {
+	switch k {
+	case "Accept", "Remote-Party-ID", "Call-Info":
+		return true
+	default:
+		return strings.HasPrefix(k, "X-Falcon-")
+	}
 }
 
 // sourceIP is the address the switch would report: an explicit

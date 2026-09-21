@@ -39,6 +39,9 @@ type Config struct {
 	CallerAPIBase string
 	SpamFeed      bool
 	VoiceFirewall bool
+	// BCID verifies each INVITE against CallerAPI Business Caller ID.
+	// On by default when a key is present. Verify is free for the telco.
+	BCID bool
 	// Share sends redacted screening events to CallerAPI. On by default.
 	// The called party never leaves the host; see internal/share.
 	Share       bool
@@ -191,6 +194,7 @@ func Load() Config {
 		CallerAPIBase: strings.TrimRight(env("CALLERAPI_API_BASE", "https://api.callerapi.com"), "/"),
 		SpamFeed:      envBool("FALCON_SPAM_FEED", false),
 		VoiceFirewall: envBool("FALCON_VOICE_FIREWALL", false),
+		BCID:          envBool("FALCON_BCID", true),
 		Share:         envBool("FALCON_SHARE", true),
 		FanoutPerHour: envInt("FALCON_FANOUT_PER_HOUR", 30),
 		SequentialN:   envInt("FALCON_SEQUENTIAL_N", 5),
@@ -265,6 +269,10 @@ func (c Config) FirewallEnabled() bool {
 	return c.VoiceFirewall && c.CallerAPIKey != ""
 }
 
+func (c Config) BCIDEnabled() bool {
+	return c.BCID && c.CallerAPIKey != ""
+}
+
 // IPIntelSource returns the URL the table loads from. An explicit URL wins.
 // Otherwise the hosted CallerAPI table is used when IPIntel is on and a key
 // is present. Empty means no remote source.
@@ -330,7 +338,7 @@ func (c Config) Redacted() map[string]any {
 		"thresholds":         map[string]int{"flag": c.FlagScore, "challenge": c.ChallengeScore, "reject": c.RejectScore},
 		"velocity":           map[string]any{"window": c.VelocityWindow.String(), "ip": c.VelocityIP, "from": c.VelocityFrom, "scan": c.VelocityScan},
 		"s3":                 map[string]any{"enabled": c.S3Enabled(), "endpoint": c.S3Endpoint, "bucket": c.S3Bucket, "prefix": c.S3Prefix},
-		"callerapi": map[string]any{"base": c.CallerAPIBase, "key": set(c.CallerAPIKey), "spam_feed": c.FeedEnabled(), "voice_firewall": c.FirewallEnabled(), "share": c.Share, "reputation": c.Reputation, "reputation_enforce": c.ReputationEnforce,
+		"callerapi": map[string]any{"base": c.CallerAPIBase, "key": set(c.CallerAPIKey), "spam_feed": c.FeedEnabled(), "voice_firewall": c.FirewallEnabled(), "bcid": c.BCIDEnabled(), "share": c.Share, "reputation": c.Reputation, "reputation_enforce": c.ReputationEnforce,
 			"voice":     map[string]any{"provider": c.VoiceProvider, "stt_base": c.VoiceSTTBaseURL, "stt_model": c.VoiceSTTModel, "stt_key": set(c.VoiceSTTAPIKey), "chat_base": c.VoiceChatBaseURL, "chat_model": c.VoiceChatModel, "chat_key": set(c.VoiceChatAPIKey), "report": c.VoiceReport, "samples_per_hour": c.VoiceSamplesPerHour, "samples_per_customer_hour": c.VoiceSamplesPerCust, "clip_seconds": c.VoiceClipSeconds, "sample_without_ai": c.VoiceSampleWithoutAI},
 			"assistant": map[string]any{"provider": c.AssistantProvider, "base": c.AssistantBaseURL, "model": c.AssistantModel, "key": set(c.AssistantAPIKey)},
 			"behaviour": map[string]any{"fanout_per_hour": c.FanoutPerHour, "sequential_n": c.SequentialN}, "feed_refresh": c.FeedRefresh.String()},

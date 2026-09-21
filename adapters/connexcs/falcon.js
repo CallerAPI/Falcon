@@ -25,9 +25,10 @@ const FALCON_TOKEN = env.FALCON_TOKEN || '';
 const MODE = env.FALCON_MODE || 'monitor';
 
 // In enforce mode, reject only on a hard block: an operator deny rule, a
-// spam feed hit, an IP intel block row, or a caller id the customer does
-// not own. Heuristic scores alone never drop a call. Set false only after
-// the Traffic view shows the score thresholds fit your traffic.
+// spam feed hit, an IP intel block row, a caller id the customer does
+// not own, or a spoofed Business Caller ID. Heuristic scores alone never
+// drop a call. Set false only after the Traffic view shows the score
+// thresholds fit your traffic.
 const ENFORCE_HARD_BLOCKS_ONLY = env.FALCON_HARD_BLOCKS_ONLY !== 'false';
 
 // Add X-Falcon-* headers to the egress INVITEs on allow and flag. Off until
@@ -142,7 +143,7 @@ async function main(data = {}) {
     const toSet = result.headers_to_set || {};
     const add = [];
     for (const key of Object.keys(toSet)) {
-      if (key.indexOf('X-Falcon-') === 0 && toSet[key]) {
+      if ((key.indexOf('X-Falcon-') === 0 || key === 'Remote-Party-ID' || key === 'Call-Info') && toSet[key]) {
         add.push({ key: key, value: String(toSet[key]) });
       }
     }

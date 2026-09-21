@@ -118,6 +118,31 @@ func TestFeedAndFirewallUpsell(t *testing.T) {
 	}
 }
 
+func TestBCIDSpoofedRejectsAndVerifiedSetsHeaders(t *testing.T) {
+	raw := invite("+18883578668", "+14155550123", "Asterisk", "", "70")
+	m, _ := sipmsg.Parse(raw)
+	snap := sipmsg.SnapshotFrom(m, "203.0.113.8")
+
+	spoofed := testEngine().Score(snap, Enrichment{BCID: &BCID{Verdict: "spoofed", Action: "drop"}})
+	if spoofed.Action != ActionReject || spoofed.Headers["X-Falcon-Block"] != "bcid" {
+		t.Fatalf("spoofed: action=%s block=%q", spoofed.Action, spoofed.Headers["X-Falcon-Block"])
+	}
+
+	verified := testEngine().Score(snap, Enrichment{BCID: &BCID{
+		Verdict: "verified", Action: "allow", Name: "✓ Springfield Bank", Verified: true,
+		LogoURL: "https://api.callerapi.com/api/bcid/v1/logos/bab28c367e87d8cf",
+	}})
+	if verified.Action == ActionReject {
+		t.Fatal("a verified call was rejected")
+	}
+	if verified.BCID != "verified" || verified.Headers["X-Falcon-BCID-Name"] == "" {
+		t.Fatalf("verified headers = %#v", verified.Headers)
+	}
+	if verified.Headers["Remote-Party-ID"] == "" || verified.Headers["Call-Info"] == "" {
+		t.Fatalf("display headers missing: %#v", verified.Headers)
+	}
+}
+
 func TestAnonymousWithoutPAI(t *testing.T) {
 	raw := "INVITE sip:+15551212@ex SIP/2.0\n" +
 		"From: \"Anonymous\" <sip:anonymous@anonymous.invalid>;tag=1\n" +

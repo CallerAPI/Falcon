@@ -52,6 +52,8 @@ type Snapshot struct {
 	HasSDP      bool
 	SDPZero     bool
 	SourceIP    string
+	// BCIDAssertion is an in-band compact JWS from X-BCID-Assertion.
+	BCIDAssertion string
 }
 
 func SnapshotFrom(m *Message, sourceIP string) Snapshot {
@@ -79,6 +81,7 @@ func SnapshotFrom(m *Message, sourceIP string) Snapshot {
 	}
 	s.PAIUser, _ = uriUserHost(m.Get("P-Asserted-Identity"))
 	s.RPIDUser, _ = uriUserHost(m.Get("Remote-Party-ID"))
+	s.BCIDAssertion = strings.TrimSpace(m.Get("X-BCID-Assertion"))
 	_, s.ContactHost = uriUserHost(s.Contact)
 	if s.ContactHost == "" {
 		s.ContactHost = hostOnly(s.Contact)

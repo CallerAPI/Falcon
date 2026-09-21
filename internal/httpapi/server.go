@@ -441,11 +441,28 @@ func (s *Server) enrich(ctx context.Context, snap sipmsg.Snapshot) (score.Enrich
 		en.FeedHit = s.Feed.Contains(snap.FromUser)
 	}
 	if s.Live != nil && s.Cfg.FirewallEnabled() && snap.FromUser != "" {
-		ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
-		defer cancel()
-		if lu, err := s.Live.Lookup(ctx, snap.FromUser); err == nil {
+		fctx, fcancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+		if lu, err := s.Live.Lookup(fctx, snap.FromUser); err == nil {
 			en.FirewallSpam = lu.IsSpam || lu.SpamScore >= 70
 		}
+		fcancel()
+	}
+	if s.Live != nil && s.Cfg.BCIDEnabled() && snap.FromUser != "" && snap.ToUser != "" {
+		vctx, vcancel := context.WithTimeout(ctx, 800*time.Millisecond)
+		if v, err := s.Live.Verify(vctx, snap.FromUser, snap.ToUser, snap.BCIDAssertion); err == nil && v.Verdict != "" {
+			row := &score.BCID{Verdict: v.Verdict, Action: v.Action, Reason: v.Reason}
+			if v.Identity != nil {
+				row.Name = v.Identity.Name
+				row.Verified = v.Identity.Verified
+				logo := v.Identity.LogoURL
+				if strings.HasPrefix(logo, "/") {
+					logo = strings.TrimRight(s.Cfg.CallerAPIBase, "/") + logo
+				}
+				row.LogoURL = logo
+			}
+			en.BCID = row
+		}
+		vcancel()
 	}
 	return en, verification
 }
