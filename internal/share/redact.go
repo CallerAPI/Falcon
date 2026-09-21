@@ -251,7 +251,10 @@ func (s scrubber) sip(raw string) string {
 		case droppedHeaders[canon]:
 			out = append(out, strings.TrimSpace(name)+": "+Redacted)
 		case calledPartyHeaders[canon]:
-			out = append(out, strings.TrimSpace(name)+": "+redactNameAddr(strings.TrimSpace(value)))
+			// redactNameAddr hides the URI user. Digits glued to a
+			// scheme (T:4155550123tel:) or left in header params still
+			// need the same digit pass used on Call-ID and From.
+			out = append(out, strings.TrimSpace(name)+": "+s.text(redactNameAddr(strings.TrimSpace(value))))
 		case canon == "content-length":
 			out = append(out, strings.TrimSpace(name)+": 0")
 		default:
