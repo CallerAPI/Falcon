@@ -20,6 +20,7 @@ Fail open if Falcon does not answer. Every adapter here does.
 | ConnexCS | `connexcs/falcon.js` (ScriptForge App) for INVITE, `connexcs/falcon-live.xml` (ConneXML) for live voice | Node harness in CI, all three enforcement postures |
 | Sansay VSXi, Sippy, PortaSwitch, Telinta, Metaswitch, Ribbon, Oracle SBC, AudioCodes, Cisco CUBE, TelcoBridges, BroadWorks, VOS3000, and any switch that can route to a SIP redirect server | SIP redirect listener, no adapter file | UDP and TCP tests, `sipsend` in CI |
 | Telnyx Call Control (Voice API v2) | `telnyx/falcon.js` in your webhook handler | Node harness in CI: signed webhooks, all three enforcement postures, outbound, outcome |
+| Telnyx SIP connection | The adapter of the switch it points at; see [Telnyx](#sip-connection) for the connection settings | Through that switch's tests |
 | 2600Hz Kazoo | HTTP from a Pivot callflow | Not yet |
 | Twilio, Bandwidth, Vonage, Plivo, SignalWire | HTTP from your voice webhook | Not yet |
 
@@ -337,12 +338,17 @@ Ask ConnexCS for a hangup API and Falcon will call it.
 
 ## Telnyx
 
-For a Telnyx Call Control application (Voice API v2 webhooks). Telnyx runs
-in the cloud, so Falcon needs a public HTTPS URL and a token, as with
-ConnexCS. The adapter is a Node module with no dependencies that runs in the
-webhook handler you already have. Telnyx sends no SIP to your host; to
-screen with the full INVITE, route the numbers over a SIP connection to your
-own switch and use its adapter instead.
+Two ways in. A Call Control application sends webhooks, and
+`telnyx/falcon.js` screens them. A SIP connection (IP, credential, or FQDN)
+sends the INVITE to your own switch, and that switch's adapter screens it
+with no Telnyx code. The SIP connection gives Falcon the full request,
+including the Identity header, so Falcon verifies STIR/SHAKEN itself.
+
+### Call Control
+
+Telnyx runs in the cloud, so Falcon needs a public HTTPS URL and a token, as
+with ConnexCS. The adapter is a Node module with no dependencies that runs
+in the webhook handler you already have.
 
 1. Copy `telnyx/falcon.js` next to your handler. Set `FALCON_URL`,
    `FALCON_TOKEN`, `TELNYX_API_KEY`, and `TELNYX_PUBLIC_KEY` (Portal > Keys
@@ -389,6 +395,30 @@ every call starts at 30 points (`missing_user_agent`, `missing_identity`,
 honeypots, and the behaviour rules all apply. With more than one process
 behind the webhook URL, pass a shared `store` with async `get`, `set`, and
 `delete` so the outcome finds the answered time.
+
+### SIP connection
+
+Point the connection at your Asterisk, FreeSWITCH, Kamailio, or OpenSIPS
+and install that switch's adapter as above. On the connection's inbound
+settings:
+
+1. Enable SHAKEN/STIR (`shaken_stir_enabled`). It is off by default, and
+   without it Telnyx does not forward the Identity header and every call
+   scores `missing_identity`.
+2. Set the ANI number format (`ani_number_format`) to `+E.164`. The default,
+   `E.164-national`, can present domestic callers without the country code.
+   Deny rules written in E.164 then miss them, and a correctly signed call
+   scores `shaken_orig_mismatch` because the PASSporT carries the full
+   number.
+
+Run Falcon with `FALCON_PROFILE=carrier` on a busy connection. Every INVITE
+comes from a few Telnyx signaling IPs, so the per-IP velocity rules of the
+default profile fire on normal traffic. Do not add those IPs as allow rules;
+an allow rule ends scoring and nothing from the connection would be screened.
+IP intel and the fingerprint name Telnyx's edge, not the caller. Lists,
+STIR/SHAKEN, the spam feed, honeypots, the behaviour rules, and voice
+sampling work as on any trunk. Mark outbound calls with `falcon_direction`
+and `falcon_customer` as usual.
 
 ## curl
 

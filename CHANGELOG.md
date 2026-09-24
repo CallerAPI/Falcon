@@ -9,7 +9,10 @@ Added
   signature, screens `call.initiated`, rejects hard blocks before answer
   in `enforce` (`monitor` by default), hangs up outbound caller ids a
   customer does not own, and reports the outcome at hangup. Tested with a
-  Node harness against a live Falcon and a stand-in Telnyx API.
+  Node harness against a live Falcon and a stand-in Telnyx API. The
+  adapters README also covers Telnyx SIP connections into your own switch:
+  enable SHAKEN/STIR, set the ANI format to `+E.164`, run the carrier
+  profile.
 - `FALCON_PROFILE=carrier` for class 4 and wholesale ingress: velocity
   rules off, scores only flag, hard blocks still reject. The trunk defaults
   rejected a normal call center CLI within its first hour.
