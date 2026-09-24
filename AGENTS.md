@@ -54,6 +54,7 @@ lines and posts to `/v1/screen`, then reports the outcome at hangup.
 | Asterisk | `adapters/asterisk/falcon.agi`, `falcon_hangup.agi`, `extensions.conf` | agi-bin and the inbound and outbound contexts |
 | FreeSWITCH | `adapters/freeswitch/falcon.lua`, `falcon_hangup.lua`, `dialplan.xml` | scripts and the inbound dialplan |
 | Kamailio | `adapters/kamailio/falcon.cfg` | `import_file` and `route(FALCON_SCREEN)` on INVITE |
+| Telnyx Call Control | `adapters/telnyx/falcon.js` | the Call Control webhook handler: `verify`, acknowledge, then `handle` |
 
 For outbound calls (the operator's own customers), set `falcon_direction=outbound`
 and `falcon_customer=<account id>` on the channel before the adapter runs,

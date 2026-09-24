@@ -4,6 +4,12 @@
 
 Added
 
+- Telnyx Call Control adapter (`adapters/telnyx/falcon.js`), a Node module
+  with no dependencies for the webhook handler. Verifies the Ed25519
+  signature, screens `call.initiated`, rejects hard blocks before answer
+  in `enforce` (`monitor` by default), hangs up outbound caller ids a
+  customer does not own, and reports the outcome at hangup. Tested with a
+  Node harness against a live Falcon and a stand-in Telnyx API.
 - `FALCON_PROFILE=carrier` for class 4 and wholesale ingress: velocity
   rules off, scores only flag, hard blocks still reject. The trunk defaults
   rejected a normal call center CLI within its first hour.

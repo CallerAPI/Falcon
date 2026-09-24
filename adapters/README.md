@@ -19,8 +19,9 @@ Fail open if Falcon does not answer. Every adapter here does.
 | OpenSIPS 3.x | `opensips/falcon.cfg`, or `opensips/falcon_async.cfg` for a busy proxy | Real OpenSIPS 3.6 container in CI, both routes |
 | ConnexCS | `connexcs/falcon.js` (ScriptForge App) for INVITE, `connexcs/falcon-live.xml` (ConneXML) for live voice | Node harness in CI, all three enforcement postures |
 | Sansay VSXi, Sippy, PortaSwitch, Telinta, Metaswitch, Ribbon, Oracle SBC, AudioCodes, Cisco CUBE, TelcoBridges, BroadWorks, VOS3000, and any switch that can route to a SIP redirect server | SIP redirect listener, no adapter file | UDP and TCP tests, `sipsend` in CI |
+| Telnyx Call Control (Voice API v2) | `telnyx/falcon.js` in your webhook handler | Node harness in CI: signed webhooks, all three enforcement postures, outbound, outcome |
 | 2600Hz Kazoo | HTTP from a Pivot callflow | Not yet |
-| Twilio, Telnyx, Bandwidth, Vonage, Plivo, SignalWire | HTTP from your voice webhook | Not yet |
+| Twilio, Bandwidth, Vonage, Plivo, SignalWire | HTTP from your voice webhook | Not yet |
 
 Platforms with no call hook and no redirect routing cannot use Falcon
 in line. 3CX and Yeastar are in that group.
@@ -334,6 +335,61 @@ with `call_id`, `customer_id`, `calling_number`, and `suggested_action`,
 so your automation can end the call, unassign the DID, and open the case.
 Ask ConnexCS for a hangup API and Falcon will call it.
 
+## Telnyx
+
+For a Telnyx Call Control application (Voice API v2 webhooks). Telnyx runs
+in the cloud, so Falcon needs a public HTTPS URL and a token, as with
+ConnexCS. The adapter is a Node module with no dependencies that runs in the
+webhook handler you already have. Telnyx sends no SIP to your host; to
+screen with the full INVITE, route the numbers over a SIP connection to your
+own switch and use its adapter instead.
+
+1. Copy `telnyx/falcon.js` next to your handler. Set `FALCON_URL`,
+   `FALCON_TOKEN`, `TELNYX_API_KEY`, and `TELNYX_PUBLIC_KEY` (Portal > Keys
+   & Credentials > Public Key), or pass them to `create()`.
+2. Read the webhook body as raw text, verify it, acknowledge, then handle:
+
+   ```js
+   const falcon = require('./falcon').create();
+
+   app.post('/telnyx', express.text({ type: '*/*' }), async (req, res) => {
+     let event;
+     try {
+       event = falcon.verify(req.body, req.headers);
+     } catch (e) {
+       return res.sendStatus(400);
+     }
+     res.sendStatus(200);
+     const out = await falcon.handle(event);
+     if (out.rejected) return;
+     // your answer, transfer, or gather logic
+   });
+   ```
+
+   Telnyx parks the call until your first command, so screening after the
+   acknowledgement delays nothing. On `call.initiated` the adapter screens
+   the call; on `call.answered` and `call.hangup` it reports the outcome to
+   `/v1/outcome`. The leg id (`call_leg_id`) is the Call-ID in Falcon.
+3. Leave `FALCON_MODE` at `monitor`. Nothing is rejected. After a week, set
+   it to `enforce`. Only hard blocks reject, with the `reject` command
+   (`CALL_REJECTED`), before the call is answered. Set
+   `FALCON_HARD_BLOCKS_ONLY=false` only after the Traffic view shows the
+   thresholds fit your traffic.
+4. Outbound: pass `customerFor(payload)` to `create()` and return the
+   account id of the customer placing the call, for example from the `tags`
+   you set on `dial`. Falcon hangs up a caller id that customer does not
+   own. Legs with no customer, such as transfer legs, are not screened.
+5. Enable "SHAKEN/STIR" on the application. Falcon cannot verify it from a
+   webhook, but Telnyx's attestation and call screening result are returned
+   in `out.telnyx` for your logs.
+
+A webhook carries no source IP, User-Agent, Identity header, or SDP, so
+every call starts at 30 points (`missing_user_agent`, `missing_identity`,
+`invite_no_sdp`). Lists, the spam feed, the customer caller id check,
+honeypots, and the behaviour rules all apply. With more than one process
+behind the webhook URL, pass a shared `store` with async `get`, `set`, and
+`delete` so the outcome finds the answered time.
+
 ## curl
 
 ```bash
@@ -353,7 +409,8 @@ ASTERISK_E2E=1 FREESWITCH_IMAGE=safarov/freeswitch:latest \
 ```
 
 The script starts a Falcon with a token and one deny rule, then drives the
-SIP listener, the AGI, the Lua script, the ScriptForge app, and with Docker
+SIP listener, the AGI, the Lua script, the ScriptForge app, the Telnyx
+webhook adapter, and with Docker
 a real Asterisk, a real FreeSWITCH, a real Kamailio (sync and async), and a
 real OpenSIPS (sync and async). Each adapter must reject the denied number
 and pass the clean one, and must send the token. Works on Linux and on

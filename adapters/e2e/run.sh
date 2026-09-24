@@ -65,6 +65,13 @@ else
   echo "node not installed, skipped"
 fi
 
+echo "== telnyx call control"
+if command -v node >/dev/null; then
+  node adapters/e2e/telnyx_harness.js "http://127.0.0.1:${PORT}/v1/screen" "$DENY" "$CLEAN" || fail=1
+else
+  echo "node not installed, skipped"
+fi
+
 # Docker on Linux shares the host network, so the proxy reaches Falcon on
 # 127.0.0.1 and sipsend reaches the proxy on 127.0.0.1:5060. Docker Desktop
 # on macOS does not, so the proxy port is published and the proxy calls
