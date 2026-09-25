@@ -458,6 +458,46 @@ All endpoints take the token. Ranges are `range=15m|1h|6h|24h|7d|30d` or
 | `GET /v1/status`, `GET /v1/config`, `GET /v1/health` | State, redacted configuration, liveness. |
 | `GET /metrics` | Prometheus text. Send `FALCON_METRICS_TOKEN`, or `FALCON_TOKEN` when the metrics token is empty. |
 
+## Plugins
+
+A plugin is a catalog row on CallerAPI, not a new Falcon binary. Falcon
+asks `GET /api/falcon/v1/plugins` once a minute when `CALLERAPI_API_KEY` is
+set. Grant the plugin to that account and the next refresh loads it.
+`FALCON_PLUGINS=false` turns the catalog off.
+
+The contract is `sdk.Input` and `sdk.Output` in `sdk/plugin.go`. A plugin
+names the fields it may read. The called number, the raw SIP message, and
+the Identity header are not fields. Unknown names are dropped.
+
+A feed plugin matches a local key set. A live plugin calls CallerAPI, which
+calls the partner. Live checks share one budget, `FALCON_PLUGIN_BUDGET`
+(default 400 ms). A late or failed plugin does not change the decision.
+
+`mode` `monitor` records the hit and does not drop the call. `mode`
+`enforce` may raise the action. It does not lower a harder one.
+
+A plugin with `kind` `view` does not run on the INVITE path. It has a
+dashboard page. `surface` `native` is a table or a set of stats. Falcon
+draws that from JSON. `surface` `iframe` is HTML that Falcon fetches
+and shows on its own host. The browser does not call CallerAPI for that
+page. A partner address must be a public http or https URL. Private and
+link-local addresses are refused.
+
+The operator search filters a page. It is not the screened called number.
+The called number stays on the host.
+
+A native page can take a file. Falcon sends that file to CallerAPI with
+the API key. CallerAPI reads numbers out of the bytes. CSV, spreadsheets,
+PDF, JSON, and plain text all work. The file does not need a fixed column.
+Each new number costs 1 credit. A number that was already checked is not
+charged again. The page lists the inventory. Flagged numbers are first.
+
+The same page can recheck that list on a schedule. Pick the interval, the
+days, the hours, and the timezone. Cron runs the checks. Each recheck costs
+1 credit per number. A list that is still running does not start a second
+pass. If the account is out of credits, the current results stay and the
+next slot tries again.
+
 ## Monitor
 
 `FALCON_MODE=monitor` scores every INVITE and stores the real decision.

@@ -26,6 +26,7 @@ import (
 	"github.com/callerapi/falcon/internal/httpapi"
 	"github.com/callerapi/falcon/internal/identity"
 	"github.com/callerapi/falcon/internal/ipintel"
+	"github.com/callerapi/falcon/internal/plugin"
 	"github.com/callerapi/falcon/internal/reputation"
 	"github.com/callerapi/falcon/internal/score"
 	"github.com/callerapi/falcon/internal/shaken"
@@ -265,6 +266,12 @@ func main() {
 	}
 	if cfg.FleetHub {
 		log.Printf("falcon fleet: hub on /v1/fleet")
+	}
+	if cfg.Plugins && cfg.CallerAPIKey != "" {
+		plugins := plugin.New(cfg.CallerAPIBase, cfg.CallerAPIKey, cfg.PluginRefresh, cfg.PluginBudget)
+		api.Plugins = plugins
+		go plugins.Run(ctx)
+		log.Printf("falcon plugins: catalog from %s every %s, live budget %s", cfg.CallerAPIBase, cfg.PluginRefresh, cfg.PluginBudget)
 	}
 	if cfg.UpdateCheck {
 		go (&update.Checker{

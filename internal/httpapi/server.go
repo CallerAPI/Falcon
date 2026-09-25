@@ -28,6 +28,7 @@ import (
 	"github.com/callerapi/falcon/internal/fleet"
 	"github.com/callerapi/falcon/internal/ipintel"
 	"github.com/callerapi/falcon/internal/lists"
+	"github.com/callerapi/falcon/internal/plugin"
 	"github.com/callerapi/falcon/internal/reputation"
 	"github.com/callerapi/falcon/internal/score"
 	"github.com/callerapi/falcon/internal/shaken"
@@ -35,6 +36,7 @@ import (
 	"github.com/callerapi/falcon/internal/store"
 	"github.com/callerapi/falcon/internal/update"
 	"github.com/callerapi/falcon/internal/voice"
+	"github.com/callerapi/falcon/sdk"
 )
 
 // MaxBody caps a screened SIP message. Configurable at start.
@@ -58,7 +60,8 @@ type Server struct {
 	Alerts *alerts.Watcher
 	// Fleet is the cached caller counts from the other switches. Nil when
 	// this process is not a fleet member.
-	Fleet *fleet.Cache
+	Fleet   *fleet.Cache
+	Plugins *plugin.Runtime
 	// Release is the last public-version comparison.
 	releaseMu sync.RWMutex
 	release   update.Status
@@ -154,6 +157,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/voice/verdict", s.handleVoiceVerdict)
 	mux.HandleFunc("/v1/customers", s.withAuth(s.handleCustomers))
 	mux.HandleFunc("/v1/customers/", s.withAuth(s.handleCustomer))
+	mux.HandleFunc("/v1/plugins", s.withAuth(s.handlePlugins))
+	mux.HandleFunc("/v1/plugins/", s.withAuth(s.handlePluginView))
 
 	if s.Web != nil {
 		fileServer := http.FileServer(http.FS(s.Web))
@@ -170,14 +175,18 @@ func (s *Server) Handler() http.Handler {
 			fileServer.ServeHTTP(w, r)
 		})
 	}
-	return securityHeaders(mux)
+	return securityHeaders(mux, sdk.FrameOrigin(s.Cfg.CallerAPIBase))
 }
 
 // securityHeaders is applied to every response. The dashboard has no inline
 // scripts, so script-src is 'self'. Inline style attributes set bar widths,
 // so style-src allows them. Nothing may frame the dashboard. No referrer
-// leaves the host.
-func securityHeaders(next http.Handler) http.Handler {
+// leaves the host. frameSrc is the CallerAPI origin a plugin page may use.
+func securityHeaders(next http.Handler, frameSrc string) http.Handler {
+	csp := "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+	if frameSrc != "" {
+		csp += "; frame-src " + frameSrc
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
@@ -186,7 +195,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
-		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		h.Set("Content-Security-Policy", csp)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -220,7 +229,7 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
-		if isMutation(r) && formCapable(r) && r.URL.Path != "/v1/audio" {
+		if isMutation(r) && formCapable(r) && r.URL.Path != "/v1/audio" && !pluginFileUpload(r) {
 			writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "send application/json or application/sip"})
 			return
 		}
@@ -232,6 +241,20 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+// pluginFileUpload is a file post from the dashboard. A cross-site form
+// cannot set X-Falcon-Token or a Bearer header, so those requests are allowed
+// to use multipart or plain text.
+func pluginFileUpload(r *http.Request) bool {
+	path := r.URL.Path
+	if !strings.HasPrefix(path, "/v1/plugins/") || !strings.HasSuffix(path, "/import") {
+		return false
+	}
+	if r.Header.Get("X-Falcon-Token") != "" {
+		return true
+	}
+	return strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ")
 }
 
 // authenticated accepts the token in X-Falcon-Token or a Bearer header on
@@ -371,6 +394,13 @@ func (s *Server) Screen(ctx context.Context, req ScreenRequest) (score.Result, e
 	en.Network = s.network(en, fingerprint.Compute(msg))
 	s.behaviour(ctx, req, snap, &en)
 	result := s.Engine.Score(snap, en)
+	if s.Plugins != nil {
+		result = s.Plugins.Apply(ctx, plugin.View(
+			result.Signals.From, snap.SourceIP, snap.UserAgent, snap.CallID, snap.Identity.Attest,
+			result.Signals.Verstat, result.Signals.SignerSPC, result.Signals.SignerName, result.Signals.IPProvider,
+			fingerprint.Compute(msg), en.Direction, snap.Method, result.RiskScore, string(result.Action), result.Reasons,
+		), result, s.Engine.Thresh)
+	}
 	decision := result
 	result = s.hold(result)
 	sample, trigger := s.Sampler.Decide(ctx, result, strings.TrimSpace(req.Customer))
@@ -820,6 +850,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"mode":       s.Cfg.Mode,
 		"release":    s.currentRelease(),
 		"fleet":      map[string]any{"hub": s.Cfg.FleetHub, "member": s.Cfg.FleetURL != ""},
+		"plugins":    s.Plugins.Count(),
 		"listen":     s.Cfg.Listen,
 		"started_at": s.StartedAt,
 		"s3":         s.Cfg.S3Enabled(),

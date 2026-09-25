@@ -43,6 +43,7 @@
   }
   const get = (p) => api(p);
   const post = (p, body) => api(p, { method: "POST", body: JSON.stringify(body) });
+  const put = (p, body) => api(p, { method: "PUT", body: JSON.stringify(body) });
   const del = (p) => api(p, { method: "DELETE" });
 
   function toast(msg, kind) {
@@ -217,6 +218,7 @@
     lists: ["Lists", "Your allow and deny rules"],
     tuning: ["Tuning", "Where the thresholds sit against real traffic"],
     system: ["System", "Trust, feeds, storage, and configuration"],
+    plugins: ["Plugins", "Granted extensions"],
   };
 
   function navigate() {
@@ -242,7 +244,8 @@
     state.timers = [];
     const v = $("#view");
     v.innerHTML = "";
-    ({ overview: renderOverview, traffic: renderTraffic, signers: renderSigners, providers: renderProviders, lists: renderLists, tuning: renderTuning, system: renderSystem })[state.view](v);
+    $("#search").placeholder = state.view === "plugins" ? "Search a number" : "Search number, IP, Call-ID, signer  ( / )";
+    ({ overview: renderOverview, traffic: renderTraffic, signers: renderSigners, providers: renderProviders, lists: renderLists, tuning: renderTuning, system: renderSystem, plugins: renderPlugins })[state.view](v);
   }
   function schedule(fn, ms) { state.timers.push(setTimeout(fn, ms)); }
 
@@ -828,6 +831,291 @@
   }
   $("#liveBtn").onclick = () => setLive(!state.live);
 
+  async function renderPlugins(v) {
+    const params = new URLSearchParams((location.hash.split("?")[1] || ""));
+    const slug = params.get("slug") || "";
+    let catalog;
+    try {
+      catalog = await get("/v1/plugins");
+    } catch (e) {
+      v.innerHTML = '<div class="card">' + esc(e.message) + "</div>";
+      return;
+    }
+    const items = (catalog && catalog.plugins) || [];
+    const views = items.filter((p) => p.surface === "native" || p.surface === "iframe");
+    if (!slug) {
+      if (!views.length) {
+        v.innerHTML = empty("No plugin pages are granted to this install.");
+        return;
+      }
+      v.innerHTML = '<section class="plugin-list">' + views.map((p) =>
+        '<a class="card plugin-card" href="#plugins?slug=' + encodeURIComponent(p.slug) + '"><span class="kicker">' + esc(p.kind || "view") + "</span><strong>" + esc(p.title || p.slug) + "</strong><span class=\"muted small\">" + esc(p.slug) + "</span></a>"
+      ).join("") + "</section>";
+      return;
+    }
+    const item = views.find((p) => p.slug === slug);
+    $("#viewTitle").textContent = item ? (item.title || item.slug) : slug;
+    if (item && item.surface === "iframe") {
+      const frame = document.createElement("iframe");
+      frame.className = "plugin-frame";
+      frame.setAttribute("sandbox", "");
+      frame.referrerPolicy = "no-referrer";
+      frame.title = item.title || item.slug;
+      v.appendChild(frame);
+      try {
+        const res = await fetch("/v1/plugins/" + encodeURIComponent(slug) + "/frame" + (state.q ? "?q=" + encodeURIComponent(state.q) : ""), { headers: headers() });
+        if (!res.ok) throw new Error("plugin page unavailable");
+        const html = await res.text();
+        if (/<script/i.test(html)) throw new Error("plugin page refused");
+        frame.srcdoc = html;
+      } catch (e) {
+        v.innerHTML = '<div class="card">' + esc(e.message) + "</div>";
+      }
+      return;
+    }
+    let panel;
+    try {
+      panel = await get("/v1/plugins/" + encodeURIComponent(slug) + "/view" + (state.q ? "?q=" + encodeURIComponent(state.q) : ""));
+    } catch (e) {
+      v.innerHTML = '<div class="card">' + esc(e.message) + "</div>";
+      return;
+    }
+    paintPlugin(v, panel, slug);
+  }
+
+  function pendingCount(panel) {
+    const row = (panel.stats || []).find((s) => s.label === "Pending");
+    return row ? Number(row.value) || 0 : 0;
+  }
+
+  function paintPlugin(v, panel, slug) {
+    const stats = (panel.stats || []).map((s) => '<article class="card kpi"><label>' + esc(s.label) + "</label><b>" + esc(s.value) + "</b></article>").join("");
+    const cols = panel.columns || [];
+    const head = cols.map((c) => "<th>" + esc(c.label || c.key) + "</th>").join("");
+    const cell = (key, value) => {
+      const text = value || "";
+      if (key === "status") {
+        const tone = text === "flagged" ? "flag" : text === "clear" ? "allow" : "challenge";
+        return '<span class="pill ' + tone + '">' + esc(text || "unknown") + "</span>";
+      }
+      return esc(text);
+    };
+    const body = (panel.rows || []).map((row) => "<tr>" + cols.map((c) => "<td>" + cell(c.key, row[c.key]) + "</td>").join("") + "</tr>").join("");
+    const emptyText = panel.import
+      ? (state.q ? "No numbers match this search." : "No numbers yet. Drop a file to import them.")
+      : (state.q ? "Nothing matches this number." : "Nothing to show.");
+    const importer = panel.import
+      ? '<form class="plugin-import" id="pluginImport"><label class="plugin-drop" id="pluginDrop"><input id="pluginFile" type="file"><span id="pluginDropText">Drop any file here, or choose one. Numbers are detected automatically. Each new number uses 1 credit.</span></label><div class="plugin-import-row"><button class="btn primary" type="submit">Import numbers</button></div></form>' + scheduleCard()
+      : "";
+    v.innerHTML = importer + (stats ? '<section class="grid kpis">' + stats + "</section>" : "") +
+      '<article class="card" style="padding:0"><div class="table-wrap"><table><thead><tr>' + head + "</tr></thead><tbody>" +
+      (body || '<tr><td colspan="' + Math.max(cols.length, 1) + '">' + empty(emptyText) + "</td></tr>") +
+      "</tbody></table></div></article>";
+    const form = $("#pluginImport");
+    if (form) bindImport(form, v, slug);
+    if (panel.import) bindSchedule(v, slug);
+    if (panel.import && pendingCount(panel) > 0) {
+      schedule(() => refreshPlugin(slug), 2000);
+    }
+  }
+
+  function bindImport(form, v, slug) {
+    let chosen = null;
+    const drop = $("#pluginDrop");
+    const input = $("#pluginFile");
+    const label = $("#pluginDropText");
+    const remember = () => { if (chosen) form.dataset.file = "1"; };
+    input.onchange = () => {
+      chosen = input.files && input.files[0];
+      if (chosen) label.textContent = chosen.name;
+      remember();
+    };
+    drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+    drop.ondragleave = () => drop.classList.remove("over");
+    drop.ondrop = (e) => {
+      e.preventDefault();
+      drop.classList.remove("over");
+      chosen = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (chosen) label.textContent = chosen.name;
+      remember();
+    };
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      if (!chosen) { toast("Choose a file."); return; }
+      const btn = form.querySelector("button");
+      btn.disabled = true;
+      try {
+        const panel = await postFile("/v1/plugins/" + encodeURIComponent(slug) + "/import", chosen);
+        v.innerHTML = "";
+        paintPlugin(v, panel, slug);
+        toast("Numbers imported.");
+      } catch (err) {
+        toast(err.message);
+        btn.disabled = false;
+      }
+    };
+  }
+
+  async function postFile(path, file) {
+    const body = new FormData();
+    body.append("file", file, file.name || "numbers");
+    const res = await fetch(path, { method: "POST", headers: headers(), body });
+    if (!res.ok) {
+      let msg = res.status + " " + res.statusText;
+      try { const j = await res.json(); if (j.error) msg = j.error; } catch (e) { /* ignore */ }
+      throw new Error(msg);
+    }
+    return res.json();
+  }
+
+  const scheduleZones = [
+    ["UTC", "UTC"],
+    ["America/New_York", "Eastern time"],
+    ["America/Chicago", "Central time"],
+    ["America/Denver", "Mountain time"],
+    ["America/Los_Angeles", "Pacific time"],
+    ["America/Toronto", "Toronto"],
+    ["Europe/London", "London"],
+    ["Europe/Dublin", "Dublin"],
+    ["Europe/Paris", "Paris"],
+    ["Europe/Berlin", "Berlin"],
+    ["Europe/Amsterdam", "Amsterdam"],
+    ["Europe/Madrid", "Madrid"],
+    ["Europe/Rome", "Rome"],
+    ["Europe/Warsaw", "Warsaw"],
+    ["Europe/Stockholm", "Stockholm"],
+    ["Asia/Dubai", "Dubai"],
+    ["Asia/Kolkata", "India"],
+    ["Asia/Singapore", "Singapore"],
+    ["Asia/Tokyo", "Tokyo"],
+    ["Australia/Sydney", "Sydney"]
+  ];
+
+  function scheduleCard() {
+    const days = ["M", "T", "W", "T", "F", "S", "S"].map((label, i) => {
+      const on = i < 5;
+      return '<button type="button" class="day' + (on ? " on" : "") + '" data-day="' + (i + 1) + '" aria-pressed="' + (on ? "true" : "false") + '">' + label + "</button>";
+    }).join("");
+    const every = [["15", "15m"], ["60", "1 hour"], ["360", "6 hours"], ["1440", "Day"]].map(([n, label]) =>
+      '<button type="button" data-interval="' + n + '"' + (n === "60" ? ' class="on"' : "") + ">" + label + "</button>"
+    ).join("");
+    const zones = scheduleZones.map(([id, label]) => '<option value="' + id + '">' + esc(label) + "</option>").join("");
+    return '<form class="card plugin-schedule" id="pluginSchedule">' +
+      '<div class="plugin-schedule-head"><div><strong>Schedule</strong><span class="muted small" id="pluginScheduleWhen">Off</span></div>' +
+      '<button type="button" class="switch" id="pluginScheduleOn" aria-pressed="false" aria-label="Check on a schedule"><i></i></button></div>' +
+      '<div class="plugin-schedule-row"><span>Every</span><div class="seg" id="pluginEvery">' + every + "</div></div>" +
+      '<div class="plugin-schedule-row"><span>Days</span><div class="days" id="pluginDays">' + days + "</div></div>" +
+      '<div class="plugin-schedule-row"><span>Hours</span><input id="pluginStart" type="time" value="09:00" aria-label="Start"><span class="muted">to</span><input id="pluginEnd" type="time" value="17:00" aria-label="End"></div>' +
+      '<div class="plugin-schedule-row"><span>Zone</span><select id="pluginZone" aria-label="Timezone">' + zones + "</select></div>" +
+      '<p class="muted small">Each check uses 1 credit per number.</p>' +
+      '<div class="plugin-import-row"><button class="btn primary" type="submit">Save schedule</button></div></form>';
+  }
+
+  function scheduleWhen(row) {
+    if (!row || row.state === "off" || !row.enabled) return "Off";
+    if (row.state === "checking") return "Checking the list.";
+    if (row.state === "paused") return (row.note || "Not enough credits") + (row.next_run_local ? ". Next try " + row.next_run_local : "");
+    return row.next_run_local ? "Next check " + row.next_run_local : "Scheduled";
+  }
+
+  function fillSchedule(row) {
+    const form = $("#pluginSchedule");
+    if (!form || !row) return;
+    const on = $("#pluginScheduleOn");
+    on.classList.toggle("on", !!row.enabled);
+    on.setAttribute("aria-pressed", row.enabled ? "true" : "false");
+    $$("#pluginEvery button").forEach((b) => b.classList.toggle("on", Number(b.dataset.interval) === Number(row.interval_minutes)));
+    const days = row.weekdays || [];
+    $$("#pluginDays button").forEach((b) => {
+      const pressed = days.indexOf(Number(b.dataset.day)) >= 0;
+      b.classList.toggle("on", pressed);
+      b.setAttribute("aria-pressed", pressed ? "true" : "false");
+    });
+    $("#pluginStart").value = row.start || "09:00";
+    $("#pluginEnd").value = row.end || "17:00";
+    const zone = $("#pluginZone");
+    if (row.timezone && !zone.querySelector('option[value="' + row.timezone + '"]')) {
+      const extra = document.createElement("option");
+      extra.value = row.timezone;
+      extra.textContent = row.timezone;
+      zone.appendChild(extra);
+    }
+    zone.value = row.timezone || "UTC";
+    $("#pluginScheduleWhen").textContent = scheduleWhen(row);
+    form.classList.toggle("off", !row.enabled);
+    form.dataset.dirty = "";
+  }
+
+  function readSchedule() {
+    return {
+      enabled: $("#pluginScheduleOn").classList.contains("on"),
+      interval_minutes: Number(($("#pluginEvery button.on") || { dataset: { interval: "60" } }).dataset.interval),
+      weekdays: $$("#pluginDays button.on").map((b) => Number(b.dataset.day)),
+      start: $("#pluginStart").value || "09:00",
+      end: $("#pluginEnd").value || "17:00",
+      timezone: $("#pluginZone").value || "UTC"
+    };
+  }
+
+  function bindSchedule(v, slug) {
+    const form = $("#pluginSchedule");
+    const mark = () => { form.dataset.dirty = "1"; };
+    $("#pluginScheduleOn").onclick = () => {
+      const on = $("#pluginScheduleOn");
+      const next = !on.classList.contains("on");
+      on.classList.toggle("on", next);
+      on.setAttribute("aria-pressed", next ? "true" : "false");
+      form.classList.toggle("off", !next);
+      mark();
+    };
+    $("#pluginEvery").onclick = (e) => {
+      const b = e.target.closest("button[data-interval]");
+      if (!b) return;
+      $$("#pluginEvery button").forEach((x) => x.classList.toggle("on", x === b));
+      mark();
+    };
+    $("#pluginDays").onclick = (e) => {
+      const b = e.target.closest("button[data-day]");
+      if (!b) return;
+      const next = b.getAttribute("aria-pressed") !== "true";
+      b.classList.toggle("on", next);
+      b.setAttribute("aria-pressed", next ? "true" : "false");
+      mark();
+    };
+    $("#pluginStart").onchange = mark;
+    $("#pluginEnd").onchange = mark;
+    $("#pluginZone").onchange = mark;
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const btn = form.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      try {
+        fillSchedule(await put("/v1/plugins/" + encodeURIComponent(slug) + "/schedule", readSchedule()));
+        toast("Schedule saved.");
+      } catch (err) {
+        toast(err.message);
+      }
+      btn.disabled = false;
+    };
+    get("/v1/plugins/" + encodeURIComponent(slug) + "/schedule").then(fillSchedule).catch(() => {});
+  }
+
+  async function refreshPlugin(slug) {
+    if (state.view !== "plugins") return;
+    const current = new URLSearchParams((location.hash.split("?")[1] || "")).get("slug") || "";
+    if (current !== slug) return;
+    const editing = $("#pluginSchedule");
+    if (editing && editing.dataset.dirty === "1") return;
+    const importing = $("#pluginImport");
+    if (importing && importing.dataset.file === "1") return;
+    try {
+      const panel = await get("/v1/plugins/" + encodeURIComponent(slug) + "/view" + (state.q ? "?q=" + encodeURIComponent(state.q) : ""));
+      const v = $("#view");
+      v.innerHTML = "";
+      paintPlugin(v, panel, slug);
+    } catch (e) { /* keep the current table */ }
+  }
+
   // ---------- topbar ----------
   $("#rangeSeg").onclick = (e) => {
     const b = e.target.closest("button[data-range]");
@@ -844,7 +1132,10 @@
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       state.q = e.target.value.trim();
-      if (state.view !== "traffic") location.hash = "#traffic?q=" + encodeURIComponent(state.q);
+      if (state.view === "plugins") {
+        const slug = new URLSearchParams((location.hash.split("?")[1] || "")).get("slug") || "";
+        location.hash = "#plugins?slug=" + encodeURIComponent(slug) + (state.q ? "&q=" + encodeURIComponent(state.q) : "");
+      } else if (state.view !== "traffic") location.hash = "#traffic?q=" + encodeURIComponent(state.q);
       else loadTraffic(true);
     }, 250);
   };

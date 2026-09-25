@@ -4,6 +4,31 @@
 
 Added
 
+- Number check can recheck a saved list on a schedule. The page sets the
+  interval, the days, the hours, and the timezone. Each recheck costs 1
+  credit per number.
+
+- Number check accepts a file. Falcon sends the file to CallerAPI. CallerAPI
+  reads numbers from CSV, spreadsheets, PDF, JSON, and plain text. The file
+  does not need a fixed column. Each new number costs 1 credit. The page
+  lists the inventory, with flagged numbers first.
+
+- A plugin page is HTML Falcon fetches with the API key and shows on its
+  own host. The browser does not load a CallerAPI frame, and the page
+  does not use a ticket or a third-party cookie. A partner URL on a
+  private or link-local address is refused.
+
+- Plugin pages. A `view` plugin does not run on the INVITE path. `surface`
+  `native` is a table or stats that Falcon draws. `surface` `iframe` is a
+  page on the CallerAPI host. A frame on another host is refused. The
+  operator search is the only number that page receives.
+
+- Plugin catalog. Falcon loads granted plugins from CallerAPI on a timer.
+  A plugin that stays inside `sdk` fields does not need a new Falcon binary.
+  The called number, the raw SIP message, and the Identity header are not
+  fields. Feed matches stay local. Live checks share `FALCON_PLUGIN_BUDGET`
+  and fail open. `FALCON_PLUGINS=false` turns the catalog off.
+
 - `FALCON_MODE=monitor` records the real decision and tells the switch to
   continue. `X-Falcon-Monitor` names the action that was not enforced.
 - Release check against the public Falcon tag. One alert per new tag.

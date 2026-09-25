@@ -271,3 +271,35 @@ pre .hl { background: rgba(99, 102, 241, 0.18); border-radius: 3px; }
 .valuecard .n { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
 .valuecard .l { color: var(--muted); font-size: 12px; }
 @media (max-width: 900px) { .valuecard { grid-template-columns: 1fr 1fr; } }
+
+.plugin-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.plugin-card { display: flex; flex-direction: column; gap: 6px; color: inherit; text-decoration: none; min-height: 112px; }
+.plugin-card:hover { border-color: var(--line-2); background: var(--panel-2); }
+.plugin-card .kicker { color: var(--accent-2); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+.plugin-card strong { font-size: 16px; letter-spacing: -0.02em; }
+.plugin-frame { width: 100%; min-height: 70vh; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); }
+.plugin-import { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+.plugin-drop { display: flex; align-items: center; justify-content: center; min-height: 128px; padding: 22px; border: 1px dashed var(--line-2); border-radius: var(--radius); background: var(--panel); color: var(--muted); text-align: center; cursor: pointer; line-height: 1.45; }
+.plugin-drop.over { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
+.plugin-drop input { display: none; }
+.plugin-import-row { display: flex; gap: 8px; }
+.plugin-schedule { display: flex; flex-direction: column; gap: 14px; margin-bottom: 16px; padding: 16px; }
+.plugin-schedule.off .plugin-schedule-row { opacity: 0.45; }
+.plugin-schedule-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.plugin-schedule-head strong { display: block; font-size: 16px; letter-spacing: -0.02em; }
+.plugin-schedule-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.plugin-schedule-row > span:first-child { width: 52px; color: var(--muted); font-size: 13px; }
+.plugin-schedule .seg { display: flex; gap: 6px; flex-wrap: wrap; }
+.plugin-schedule .seg button, .plugin-schedule .day {
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink-2);
+  border-radius: 999px; padding: 6px 12px; cursor: pointer; font: inherit;
+}
+.plugin-schedule .seg button.on, .plugin-schedule .day.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.plugin-schedule .days { display: flex; gap: 6px; }
+.plugin-schedule input[type="time"], .plugin-schedule select {
+  background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit;
+}
+.switch { width: 44px; height: 26px; border-radius: 99px; border: 0; background: var(--line); position: relative; cursor: pointer; flex: none; }
+.switch i { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--ink); transition: transform 150ms ease; }
+.switch.on { background: var(--accent); }
+.switch.on i { transform: translateX(18px); }

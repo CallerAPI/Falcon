@@ -28,6 +28,9 @@ type Config struct {
 	FleetURL          string
 	FleetToken        string
 	FleetInterval     time.Duration
+	Plugins           bool
+	PluginRefresh     time.Duration
+	PluginBudget      time.Duration
 	DashboardUser     string
 	DashboardPassword string
 	DBPath            string
@@ -194,6 +197,9 @@ func Load() Config {
 		FleetURL:          strings.TrimRight(env("FALCON_FLEET_URL", ""), "/"),
 		FleetToken:        env("FALCON_FLEET_TOKEN", ""),
 		FleetInterval:     envDuration("FALCON_FLEET_INTERVAL", 30*time.Second),
+		Plugins:           envBool("FALCON_PLUGINS", true),
+		PluginRefresh:     envDuration("FALCON_PLUGIN_REFRESH", time.Minute),
+		PluginBudget:      envDuration("FALCON_PLUGIN_BUDGET", 400*time.Millisecond),
 		DashboardUser:     env("FALCON_DASHBOARD_USER", "admin"),
 		DashboardPassword: env("FALCON_DASHBOARD_PASSWORD", ""),
 		DBPath:            env("FALCON_DB_PATH", "./data/falcon.db"),
@@ -361,6 +367,7 @@ func (c Config) Redacted() map[string]any {
 		"mode":               c.Mode,
 		"update_check":       c.UpdateCheck,
 		"fleet":              map[string]any{"hub": c.FleetHub, "url": c.FleetURL, "token": set(c.FleetToken), "interval": c.FleetInterval.String()},
+		"plugins":            map[string]any{"enabled": c.Plugins && c.CallerAPIKey != "", "refresh": c.PluginRefresh.String(), "budget": c.PluginBudget.String()},
 		"dashboard_user":     c.DashboardUser,
 		"dashboard_password": set(c.DashboardPassword),
 		"db_path":            c.DBPath,

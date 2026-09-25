@@ -77,7 +77,8 @@ for Kamailio). Expected: `asterisk agi adapter: PASS`.
 | `FALCON_LISTEN` | The switch is on another host. Keep it on a private network. | `127.0.0.1:8090` |
 | `FALCON_SIP_LISTEN`, `FALCON_SIP_PEERS` | The switch cannot run a script and routes INVITEs to Falcon as a SIP redirect server. Peers are required off loopback. | empty |
 | `FALCON_SHARE` | The operator opts out of redacted telemetry. | `true` |
-| `CALLERAPI_API_KEY` | The operator has a CallerAPI account: credits telemetry, enables the paid feed, the voice scan provider, and the assistant. | empty |
+| `CALLERAPI_API_KEY` | The operator has a CallerAPI account: credits telemetry, enables the paid feed, the voice scan provider, the assistant, and the plugin catalog. | empty |
+| `FALCON_PLUGINS` | Set `false` to skip the CallerAPI plugin catalog. On when a key is set. | `true` |
 | `FALCON_VOICE_PROVIDER` | Audio clips should be transcribed and classified: `openai` (any OpenAI-compatible speech and chat pair) or `callerapi`. | `off` |
 | `FALCON_ASSISTANT_PROVIDER` | "Ask Falcon" should answer questions: `openai` or `callerapi`. The value card works without it. | `off` |
 | `FALCON_SHAKEN_PA_PIN` | Policy requires the STI-PA list-signing key pinned. | empty |
