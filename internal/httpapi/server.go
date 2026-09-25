@@ -25,6 +25,7 @@ import (
 	"github.com/callerapi/falcon/internal/config"
 	"github.com/callerapi/falcon/internal/feed"
 	"github.com/callerapi/falcon/internal/fingerprint"
+	"github.com/callerapi/falcon/internal/fleet"
 	"github.com/callerapi/falcon/internal/ipintel"
 	"github.com/callerapi/falcon/internal/lists"
 	"github.com/callerapi/falcon/internal/reputation"
@@ -32,6 +33,7 @@ import (
 	"github.com/callerapi/falcon/internal/shaken"
 	"github.com/callerapi/falcon/internal/sipmsg"
 	"github.com/callerapi/falcon/internal/store"
+	"github.com/callerapi/falcon/internal/update"
 	"github.com/callerapi/falcon/internal/voice"
 )
 
@@ -54,6 +56,12 @@ type Server struct {
 	Reputation *reputation.Table
 	// Alerts is the webhook watcher; nil when not started.
 	Alerts *alerts.Watcher
+	// Fleet is the cached caller counts from the other switches. Nil when
+	// this process is not a fleet member.
+	Fleet *fleet.Cache
+	// Release is the last public-version comparison.
+	releaseMu sync.RWMutex
+	release   update.Status
 	// Sampler decides which calls get audio; VoiceProvider transcribes and
 	// classifies the clips. Either may be nil.
 	Sampler       *voice.Sampler
@@ -113,6 +121,9 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/health", s.handleHealth)
 	mux.HandleFunc("/metrics", s.withAuth(s.handleMetrics))
+	mux.HandleFunc("/v1/fleet/events", s.withAuth(s.handleFleetEvents))
+	mux.HandleFunc("/v1/fleet/rules", s.withAuth(s.handleFleetRules))
+	mux.HandleFunc("/v1/fleet/behaviour", s.withAuth(s.handleFleetBehaviour))
 	mux.HandleFunc("/v1/screen", s.withAuth(s.handleScreen))
 	mux.HandleFunc("/v1/events", s.withAuth(s.handleEvents))
 	mux.HandleFunc("/v1/events.csv", s.withAuth(s.handleEventsCSV))
@@ -226,10 +237,7 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 // authenticated accepts the token in X-Falcon-Token or a Bearer header on
 // any request, the token in the query on reads only (EventSource and
 // download links cannot set headers), and the dashboard Basic credentials.
-func (s *Server) authenticated(r *http.Request) bool {
-	if s.Cfg.Token == "" {
-		return true
-	}
+func (s *Server) credential(r *http.Request) string {
 	got := strings.TrimSpace(r.Header.Get("X-Falcon-Token"))
 	if got == "" {
 		if ah := r.Header.Get("Authorization"); strings.HasPrefix(ah, "Bearer ") {
@@ -239,7 +247,31 @@ func (s *Server) authenticated(r *http.Request) bool {
 	if got == "" && !isMutation(r) {
 		got = strings.TrimSpace(r.URL.Query().Get("token"))
 	}
-	if got != "" && subtle.ConstantTimeCompare([]byte(got), []byte(s.Cfg.Token)) == 1 {
+	return got
+}
+
+func tokenMatch(got, want string) bool {
+	if got == "" || want == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+}
+
+func (s *Server) authenticated(r *http.Request) bool {
+	if strings.HasPrefix(r.URL.Path, "/v1/fleet/") {
+		return s.Cfg.FleetHub && tokenMatch(s.credential(r), s.Cfg.FleetToken)
+	}
+	if s.Cfg.Token == "" && s.Cfg.MetricsToken == "" {
+		return true
+	}
+	got := s.credential(r)
+	if r.URL.Path == "/metrics" && tokenMatch(got, s.Cfg.MetricsToken) {
+		return true
+	}
+	if s.Cfg.Token == "" {
+		return s.Cfg.DashboardPassword != "" && s.dashboardOK(r)
+	}
+	if tokenMatch(got, s.Cfg.Token) {
 		return true
 	}
 	return s.Cfg.DashboardPassword != "" && s.dashboardOK(r)
@@ -339,6 +371,8 @@ func (s *Server) Screen(ctx context.Context, req ScreenRequest) (score.Result, e
 	en.Network = s.network(en, fingerprint.Compute(msg))
 	s.behaviour(ctx, req, snap, &en)
 	result := s.Engine.Score(snap, en)
+	decision := result
+	result = s.hold(result)
 	sample, trigger := s.Sampler.Decide(ctx, result, strings.TrimSpace(req.Customer))
 	if sample {
 		result.Sample = true
@@ -349,7 +383,7 @@ func (s *Server) Screen(ctx context.Context, req ScreenRequest) (score.Result, e
 
 	ev := store.Event{
 		ReceivedAt:  time.Now().UTC(),
-		Action:      result.Action,
+		Action:      decision.Action,
 		RiskScore:   result.RiskScore,
 		SourceIP:    snap.SourceIP,
 		From:        result.Signals.From,
@@ -377,8 +411,13 @@ func (s *Server) Screen(ctx context.Context, req ScreenRequest) (score.Result, e
 			ev.Shaken = b
 		}
 	}
-	s.metrics.observe(result, verification, time.Since(started))
-	go s.spoofAlert(ev, result)
+	if s.metrics != nil {
+		s.metrics.observe(result, verification, time.Since(started))
+		if decision.Action != result.Action {
+			s.metrics.hold()
+		}
+	}
+	go s.spoofAlert(ev, decision)
 	go func(ev store.Event) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
@@ -395,6 +434,33 @@ func (s *Server) Screen(ctx context.Context, req ScreenRequest) (score.Result, e
 	}(ev)
 
 	return result, nil
+}
+
+// hold turns a reject or a challenge into an allow while monitor mode is
+// on. The stored event keeps the real decision. The switch is told to
+// continue, and X-Falcon-Monitor names what would have happened.
+func (s *Server) hold(res score.Result) score.Result {
+	if s.Cfg.Mode != config.ModeMonitor {
+		return res
+	}
+	if res.Action != score.ActionReject && res.Action != score.ActionChallenge {
+		return res
+	}
+	would := string(res.Action)
+	res.Action = score.ActionAllow
+	headers := make(map[string]string, len(res.Headers)+2)
+	for k, v := range res.Headers {
+		if k == "X-Falcon-Block" {
+			continue
+		}
+		headers[k] = v
+	}
+	headers["X-Falcon-Monitor"] = would
+	headers["X-Falcon-Action"] = string(score.ActionAllow)
+	res.Headers = headers
+	res.SIPStatus, res.SIPReason = score.ActionAllow.SIP()
+	res.SwitchHints = score.ActionAllow.Hints()
+	return res
 }
 
 // enrich gathers everything outside the SIP message: verification, operator
@@ -751,6 +817,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":    Version,
 		"install_id": s.InstallID,
+		"mode":       s.Cfg.Mode,
+		"release":    s.currentRelease(),
+		"fleet":      map[string]any{"hub": s.Cfg.FleetHub, "member": s.Cfg.FleetURL != ""},
 		"listen":     s.Cfg.Listen,
 		"started_at": s.StartedAt,
 		"s3":         s.Cfg.S3Enabled(),

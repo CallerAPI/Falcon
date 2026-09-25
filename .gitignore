@@ -5,4 +5,6 @@
 *.db-wal
 *.db-shm
 .env
+monitoring/.env
+monitoring/prometheus/token
 .DS_Store

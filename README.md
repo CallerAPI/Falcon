@@ -456,7 +456,101 @@ All endpoints take the token. Ranges are `range=15m|1h|6h|24h|7d|30d` or
 | `GET /v1/voice/samples` | Clips with features, transcript, category. |
 | `GET|PUT /v1/customers`, `GET|DELETE /v1/customers/{id}` | Customers and the numbers they may present; activity per customer. |
 | `GET /v1/status`, `GET /v1/config`, `GET /v1/health` | State, redacted configuration, liveness. |
-| `GET /metrics` | Prometheus text exposition. |
+| `GET /metrics` | Prometheus text. Send `FALCON_METRICS_TOKEN`, or `FALCON_TOKEN` when the metrics token is empty. |
+
+## Monitor
+
+`FALCON_MODE=monitor` scores every INVITE and stores the real decision.
+The answer to the switch is allow. `X-Falcon-Monitor` is `reject` or
+`challenge` when that decision was held. The dashboard still shows the
+real action, so you can see what enforce would drop.
+
+`FALCON_MODE=enforce` is the default. The switch applies the decision.
+
+Use monitor for the first week on a live ingress. Hard blocks are held
+too. After you trust the Traffic view, set enforce and restart.
+
+## Updates
+
+Falcon compares its version with the public GitHub release every six
+hours. A newer tag raises one alert. The webhook and the System view
+show it. Falcon does not download or install that release. You pin the
+image.
+
+`FALCON_UPDATE_CHECK=false` stops the check. A `dev` build does not check.
+
+## Fleet
+
+One Falcon screens one switch. A second process, the hub, is the place
+you look at all of them. The hub is the same binary.
+
+On the hub:
+
+```
+FALCON_FLEET_HUB=true
+FALCON_FLEET_TOKEN=a-long-random-value
+```
+
+On every switch, including the spare:
+
+```
+FALCON_FLEET_URL=http://hub:8090
+FALCON_FLEET_TOKEN=a-long-random-value
+```
+
+Each member copies new events to the hub every 30 seconds. The copy
+includes the called number and stays on your network. It does not change
+what telemetry sends to CallerAPI.
+
+The hub's own allow and deny rules are the shared list. Members pull
+them and keep their own local rules. A local rule with the same value
+wins. Post a deny rule on the hub and every switch has it within 30
+seconds.
+
+Members also pull caller counts for the other switches and add them in
+memory at score time. There is no network call on the INVITE. A hub that
+is down leaves each switch with its own counts. Counts older than two
+intervals are ignored.
+
+Point the switch at the primary Falcon. On timeout, send the next INVITE
+to the spare, or continue the call. The spare pulls the same rules and
+the same counts. It does not need a copy of the primary database.
+
+## Grafana
+
+Each switch exposes `GET /metrics`. Prometheus stores the samples on disk.
+Grafana reads Prometheus. A restart of Falcon does not delete that history.
+`rate()` treats the counter reset as a new process.
+
+`PROMETHEUS_RETENTION` sets how long Prometheus keeps samples. The default
+is 30 days. Examples are `15d`, `30d`, and `90d`. The value is read when
+the Prometheus container starts.
+
+Call records on a switch use other settings. `FALCON_RETENTION_DAYS`
+(default 30) keeps decisions. `FALCON_RAW_SIP_RETENTION_DAYS` (default 7)
+keeps raw SIP.
+
+1. Set `FALCON_METRICS_TOKEN` to one long random value on every switch.
+2. Restart each Falcon.
+3. From `monitoring/`, copy `.env.example` to `.env`.
+4. Set `GRAFANA_ADMIN_PASSWORD` and `PROMETHEUS_RETENTION` in that file.
+5. Copy `prometheus/token.example` to `prometheus/token`.
+6. Put the metrics token on one line in `prometheus/token`. Do not write Bearer.
+7. Edit `prometheus/targets.yml`. Add one block per switch. Set `switch` and `site`.
+8. Run `docker compose up -d` in `monitoring/`.
+9. Open `http://127.0.0.1:3000`. Sign in as `admin`. Open Falcon, then Falcon fleet.
+
+Prometheus reads `targets.yml` every 30 seconds. A new switch appears after
+that read. A change to `prometheus.yml` needs a restart of the Prometheus
+container.
+
+The Grafana password is stored in the Grafana volume on first start. A
+later edit of `.env` does not replace it. Delete the volume to set a new
+password.
+
+To use a Grafana you already run, add a Prometheus data source and import
+`monitoring/grafana/dashboards/falcon.json`. The data source uid in that
+file is `falcon`. Change the uid in the file if your source uses another.
 
 ## Alerts
 

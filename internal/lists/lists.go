@@ -34,11 +34,13 @@ const (
 
 // Rule is one row.
 type Rule struct {
-	ID        int64     `json:"id"`
-	Kind      Kind      `json:"kind"`
-	Subject   Subject   `json:"subject"`
-	Value     string    `json:"value"`
-	Note      string    `json:"note,omitempty"`
+	ID      int64   `json:"id"`
+	Kind    Kind    `json:"kind"`
+	Subject Subject `json:"subject"`
+	Value   string  `json:"value"`
+	Note    string  `json:"note,omitempty"`
+	// Origin is local or fleet. Fleet rows are replaced on each pull.
+	Origin    string    `json:"origin,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at,omitempty"`
 }

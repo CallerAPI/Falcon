@@ -10,9 +10,24 @@ import (
 
 // Config is process configuration from the environment.
 type Config struct {
-	Profile           string
-	Listen            string
-	Token             string
+	Profile string
+	Listen  string
+	Token   string
+	// MetricsToken is the credential Prometheus sends to GET /metrics.
+	// Empty means /metrics accepts Token.
+	MetricsToken string
+	// Mode is enforce (default) or monitor. Monitor records the decision
+	// and tells the switch to continue.
+	Mode string
+	// UpdateCheck compares this build with the public Falcon release.
+	UpdateCheck    bool
+	UpdateInterval time.Duration
+	// FleetHub accepts events and serves rules for other Falcons.
+	// FleetURL is the hub those nodes push to. A hub leaves FleetURL empty.
+	FleetHub          bool
+	FleetURL          string
+	FleetToken        string
+	FleetInterval     time.Duration
 	DashboardUser     string
 	DashboardPassword string
 	DBPath            string
@@ -153,6 +168,9 @@ type Config struct {
 const (
 	ProfileTrunk   = "trunk"
 	ProfileCarrier = "carrier"
+
+	ModeEnforce = "enforce"
+	ModeMonitor = "monitor"
 )
 
 func Load() Config {
@@ -168,6 +186,14 @@ func Load() Config {
 		Profile:           profile,
 		Listen:            env("FALCON_LISTEN", "127.0.0.1:8090"),
 		Token:             env("FALCON_TOKEN", ""),
+		MetricsToken:      env("FALCON_METRICS_TOKEN", ""),
+		Mode:              strings.ToLower(env("FALCON_MODE", ModeEnforce)),
+		UpdateCheck:       envBool("FALCON_UPDATE_CHECK", true),
+		UpdateInterval:    envDuration("FALCON_UPDATE_INTERVAL", 6*time.Hour),
+		FleetHub:          envBool("FALCON_FLEET_HUB", false),
+		FleetURL:          strings.TrimRight(env("FALCON_FLEET_URL", ""), "/"),
+		FleetToken:        env("FALCON_FLEET_TOKEN", ""),
+		FleetInterval:     envDuration("FALCON_FLEET_INTERVAL", 30*time.Second),
 		DashboardUser:     env("FALCON_DASHBOARD_USER", "admin"),
 		DashboardPassword: env("FALCON_DASHBOARD_PASSWORD", ""),
 		DBPath:            env("FALCON_DB_PATH", "./data/falcon.db"),
@@ -331,6 +357,10 @@ func (c Config) Redacted() map[string]any {
 		"profile":            c.Profile,
 		"listen":             c.Listen,
 		"token":              set(c.Token),
+		"metrics_token":      set(c.MetricsToken),
+		"mode":               c.Mode,
+		"update_check":       c.UpdateCheck,
+		"fleet":              map[string]any{"hub": c.FleetHub, "url": c.FleetURL, "token": set(c.FleetToken), "interval": c.FleetInterval.String()},
 		"dashboard_user":     c.DashboardUser,
 		"dashboard_password": set(c.DashboardPassword),
 		"db_path":            c.DBPath,

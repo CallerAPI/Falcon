@@ -81,7 +81,18 @@ The System view lists the live destinations. In full:
 | `api.callerapi.com` (telemetry) | Every 30 seconds | Redacted screening events: decision, score, reasons, calling number, source IP, User-Agent, signer, verification result, SIP headers with the called party replaced by `REDACTED`, no `Identity` header, no SDP. On by default. Off with `FALCON_SHARE=false` or the System view. See the README section "Telemetry". |
 | Your S3 endpoint | Every 30 seconds | Screened events as JSONL, unredacted. Only with your credentials. |
 
-Nothing else. No update check, no crash reporting.
+An optional release check GETs `https://api.github.com/repos/CallerAPI/Falcon/releases/latest`.
+The request carries the running version in the User-Agent and nothing about
+calls. One alert fires per new tag. Falcon does not download the release.
+`FALCON_UPDATE_CHECK=false` turns the check off.
+
+A fleet hub is different. `FALCON_FLEET_URL` is an address you configure.
+Members copy screened events, including the called number, to that hub so
+one dashboard can show every switch. That copy stays on your network. It
+is not the CallerAPI telemetry path. Leave `FALCON_FLEET_URL` empty and
+nothing is copied.
+
+Nothing else. No crash reporting.
 
 ### Telemetry redaction
 
@@ -136,7 +147,8 @@ Logs name no phone numbers.
 6. Run as a non-root user. The container image is distroless and runs as
    `nonroot`.
 7. Pin a version. Read the changelog before upgrading.
-8. Give Prometheus the token in an `Authorization: Bearer` header.
+8. Set `FALCON_METRICS_TOKEN` and give that value to Prometheus as
+   `Authorization: Bearer`. Do not put `FALCON_TOKEN` on the scraper.
 
 ## Known limits
 

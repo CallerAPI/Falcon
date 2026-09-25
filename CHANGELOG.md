@@ -4,6 +4,17 @@
 
 Added
 
+- `FALCON_MODE=monitor` records the real decision and tells the switch to
+  continue. `X-Falcon-Monitor` names the action that was not enforced.
+- Release check against the public Falcon tag. One alert per new tag.
+  `FALCON_UPDATE_CHECK=false` turns it off. Falcon does not install the release.
+- Fleet hub: members push events and pull one deny list and the other
+  switches' caller counts. The spare switch is another member. Nothing on
+  this path runs during INVITE scoring except a memory read.
+- Fleet Grafana dashboard and Prometheus scrape under `monitoring/`.
+  `PROMETHEUS_RETENTION` sets how long the samples stay on disk (default
+  30 days). `FALCON_METRICS_TOKEN` is the scrape credential. `GET /metrics`
+  still accepts `FALCON_TOKEN` when the metrics token is empty.
 - `FALCON_PROFILE=carrier` for class 4 and wholesale ingress: velocity
   rules off, scores only flag, hard blocks still reject. The trunk defaults
   rejected a normal call center CLI within its first hour.

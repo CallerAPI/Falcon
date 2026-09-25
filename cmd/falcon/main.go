@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/callerapi/falcon/internal/demo"
 	"github.com/callerapi/falcon/internal/export"
 	"github.com/callerapi/falcon/internal/feed"
+	"github.com/callerapi/falcon/internal/fleet"
 	"github.com/callerapi/falcon/internal/httpapi"
 	"github.com/callerapi/falcon/internal/identity"
 	"github.com/callerapi/falcon/internal/ipintel"
@@ -29,6 +31,7 @@ import (
 	"github.com/callerapi/falcon/internal/shaken"
 	"github.com/callerapi/falcon/internal/sipserver"
 	"github.com/callerapi/falcon/internal/store"
+	"github.com/callerapi/falcon/internal/update"
 	"github.com/callerapi/falcon/internal/voice"
 )
 
@@ -44,6 +47,19 @@ func main() {
 	}
 	httpapi.Version = version
 	cfg := config.Load()
+	if cfg.Mode != config.ModeEnforce && cfg.Mode != config.ModeMonitor {
+		log.Fatalf("falcon: FALCON_MODE must be enforce or monitor, got %q", cfg.Mode)
+	}
+	if cfg.FleetHub && strings.TrimSpace(cfg.FleetToken) == "" {
+		log.Fatalf("falcon: FALCON_FLEET_HUB requires FALCON_FLEET_TOKEN")
+	}
+	if cfg.FleetURL != "" && strings.TrimSpace(cfg.FleetToken) == "" {
+		log.Fatalf("falcon: FALCON_FLEET_URL requires FALCON_FLEET_TOKEN")
+	}
+	if cfg.FleetHub && cfg.FleetURL != "" {
+		log.Printf("falcon fleet: this process is the hub, so FALCON_FLEET_URL is ignored")
+		cfg.FleetURL = ""
+	}
 	if cfg.Demo {
 		if err := prepareDemo(&cfg); err != nil {
 			log.Fatalf("falcon demo: %v", err)
@@ -235,6 +251,27 @@ func main() {
 		InstallID: installID,
 	}}
 	go api.Alerts.Run(ctx)
+	if cfg.Mode == config.ModeMonitor {
+		log.Printf("falcon mode: monitor. Decisions are recorded. The switch is told to continue.")
+	}
+	if cfg.FleetURL != "" {
+		cache := fleet.NewCache(2 * cfg.FleetInterval)
+		api.Fleet = cache
+		go (&fleet.Member{
+			URL: cfg.FleetURL, Token: cfg.FleetToken, InstallID: installID,
+			Interval: cfg.FleetInterval, Store: db, Cache: cache, Reload: api.ReloadRules,
+		}).Run(ctx)
+		log.Printf("falcon fleet: member of %s", cfg.FleetURL)
+	}
+	if cfg.FleetHub {
+		log.Printf("falcon fleet: hub on /v1/fleet")
+	}
+	if cfg.UpdateCheck {
+		go (&update.Checker{
+			Version: version, Interval: cfg.UpdateInterval, Alerts: api.Alerts, Store: db,
+			OnStatus: api.SetRelease,
+		}).Run(ctx)
+	}
 	logSharing(ctx, api)
 	go q.Run(ctx)
 	go store.Janitor(ctx, db, api.Retention)

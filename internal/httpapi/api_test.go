@@ -254,6 +254,36 @@ func TestEventsFilterCursorPartiesHistogramCSVMetrics(t *testing.T) {
 	}
 }
 
+func TestMetricsTokenDoesNotOpenTheAPI(t *testing.T) {
+	srv, _ := newTestServer(t)
+	srv.Cfg.MetricsToken = "metrics-secret"
+
+	ok := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	ok.Header.Set("Authorization", "Bearer metrics-secret")
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, ok)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "falcon_screens_total") {
+		t.Fatalf("metrics token: %d %s", w.Code, w.Body.String())
+	}
+
+	bad := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	bad.Header.Set("Authorization", "Bearer nope")
+	w = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, bad)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("bad metrics token: %d", w.Code)
+	}
+
+	screen := httptest.NewRequest(http.MethodPost, "/v1/screen", strings.NewReader(`{}`))
+	screen.Header.Set("Authorization", "Bearer metrics-secret")
+	screen.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, screen)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("metrics token opened the API: %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestStreamDeliversScreenedEvents(t *testing.T) {
 	srv, _ := newTestServer(t)
 	ts := httptest.NewServer(srv.Handler())

@@ -29,6 +29,7 @@ type metrics struct {
 	clips     int64
 	monologue int64
 	repeats   int64
+	held      int64
 }
 
 func (m *metrics) outcome(answered bool, seconds int) {
@@ -38,6 +39,12 @@ func (m *metrics) outcome(answered bool, seconds int) {
 		m.answered++
 		m.talkSecs += int64(seconds)
 	}
+	m.mu.Unlock()
+}
+
+func (m *metrics) hold() {
+	m.mu.Lock()
+	m.held++
 	m.mu.Unlock()
 }
 
@@ -84,7 +91,7 @@ func (m *metrics) write(w io.Writer, s *Server) {
 	m.mu.Lock()
 	screens, pending, hard := m.screens, m.pending, m.hardBlock
 	latNs, latN := m.latencyNs, m.latencyN
-	outcomes, answered, talk, clips, mono, repeats := m.outcomes, m.answered, m.talkSecs, m.clips, m.monologue, m.repeats
+	outcomes, answered, talk, clips, mono, repeats, held := m.outcomes, m.answered, m.talkSecs, m.clips, m.monologue, m.repeats, m.held
 	actions := copyMap(m.byAction)
 	verstats := copyMap(m.byVerstat)
 	attests := copyMap(m.byAttest)
@@ -104,6 +111,7 @@ func (m *metrics) write(w io.Writer, s *Server) {
 	fmt.Fprintf(w, "# HELP falcon_voice_clips_total Audio clips received.\n# TYPE falcon_voice_clips_total counter\nfalcon_voice_clips_total %d\n", clips)
 	fmt.Fprintf(w, "# HELP falcon_voice_monologue_total Clips where one side talked into silence.\n# TYPE falcon_voice_monologue_total counter\nfalcon_voice_monologue_total %d\n", mono)
 	fmt.Fprintf(w, "# HELP falcon_voice_repeats_total Clips that matched an earlier recording.\n# TYPE falcon_voice_repeats_total counter\nfalcon_voice_repeats_total %d\n", repeats)
+	fmt.Fprintf(w, "# HELP falcon_monitor_holds_total Decisions recorded but not enforced.\n# TYPE falcon_monitor_holds_total counter\nfalcon_monitor_holds_total %d\n", held)
 
 	if s.Feed != nil {
 		n, _, _ := s.Feed.Status()

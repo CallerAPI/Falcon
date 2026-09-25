@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -95,7 +96,7 @@ func (s *SQLite) ReplaceFile(src, dest string) error {
 const eventColumns = `id, received_at, action, risk_score, source_ip, from_num, to_num, call_id, user_agent, attest,
   reasons, %s, switch, exported, COALESCE(provider, ''), COALESCE(verstat, ''), COALESCE(signer_spc, ''),
   COALESCE(signer_name, ''), COALESCE(shaken, ''), COALESCE(fingerprint, ''), COALESCE(direction, ''), COALESCE(customer, ''),
-  answered, duration_s, COALESCE(hangup_cause, ''), COALESCE(honeypot, 0), COALESCE(sampled, 0)`
+  answered, duration_s, COALESCE(hangup_cause, ''), COALESCE(honeypot, 0), COALESCE(sampled, 0), COALESCE(peer, '')`
 
 func selectEvents(withRaw bool) string {
 	raw := "''"
@@ -209,6 +210,8 @@ CREATE INDEX IF NOT EXISTS voice_samples_event ON voice_samples(event_id);
 		{"ended_unix", "INTEGER"},
 		{"honeypot", "INTEGER NOT NULL DEFAULT 0"},
 		{"sampled", "INTEGER NOT NULL DEFAULT 0"},
+		{"peer", "TEXT"},
+		{"fleet_sent", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.addColumnIfMissing("events", col.name, col.typ); err != nil {
 			return err
@@ -216,6 +219,9 @@ CREATE INDEX IF NOT EXISTS voice_samples_event ON voice_samples(event_id);
 	}
 	// Older rows get a unix time from the ISO text once.
 	if _, err := s.db.Exec(`UPDATE events SET received_unix = CAST(strftime('%s', substr(received_at, 1, 19)) AS INTEGER) WHERE received_unix IS NULL`); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing("rules", "origin", "TEXT NOT NULL DEFAULT 'local'"); err != nil {
 		return err
 	}
 	_, err = s.db.Exec(`
@@ -226,7 +232,8 @@ CREATE INDEX IF NOT EXISTS events_source_ip ON events(source_ip, received_unix D
 CREATE INDEX IF NOT EXISTS events_fingerprint ON events(fingerprint, received_unix DESC);
 CREATE INDEX IF NOT EXISTS events_from_recent ON events(from_num, received_unix DESC);
 CREATE INDEX IF NOT EXISTS events_customer ON events(customer, received_unix DESC);
-CREATE INDEX IF NOT EXISTS events_call_id ON events(call_id);`)
+CREATE INDEX IF NOT EXISTS events_call_id ON events(call_id);
+CREATE INDEX IF NOT EXISTS events_fleet_pending ON events(fleet_sent, id);`)
 	return err
 }
 
@@ -676,7 +683,7 @@ func (s *SQLite) ScrubRawSIP(ctx context.Context, before time.Time) (int64, erro
 }
 
 func (s *SQLite) Rules(ctx context.Context) ([]lists.Rule, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, kind, subject, value, COALESCE(note, ''), created_at, COALESCE(expires_at, '') FROM rules ORDER BY id DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, kind, subject, value, COALESCE(note, ''), created_at, COALESCE(expires_at, ''), COALESCE(origin, 'local') FROM rules ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -685,7 +692,7 @@ func (s *SQLite) Rules(ctx context.Context) ([]lists.Rule, error) {
 	for rows.Next() {
 		var r lists.Rule
 		var kind, subject, created, expires string
-		if err := rows.Scan(&r.ID, &kind, &subject, &r.Value, &r.Note, &created, &expires); err != nil {
+		if err := rows.Scan(&r.ID, &kind, &subject, &r.Value, &r.Note, &created, &expires, &r.Origin); err != nil {
 			return nil, err
 		}
 		r.Kind, r.Subject = lists.Kind(kind), lists.Subject(subject)
@@ -710,10 +717,14 @@ func (s *SQLite) AddRule(ctx context.Context, r lists.Rule) (lists.Rule, error) 
 	if !r.ExpiresAt.IsZero() {
 		expires = r.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
+	origin := r.Origin
+	if origin == "" {
+		origin = "local"
+	}
 	res, err := s.db.ExecContext(ctx, `
-INSERT INTO rules (kind, subject, value, note, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO rules (kind, subject, value, note, created_at, expires_at, origin) VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(kind, subject, value) DO UPDATE SET note = excluded.note, expires_at = excluded.expires_at`,
-		string(r.Kind), string(r.Subject), r.Value, r.Note, r.CreatedAt.UTC().Format(time.RFC3339Nano), expires)
+		string(r.Kind), string(r.Subject), r.Value, r.Note, r.CreatedAt.UTC().Format(time.RFC3339Nano), expires, origin)
 	if err != nil {
 		return r, err
 	}
@@ -724,6 +735,186 @@ ON CONFLICT(kind, subject, value) DO UPDATE SET note = excluded.note, expires_at
 		_ = s.db.QueryRowContext(ctx, `SELECT id FROM rules WHERE kind = ? AND subject = ? AND value = ?`, string(r.Kind), string(r.Subject), r.Value).Scan(&r.ID)
 	}
 	return r, nil
+}
+
+// ReplaceFleetRules swaps the fleet copy of the shared list. Local rules stay.
+// An empty list removes every fleet rule.
+func (s *SQLite) ReplaceFleetRules(ctx context.Context, rules []lists.Rule) error {
+	ready := make([]lists.Rule, 0, len(rules))
+	for _, r := range rules {
+		n, err := lists.Normalize(r)
+		if err != nil {
+			return err
+		}
+		n.Origin = "fleet"
+		if n.CreatedAt.IsZero() {
+			n.CreatedAt = time.Now().UTC()
+		}
+		ready = append(ready, n)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM rules WHERE origin = 'fleet'`); err != nil {
+		return err
+	}
+	for _, r := range ready {
+		var expires any
+		if !r.ExpiresAt.IsZero() {
+			expires = r.ExpiresAt.UTC().Format(time.RFC3339Nano)
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO rules (kind, subject, value, note, created_at, expires_at, origin) VALUES (?, ?, ?, ?, ?, ?, 'fleet')
+ON CONFLICT(kind, subject, value) DO NOTHING`,
+			string(r.Kind), string(r.Subject), r.Value, r.Note, r.CreatedAt.UTC().Format(time.RFC3339Nano), expires); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// FleetPending returns local events not yet copied to the fleet hub.
+func (s *SQLite) FleetPending(ctx context.Context, limit int) ([]Event, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, received_at, action, risk_score, COALESCE(source_ip, ''), COALESCE(from_num, ''), COALESCE(to_num, ''),
+  COALESCE(call_id, ''), COALESCE(user_agent, ''), COALESCE(attest, ''), COALESCE(reasons, ''), COALESCE(raw_sip, ''),
+  COALESCE(switch, ''), COALESCE(provider, ''), COALESCE(verstat, ''), COALESCE(signer_spc, ''), COALESCE(signer_name, ''),
+  COALESCE(fingerprint, ''), COALESCE(direction, ''), COALESCE(customer, ''), COALESCE(honeypot, 0)
+FROM events
+WHERE fleet_sent = 0 AND (peer IS NULL OR peer = '')
+ORDER BY id
+LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Event
+	for rows.Next() {
+		var ev Event
+		var received, action, reasons string
+		var honeypot int
+		if err := rows.Scan(&ev.ID, &received, &action, &ev.RiskScore, &ev.SourceIP, &ev.From, &ev.To,
+			&ev.CallID, &ev.UserAgent, &ev.Attest, &reasons, &ev.RawSIP, &ev.Switch, &ev.Provider, &ev.Verstat,
+			&ev.SignerSPC, &ev.SignerName, &ev.Fingerprint, &ev.Direction, &ev.Customer, &honeypot); err != nil {
+			return nil, err
+		}
+		ev.ReceivedAt, _ = time.Parse(time.RFC3339Nano, received)
+		ev.Action = score.Action(action)
+		ev.Honeypot = honeypot == 1
+		ev.Reasons = ParseReasons(reasons)
+		out = append(out, ev)
+	}
+	return out, rows.Err()
+}
+
+// MarkFleetSent records that the hub accepted these events.
+func (s *SQLite) MarkFleetSent(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	q := `UPDATE events SET fleet_sent = 1 WHERE id IN (` + placeholders(len(ids)) + `)`
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	_, err := s.db.ExecContext(ctx, q, args...)
+	return err
+}
+
+// InsertPeer stores a copy of another Falcon's event. It is not exported
+// again and it is not pushed back to a hub.
+func (s *SQLite) InsertPeer(ctx context.Context, ev Event) (int64, error) {
+	if ev.Peer == "" {
+		return 0, errors.New("peer install id is required")
+	}
+	if ev.ReceivedAt.IsZero() {
+		ev.ReceivedAt = time.Now().UTC()
+	}
+	res, err := s.db.ExecContext(ctx, `
+INSERT INTO events (received_at, received_unix, action, risk_score, source_ip, from_num, to_num, call_id, user_agent, attest,
+  reasons, raw_sip, switch, exported, provider, verstat, signer_spc, signer_name, shaken, fingerprint, direction, customer, honeypot, sampled, peer, fleet_sent)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1)`,
+		ev.ReceivedAt.UTC().Format(time.RFC3339Nano),
+		ev.ReceivedAt.UTC().Unix(),
+		string(ev.Action),
+		ev.RiskScore,
+		ev.SourceIP,
+		ev.From,
+		ev.To,
+		ev.CallID,
+		ev.UserAgent,
+		ev.Attest,
+		ReasonsJSON(ev.Reasons),
+		ev.RawSIP,
+		ev.Switch,
+		ev.Provider,
+		ev.Verstat,
+		ev.SignerSPC,
+		ev.SignerName,
+		string(ev.Shaken),
+		ev.Fingerprint,
+		ev.Direction,
+		ev.Customer,
+		boolInt(ev.Honeypot),
+		ev.Peer,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// FleetActivity sums caller behaviour since a time, excluding one peer so
+// that peer can add its own local counts without counting twice.
+func (s *SQLite) FleetActivity(ctx context.Context, since time.Time, excludePeer string, limit int) (map[string]Activity, error) {
+	if limit <= 0 {
+		limit = 5000
+	}
+	q := `
+SELECT from_num, COUNT(*), COUNT(DISTINCT to_num),
+  COUNT(answered), COALESCE(SUM(answered), 0),
+  COALESCE(SUM(CASE WHEN answered = 1 THEN duration_s ELSE 0 END), 0),
+  COALESCE(SUM(honeypot), 0)
+FROM events
+WHERE received_unix >= ? AND from_num <> ''`
+	args := []any{since.UTC().Unix()}
+	if excludePeer != "" {
+		q += ` AND COALESCE(peer, '') != ?`
+		args = append(args, excludePeer)
+	}
+	q += ` GROUP BY from_num ORDER BY COUNT(*) DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]Activity{}
+	for rows.Next() {
+		var from string
+		var a Activity
+		if err := rows.Scan(&from, &a.Calls, &a.DistinctCallees, &a.Completed, &a.Answered, &a.TalkSeconds, &a.HoneypotHits); err != nil {
+			return nil, err
+		}
+		out[from] = a
+	}
+	return out, rows.Err()
+}
+
+func placeholders(n int) string {
+	b := make([]byte, 0, n*2)
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = append(b, '?')
+	}
+	return string(b)
 }
 
 func (s *SQLite) DeleteRule(ctx context.Context, id int64) error {
@@ -774,7 +965,7 @@ func scanEvent(row rowScanner) (Event, error) {
 		&ev.ID, &received, &action, &ev.RiskScore, &ev.SourceIP, &ev.From, &ev.To,
 		&ev.CallID, &ev.UserAgent, &ev.Attest, &reasons, &raw, &ev.Switch, &exported,
 		&ev.Provider, &ev.Verstat, &ev.SignerSPC, &ev.SignerName, &shaken, &ev.Fingerprint, &ev.Direction, &ev.Customer,
-		&answered, &duration, &ev.HangupCause, &honeypot, &sampled,
+		&answered, &duration, &ev.HangupCause, &honeypot, &sampled, &ev.Peer,
 	)
 	if err != nil {
 		return ev, err

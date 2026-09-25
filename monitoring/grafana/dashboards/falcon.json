@@ -1,0 +1,230 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "falcon" },
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0 } },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "count(up{job=\"falcon\", switch=~\"$switch\"} == 1)",
+          "refId": "A"
+        }
+      ],
+      "title": "Switches up",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "falcon" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "decimals": 1 } },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "sum(rate(falcon_screens_total{switch=~\"$switch\"}[$__rate_interval]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Screens per second",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "falcon" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "decimals": 2 } },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum(rate(falcon_hard_blocks_total{switch=~\"$switch\"}[$__rate_interval]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Hard blocks per second",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "falcon" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 3 } },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum(rate(falcon_screen_latency_seconds_sum{switch=~\"$switch\"}[$__rate_interval])) / sum(rate(falcon_screen_latency_seconds_count{switch=~\"$switch\"}[$__rate_interval]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Mean screen time",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "falcon" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "spanNulls": false }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "sum by (switch) (rate(falcon_screens_total{switch=~\"$switch\"}[$__rate_interval]))",
+          "legendFormat": "{{switch}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Screens per second by switch",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "falcon" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "spanNulls": false }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "sum by (action) (rate(falcon_screens_by_action_total{switch=~\"$switch\"}[$__rate_interval]))",
+          "legendFormat": "{{action}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Decisions per second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "falcon" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "spanNulls": false }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "id": 7,
+      "targets": [
+        {
+          "expr": "sum by (switch) (rate(falcon_screen_latency_seconds_sum{switch=~\"$switch\"}[$__rate_interval])) / sum by (switch) (rate(falcon_screen_latency_seconds_count{switch=~\"$switch\"}[$__rate_interval]))",
+          "legendFormat": "{{switch}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Mean screen time by switch",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "falcon" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "spanNulls": false }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "id": 8,
+      "targets": [
+        {
+          "expr": "sum by (switch) (rate(falcon_hard_blocks_total{switch=~\"$switch\"}[$__rate_interval]))",
+          "legendFormat": "{{switch}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Hard blocks per second by switch",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "falcon" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "spanNulls": false }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "id": 9,
+      "targets": [
+        {
+          "expr": "sum by (verstat) (rate(falcon_shaken_verstat_total{switch=~\"$switch\"}[$__rate_interval]))",
+          "legendFormat": "{{verstat}}",
+          "refId": "A"
+        }
+      ],
+      "title": "STIR/SHAKEN results per second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "falcon" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "spanNulls": false }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "id": 10,
+      "targets": [
+        {
+          "expr": "sum by (switch) (rate(falcon_calls_answered_total{switch=~\"$switch\"}[$__rate_interval])) / sum by (switch) (rate(falcon_call_outcomes_total{switch=~\"$switch\"}[$__rate_interval]))",
+          "legendFormat": "{{switch}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Answer rate by switch",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "falcon" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "fillOpacity": 0, "spanNulls": false }
+        }
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 28 },
+      "id": 11,
+      "targets": [
+        {
+          "expr": "falcon_uptime_seconds{switch=~\"$switch\"}",
+          "legendFormat": "{{switch}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Process uptime",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["falcon"],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": { "text": "All", "value": "$__all" },
+        "datasource": { "type": "prometheus", "uid": "falcon" },
+        "includeAll": true,
+        "multi": true,
+        "name": "switch",
+        "query": { "query": "label_values(falcon_build_info, switch)", "refId": "A" },
+        "refresh": 2,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "title": "Falcon fleet",
+  "uid": "falcon-fleet",
+  "version": 1
+}

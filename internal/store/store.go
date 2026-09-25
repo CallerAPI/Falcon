@@ -45,10 +45,13 @@ type Event struct {
 	VoiceCategory string  `json:"voice_category,omitempty"`
 	VoiceScore    float64 `json:"voice_score,omitempty"`
 	// Shaken is the verification result as JSON, kept for the drawer.
-	Shaken   json.RawMessage `json:"shaken,omitempty"`
-	RawSIP   string          `json:"raw_sip,omitempty"`
-	Switch   string          `json:"switch,omitempty"`
-	Exported bool            `json:"exported"`
+	Shaken json.RawMessage `json:"shaken,omitempty"`
+	RawSIP string          `json:"raw_sip,omitempty"`
+	Switch string          `json:"switch,omitempty"`
+	// Peer is the install id of the Falcon that screened this call, when
+	// the row was copied to a fleet hub. Empty on the node that screened it.
+	Peer     string `json:"peer,omitempty"`
+	Exported bool   `json:"exported"`
 }
 
 // Filter narrows an event query. Zero values mean no constraint. BeforeID is
@@ -163,6 +166,11 @@ type Store interface {
 	Rules(ctx context.Context) ([]lists.Rule, error)
 	AddRule(ctx context.Context, r lists.Rule) (lists.Rule, error)
 	DeleteRule(ctx context.Context, id int64) error
+	ReplaceFleetRules(ctx context.Context, rules []lists.Rule) error
+	FleetPending(ctx context.Context, limit int) ([]Event, error)
+	MarkFleetSent(ctx context.Context, ids []int64) error
+	InsertPeer(ctx context.Context, ev Event) (int64, error)
+	FleetActivity(ctx context.Context, since time.Time, excludePeer string, limit int) (map[string]Activity, error)
 	KVGet(ctx context.Context, key string) (string, error)
 	KVSet(ctx context.Context, key, value string) error
 	Audit(ctx context.Context, e AuditEntry) error

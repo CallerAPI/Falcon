@@ -132,6 +132,30 @@ func header(resp, name string) string {
 	return ""
 }
 
+func TestMonitorRedirectContinuesADeniedCall(t *testing.T) {
+	api := newFalcon(t)
+	api.Cfg.Mode = config.ModeMonitor
+	s, err := New(Config{Listen: "127.0.0.1:0", Version: "test"}, api)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = s.Serve(ctx) }()
+
+	got := udpExchange(t, s.UDPAddr(), invite(denied), 3*time.Second)
+	if len(got) < 2 || statusOf(got[len(got)-1]) != "302" {
+		t.Fatalf("monitor must continue a denied call: %q", got)
+	}
+	final := got[len(got)-1]
+	if header(final, "X-Falcon-Action") != "allow" || header(final, "X-Falcon-Monitor") != "reject" {
+		t.Fatalf("headers: %s", final)
+	}
+	if header(final, "X-Falcon-Block") != "" {
+		t.Fatalf("monitor must not send a block header: %s", final)
+	}
+}
+
 func TestUDPRejectAndRedirect(t *testing.T) {
 	s := start(t, Config{})
 

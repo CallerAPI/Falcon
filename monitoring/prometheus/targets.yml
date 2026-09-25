@@ -1,0 +1,12 @@
+# One block per switch. Prometheus reads this file every 30 seconds.
+# switch is the name Grafana uses. site is the city or POP.
+- targets:
+    - 10.0.0.11:8090
+  labels:
+    switch: sbc-1
+    site: ashburn
+- targets:
+    - 10.0.0.12:8090
+  labels:
+    switch: sbc-2
+    site: ashburn

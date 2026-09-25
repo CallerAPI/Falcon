@@ -42,7 +42,14 @@ func (s *Server) behaviour(ctx context.Context, req ScreenRequest, snap sipmsg.S
 		en.Honeypot = idx.IsHoneypot(snap.ToUser)
 	}
 	if snap.FromUser != "" {
-		if a, err := s.Store.CallerActivity(ctx, snap.FromUser, time.Now().Add(-time.Hour)); err == nil && a.Calls > 0 {
+		a, err := s.Store.CallerActivity(ctx, snap.FromUser, time.Now().Add(-time.Hour))
+		if err != nil {
+			a = store.Activity{}
+		}
+		if s.Fleet != nil {
+			a = s.Fleet.Merge(snap.FromUser, a)
+		}
+		if a.Calls > 0 {
 			lim := score.DefaultBehaviour(s.Engine.Limits)
 			en.Caller = &score.Behaviour{
 				Calls: a.Calls, DistinctCallees: a.DistinctCallees, Completed: a.Completed, Answered: a.Answered,
