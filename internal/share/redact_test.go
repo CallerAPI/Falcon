@@ -137,6 +137,28 @@ func TestRedactHidesFromWhenItContainsCalledDigits(t *testing.T) {
 	}
 }
 
+func TestRedactHidesCalledDigitsGluedToURIScheme(t *testing.T) {
+	// CI FuzzRedact on main: compact To is "4155550123tel:" and the
+	// called digits are a prefix of that run. redactNameAddr saw tel:
+	// and left the prefix.
+	ev := event()
+	ev.To = "4155550"
+	ev.From = "0"
+	ev.CallID = "0\nT:4155550123tel:\n\n"
+	ev.UserAgent = ev.To
+	ev.Switch = ev.To
+	ev.RawSIP = "0\nT:4155550123tel:\n\n"
+	ev.Reasons = []score.Reason{{Code: "x", Detail: ev.RawSIP}}
+	out := Redact(ev, []byte("k"))
+	fields := []string{out.To, out.From, out.CallID, out.UserAgent, out.Switch, out.RawSIP}
+	for _, r := range out.Reasons {
+		fields = append(fields, r.Detail)
+	}
+	if strings.Contains(strings.Join(fields, "\n"), "4155550") {
+		t.Fatalf("called digits leaked: %q", fields)
+	}
+}
+
 func TestRedactNonNumericSubscriber(t *testing.T) {
 	ev := event()
 	ev.To = "alice.ops"

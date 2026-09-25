@@ -19,6 +19,8 @@ func FuzzRedact(f *testing.F) {
 	f.Add("", "", "")
 	// CI found this: From has a long zero run, To is seven zeros.
 	f.Add("000\r\n\r\n", "0000000", "1111000000000000000000")
+	// CI found this: compact To with digits glued to a tel: scheme.
+	f.Add("0\nT:4155550123tel:\n\n", "4155550", "0")
 	f.Fuzz(func(t *testing.T, raw, to, from string) {
 		ev := store.Event{
 			ReceivedAt: time.Now(), Action: score.ActionReject, From: from, To: to,
