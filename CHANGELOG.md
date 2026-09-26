@@ -70,6 +70,15 @@ Added
 
 Fixed
 
+- ConnexCS ScriptForge read keys the Raw Data does not have. The source
+  address was the ConnexCS script server, the User-Agent was empty, and
+  every call showed `missing_identity` and no signer. The script now reads
+  `params.si`, `params.sp`, `params.userAgent`, `callid`, and
+  `stir_shaken`.
+- `signing` on `/v1/screen`: a switch that signs after the screen sends the
+  attestation and the certificate URL. Falcon names the signer from the
+  certificate and does not charge `missing_identity`. The event shows
+  `switch signs`. The signing does not go into telemetry.
 - Telemetry drained 100 events per 30 s and nothing more, so a carrier
   ingress fell behind for the life of the process. One tick now drains up
   to 50 batches and stops at the first failure.

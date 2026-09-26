@@ -60,6 +60,25 @@ You can send selected headers instead of the raw message:
 }
 ```
 
+A switch that signs the call on the way out, after the screen, sends what
+it will sign with. The INVITE it screens has no Identity header yet:
+
+```json
+{
+  "signing": {
+    "attest": "A",
+    "origid": "00000000-0000-4000-8000-000000000001",
+    "x5u": "https://cert.example/shaken/signer.crt"
+  }
+}
+```
+
+Falcon fetches the certificate and names the signer. The event shows
+`switch signs` with the attestation. There is no signature to check, so
+`verstat` stays empty and `missing_identity` is not charged. An Identity
+header on the INVITE always wins. The signing never goes into
+telemetry; signer reputation uses only PASSporTs Falcon verified.
+
 You can also POST the raw SIP body with `Content-Type: application/sip`.
 
 `source_ip` may carry a port (`203.0.113.10:5060`). Falcon strips it.
@@ -276,11 +295,9 @@ Two parts: screening at INVITE, and live voice.
    `inbound` for a DID.
 3. Leave `MODE` at `monitor`. Nothing is rejected. Every call is screened
    and recorded, and the Traffic view shows what enforce would have done.
-4. Save. Click Save and Run once against a real log. Check that
-   `data.routing` carries the source IP, User-Agent, and Call-ID under one
-   of the keys in `IP_KEYS`, `UA_KEYS`, and `CALLID_KEYS`. Add the key if
-   your build names it differently. An unknown key is an empty field,
-   never a wrong one.
+4. Save. The script reads these Raw Data fields: `params.si` and
+   `params.sp` (the address the INVITE came from), `params.userAgent`,
+   `cli`, `dest_number`, `callid`, `account_id`, and `stir_shaken`.
 5. Management > Customer > Routing > [Route] > ScriptForge. Select Falcon.
    Set Timeout to `3000`. Set Timeout Action to `200 OK`, so a slow Falcon
    lets the call through.
@@ -294,6 +311,15 @@ A reject throws `603 Decline` and ConnexCS answers the caller with it.
 Allow and flag return the routing object unchanged. `ADD_HEADERS` puts
 the `X-Falcon-*` headers on the egress INVITEs once you have confirmed the
 header shape on your build.
+
+ConnexCS signs with your STIR/SHAKEN certificate on the INVITE it sends to
+the carrier, after the script returns. The script sends `stir_shaken` as
+`signing`. The certificate URL is
+`https://cdn.cnxcdn.com/shaken/<cert_id>.crt`, the x5u ConnexCS puts in the
+PASSporT. Set `FALCON_CERT_BASE` if yours differs. The event shows
+`switch signs · A` and the signer from the certificate.
+
+The Raw Data has no SDP body, so `invite_no_sdp` (+5) stays on every call.
 
 The e2e harness runs all three postures against a live Falcon: monitor
 never throws, enforce with hard blocks only throws on the deny list and

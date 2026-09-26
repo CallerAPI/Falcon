@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/callerapi/falcon/internal/score"
+	"github.com/callerapi/falcon/internal/shaken"
 	"github.com/callerapi/falcon/internal/store"
 )
 
@@ -59,6 +60,7 @@ type Event struct {
 // Summary is the verification result without the dest claim.
 type Summary struct {
 	Present   bool     `json:"present"`
+	Source    string   `json:"source,omitempty"`
 	Alg       string   `json:"alg,omitempty"`
 	X5U       string   `json:"x5u,omitempty"`
 	Attest    string   `json:"attest,omitempty"`
@@ -161,6 +163,11 @@ func Redact(ev store.Event, key []byte) Event {
 		out.Reasons = append(out.Reasons, r)
 	}
 	out.Shaken = summarize(ev.Shaken)
+	if out.Shaken != nil && out.Shaken.Source == shaken.SourceSwitch {
+		// A switch can name any certificate. Signer reputation is built
+		// only from PASSporTs Falcon verified.
+		out.Attest, out.SignerSPC, out.SignerName, out.Shaken = "", "", "", nil
+	}
 	out.RawSIP = scrub.sip(ev.RawSIP)
 	return out
 }

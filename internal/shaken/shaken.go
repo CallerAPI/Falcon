@@ -41,6 +41,10 @@ const (
 	VerstatNone   = "No-TN-Validation"
 )
 
+// SourceSwitch marks a Result built from the signing the switch reported.
+// The switch adds that PASSporT after the screen, so no signature was checked.
+const SourceSwitch = "switch"
+
 var oidTNAuthList = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 1, 26}
 
 // Signer is the certificate identity behind a PASSporT.
@@ -58,6 +62,7 @@ type Signer struct {
 // Result is one verification.
 type Result struct {
 	Present   bool     `json:"present"`
+	Source    string   `json:"source,omitempty"`
 	ParsedJWT bool     `json:"parsed_jwt"`
 	Alg       string   `json:"alg,omitempty"`
 	PPT       string   `json:"ppt,omitempty"`
@@ -311,14 +316,7 @@ func (v *Verifier) Verify(ctx context.Context, identity, fromTN, toTN string) Re
 		return r
 	}
 	leaf := chain[0]
-	r.Signer.CN = leaf.Subject.CommonName
-	if len(leaf.Subject.Organization) > 0 {
-		r.Signer.Org = leaf.Subject.Organization[0]
-	}
-	r.Signer.Issuer = leaf.Issuer.CommonName
-	r.Signer.Serial = leaf.SerialNumber.Text(16)
-	r.Signer.NotBefore, r.Signer.NotAfter = leaf.NotBefore, leaf.NotAfter
-	r.Signer.SPC = spcFromCert(leaf)
+	r.Signer.read(leaf)
 
 	sig, err := b64(parts[2])
 	if err != nil {
@@ -329,6 +327,68 @@ func (v *Verifier) Verify(ctx context.Context, identity, fromTN, toTN string) Re
 	if !r.Signature {
 		r.Errors = append(r.Errors, "signature does not verify with the x5u certificate")
 	}
+	v.checkCertificate(&r, chain, now)
+	if r.IAT > 0 && !r.Fresh {
+		r.Errors = append(r.Errors, fmt.Sprintf("iat is %ds from now", now.Unix()-r.IAT))
+	}
+	if fromTN != "" && r.OrigTN != "" && !r.OrigMatch {
+		r.Errors = append(r.Errors, "orig tn does not match the calling number")
+	}
+
+	if r.Signature && r.CertValid && r.Chain && !r.Revoked && (r.IAT == 0 || r.Fresh) && (fromTN == "" || r.OrigTN == "" || r.OrigMatch) {
+		r.Verstat = VerstatPassed
+	}
+	return r
+}
+
+// Describe reads the certificate a switch will sign a call with. The switch
+// adds the PASSporT after the screen, so there is no signature to check and
+// Verstat stays empty. A nil verifier records the claim without the fetch.
+func (v *Verifier) Describe(ctx context.Context, attest, origid, x5u string) Result {
+	r := Result{Source: SourceSwitch, Attest: strings.ToUpper(strings.TrimSpace(attest)), OrigID: strings.TrimSpace(origid), X5U: strings.TrimSpace(x5u)}
+	if u, err := url.Parse(r.X5U); err == nil {
+		r.Signer.X5UHost = u.Host
+	}
+	if v == nil || r.X5U == "" {
+		return r
+	}
+	start := v.Now()
+	defer func() { r.Latency = v.Now().Sub(start).Milliseconds() }()
+	if _, err := v.Policy.ValidateURL(r.X5U); err != nil {
+		r.Errors = append(r.Errors, "x5u rejected: "+err.Error())
+		return r
+	}
+	chain, cachedHit, pending, err := v.chain(ctx, r.X5U)
+	r.Cached = cachedHit
+	if pending {
+		r.Pending = true
+		r.Errors = append(r.Errors, "certificate fetch exceeded the per-call budget; warming cache")
+		return r
+	}
+	if err != nil {
+		r.Errors = append(r.Errors, "certificate fetch: "+err.Error())
+		return r
+	}
+	r.Signer.read(chain[0])
+	v.checkCertificate(&r, chain, v.Now())
+	return r
+}
+
+func (s *Signer) read(leaf *x509.Certificate) {
+	s.CN = leaf.Subject.CommonName
+	if len(leaf.Subject.Organization) > 0 {
+		s.Org = leaf.Subject.Organization[0]
+	}
+	s.Issuer = leaf.Issuer.CommonName
+	s.Serial = leaf.SerialNumber.Text(16)
+	s.NotBefore, s.NotAfter = leaf.NotBefore, leaf.NotAfter
+	s.SPC = spcFromCert(leaf)
+}
+
+// checkCertificate records validity, chain trust, and revocation for the
+// leaf at chain[0].
+func (v *Verifier) checkCertificate(r *Result, chain []*x509.Certificate, now time.Time) {
+	leaf := chain[0]
 	r.CertValid = !now.Before(leaf.NotBefore) && !now.After(leaf.NotAfter)
 	if !r.CertValid {
 		r.Errors = append(r.Errors, "certificate is outside its validity period")
@@ -346,17 +406,6 @@ func (v *Verifier) Verify(ctx context.Context, identity, fromTN, toTN string) Re
 	} else {
 		r.Errors = append(r.Errors, "no trusted STI-CA roots loaded; chain not checked")
 	}
-	if r.IAT > 0 && !r.Fresh {
-		r.Errors = append(r.Errors, fmt.Sprintf("iat is %ds from now", now.Unix()-r.IAT))
-	}
-	if fromTN != "" && r.OrigTN != "" && !r.OrigMatch {
-		r.Errors = append(r.Errors, "orig tn does not match the calling number")
-	}
-
-	if r.Signature && r.CertValid && r.Chain && !r.Revoked && (r.IAT == 0 || r.Fresh) && (fromTN == "" || r.OrigTN == "" || r.OrigMatch) {
-		r.Verstat = VerstatPassed
-	}
-	return r
 }
 
 // CachedChainPEM returns the cached chain for an x5u as PEM, or nil when

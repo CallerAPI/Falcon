@@ -334,6 +334,17 @@ type ScreenRequest struct {
 	RequestURI string            `json:"request_uri"`
 	Headers    map[string]string `json:"headers"`
 	Body       string            `json:"body"`
+	// Signing is what the switch adds when it signs the call on the way
+	// out, after the screen. Ignored when the INVITE has an Identity header.
+	Signing *Signing `json:"signing,omitempty"`
+}
+
+// Signing is the attestation a switch applies and the certificate it
+// signs with.
+type Signing struct {
+	Attest string `json:"attest"`
+	OrigID string `json:"origid"`
+	X5U    string `json:"x5u"`
 }
 
 // ErrParse means the request was not a SIP message Falcon can read. The
@@ -391,6 +402,8 @@ func (s *Server) Screen(ctx context.Context, req ScreenRequest) (score.Result, e
 	}
 	snap := sipmsg.SnapshotFrom(msg, req.SourceIP)
 	en, verification := s.enrich(ctx, snap)
+	signed := s.switchSigning(ctx, snap, req.Signing)
+	en.SwitchSigns = signed != nil
 	en.Network = s.network(en, fingerprint.Compute(msg))
 	s.behaviour(ctx, req, snap, &en)
 	result := s.Engine.Score(snap, en)
@@ -438,6 +451,14 @@ func (s *Server) Screen(ctx context.Context, req ScreenRequest) (score.Result, e
 	}
 	if verification != nil {
 		if b, err := json.Marshal(verification); err == nil {
+			ev.Shaken = b
+		}
+	}
+	if signed != nil {
+		ev.Attest = signed.Attest
+		ev.SignerSPC = signed.Signer.SPC
+		ev.SignerName = firstNonEmpty(signed.Signer.Org, signed.Signer.CN)
+		if b, err := json.Marshal(signed); err == nil {
 			ev.Shaken = b
 		}
 	}
@@ -561,6 +582,21 @@ func (s *Server) enrich(ctx context.Context, snap sipmsg.Snapshot) (score.Enrich
 		vcancel()
 	}
 	return en, verification
+}
+
+// switchSigning reads the certificate the switch reported it signs this
+// call with. A PASSporT on the INVITE itself always wins.
+func (s *Server) switchSigning(ctx context.Context, snap sipmsg.Snapshot, sg *Signing) *shaken.Result {
+	if sg == nil || snap.Identity.Raw != "" {
+		return nil
+	}
+	switch strings.ToUpper(strings.TrimSpace(sg.Attest)) {
+	case "A", "B", "C":
+	default:
+		return nil
+	}
+	res := s.Verifier.Describe(ctx, sg.Attest, sg.OrigID, sg.X5U)
+	return &res
 }
 
 // network reads the CallerAPI feed for the signer and the sending tool.

@@ -5,6 +5,8 @@
 //   monitor                   never throws, even on a deny-listed CLI
 //   enforce, hard blocks only throws 603 on the deny list, not on a score
 //   enforce, full             throws on both
+// The routing object has the keys of a real ConnexCS Raw Data log, with
+// documentation addresses and numbers.
 // Usage: connexcs_harness.js <falcon_url> <deny_number> <clean_number>
 
 const fs = require('fs');
@@ -12,10 +14,13 @@ const path = require('path');
 
 const [url, deny, clean] = process.argv.slice(2);
 const src = fs.readFileSync(path.join(__dirname, '..', 'connexcs', 'falcon.js'), 'utf8');
+const token = process.env.FALCON_TOKEN || '';
+const sent = [];
 
 // The subset of axios the app uses.
 const axios = {
   async post(target, body, opts) {
+    sent.push(body);
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), opts.timeout);
     try {
@@ -49,7 +54,7 @@ const sandboxRequire = (name) => {
 function load(envOverrides) {
   const fakeProcess = {
     env: Object.assign(
-      { FALCON_URL: url, FALCON_TOKEN: process.env.FALCON_TOKEN || '', FALCON_DIRECTION: 'inbound' },
+      { FALCON_URL: url, FALCON_TOKEN: token, FALCON_DIRECTION: 'inbound' },
       envOverrides
     ),
   };
@@ -59,14 +64,28 @@ function load(envOverrides) {
 let n = 0;
 function routing(cli, ua) {
   n += 1;
+  const callid = 'cx-e2e-' + cli + '-' + n;
   return {
     routing: {
+      params: {
+        switch: '203.0.113.9',
+        oU: '4155550100',
+        fU: cli,
+        callid,
+        userAgent: ua || 'connexcs-e2e/1.0',
+        si: '203.0.113.9',
+        sp: 5070,
+        proto: 'udp',
+        csIp: '198.51.100.1',
+      },
+      server: '198.51.100.1',
+      switch: '203.0.113.9',
       cli,
-      dest_number: '+14155550100',
+      callid,
       account_id: 4242,
-      ip: '203.0.113.9',
-      user_agent: ua || 'connexcs-e2e/1.0',
-      call_id: 'cx-e2e-' + cli + '-' + n,
+      direction: 'term',
+      dest_number: '14155550100',
+      stir_shaken: { attest: 'A', origid: '00000000-0000-4000-8000-000000000001', cert_id: 'e2e0000001' },
       egress_routing: [{ gw: {} }],
     },
   };
@@ -81,6 +100,20 @@ async function outcome(main, data) {
   }
 }
 
+async function storedEvent(callid) {
+  const eventsURL = url.replace(/\/v1\/screen$/, '/v1/events');
+  for (let i = 0; i < 30; i++) {
+    const res = await fetch(eventsURL, { headers: { 'X-Falcon-Token': token } });
+    const body = await res.json();
+    const ev = (body.data || []).find((e) => e.call_id === callid);
+    if (ev) {
+      return ev;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return null;
+}
+
 (async () => {
   const results = [];
   const check = (label, ok, detail) => {
@@ -91,6 +124,27 @@ async function outcome(main, data) {
   let main = load({ FALCON_MODE: 'monitor' });
   let r = await outcome(main, routing(deny));
   check('monitor: deny-listed CLI passes', r.threw === null, r.threw);
+  const probe = routing(clean, 'Acme SBC/3.6');
+  r = await outcome(main, probe);
+  check('monitor: clean passes', r.threw === null, r.threw);
+  const body = sent[sent.length - 1];
+  check('payload: source is params.si', body.source_ip === '203.0.113.9' && body.source_port === 5070, JSON.stringify(body));
+  check('payload: user agent is params.userAgent', body.headers['User-Agent'] === 'Acme SBC/3.6', JSON.stringify(body.headers));
+  check('payload: call id is routing.callid', body.headers['Call-ID'] === probe.routing.callid, JSON.stringify(body.headers));
+  check(
+    'payload: signing from routing.stir_shaken',
+    body.signing && body.signing.attest === 'A' && body.signing.x5u === 'https://cdn.cnxcdn.com/shaken/e2e0000001.crt',
+    JSON.stringify(body.signing)
+  );
+  const ev = await storedEvent(probe.routing.callid);
+  const codes = ev ? (ev.reasons || []).map((x) => x.code) : [];
+  check(
+    'event: switch signing stored',
+    ev && ev.shaken_attest === 'A' && ev.shaken && ev.shaken.source === 'switch' && ev.source_ip === '203.0.113.9' && ev.user_agent === 'Acme SBC/3.6',
+    JSON.stringify(ev)
+  );
+  check('event: no missing_identity when the switch signs', ev && codes.indexOf('missing_identity') < 0, codes.join(','));
+
   r = await outcome(main, routing(clean, 'friendly-scanner'));
   check('monitor: scanner UA passes', r.threw === null, r.threw);
   check('monitor: no headers added by default', r.headers === null, JSON.stringify(r.headers));

@@ -25,6 +25,7 @@ import (
 	"github.com/callerapi/falcon/internal/config"
 	"github.com/callerapi/falcon/internal/score"
 	"github.com/callerapi/falcon/internal/shaken"
+	"github.com/callerapi/falcon/internal/share"
 	"github.com/callerapi/falcon/internal/store"
 	"github.com/callerapi/falcon/internal/voice"
 )
@@ -342,35 +343,46 @@ func TestStreamDeliversScreenedEvents(t *testing.T) {
 
 // A signed INVITE flows through verification into storage, signer stats,
 // and headers, and a deny rule on the signer SPC rejects the next call.
-func TestScreenVerifiesPassportAndDeniesBySigner(t *testing.T) {
+// testSigner serves a leaf certificate that carries spc in its TNAuthList,
+// issued by a root the returned trust store holds.
+func testSigner(t *testing.T, spc, org string) (x5u string, trust *shaken.TrustStore, leafKey *ecdsa.PrivateKey) {
+	t.Helper()
 	rootKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	rootTpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Test Root"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
 	rootDER, _ := x509.CreateCertificate(rand.Reader, rootTpl, rootTpl, &rootKey.PublicKey, rootKey)
 	rootCert, _ := x509.ParseCertificate(rootDER)
-	inner, _ := asn1.MarshalWithParams("8181", "ia5")
+	inner, _ := asn1.MarshalWithParams(spc, "ia5")
 	entryDER, _ := asn1.Marshal(asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 0, IsCompound: true, Bytes: inner})
 	tnAuth, _ := asn1.Marshal(asn1.RawValue{Class: asn1.ClassUniversal, Tag: asn1.TagSequence, IsCompound: true, Bytes: entryDER})
-	leafKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	leafTpl := &x509.Certificate{SerialNumber: big.NewInt(7), Subject: pkix.Name{CommonName: "SHAKEN 8181", Organization: []string{"Gateway Eight LLC"}}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), ExtraExtensions: []pkix.Extension{{Id: asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 1, 26}, Value: tnAuth}}}
+	leafKey, _ = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	leafTpl := &x509.Certificate{SerialNumber: big.NewInt(7), Subject: pkix.Name{CommonName: "SHAKEN " + spc, Organization: []string{org}}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), ExtraExtensions: []pkix.Extension{{Id: asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 1, 26}, Value: tnAuth}}}
 	leafDER, _ := x509.CreateCertificate(rand.Reader, leafTpl, rootCert, &leafKey.PublicKey, rootKey)
 	chainPEM := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rootDER})...)
 	certSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(chainPEM) }))
-	defer certSrv.Close()
+	t.Cleanup(certSrv.Close)
 
-	trust := shaken.NewTrustStore("", filepath.Join(t.TempDir(), "roots.pem"), "")
+	trust = shaken.NewTrustStore("", filepath.Join(t.TempDir(), "roots.pem"), "")
 	if err := writeFile(trust.CAFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rootDER})); err != nil {
 		t.Fatal(err)
 	}
 	trust.LoadRoots(context.Background())
+	return certSrv.URL + "/c.pem", trust, leafKey
+}
+
+func testVerifier(trust *shaken.TrustStore) *shaken.Verifier {
 	opts := shaken.DefaultOptions()
 	opts.AllowHTTP = true
 	opts.Budget = 2 * time.Second
+	return shaken.New(trust, opts)
+}
 
+func TestScreenVerifiesPassportAndDeniesBySigner(t *testing.T) {
+	x5u, trust, leafKey := testSigner(t, "8181", "Gateway Eight LLC")
 	srv, db := newTestServer(t)
 	srv.Trust = trust
-	srv.Verifier = shaken.New(trust, opts)
+	srv.Verifier = testVerifier(trust)
 
-	hdr, _ := json.Marshal(map[string]string{"alg": "ES256", "ppt": "shaken", "typ": "passport", "x5u": certSrv.URL + "/c.pem"})
+	hdr, _ := json.Marshal(map[string]string{"alg": "ES256", "ppt": "shaken", "typ": "passport", "x5u": x5u})
 	body, _ := json.Marshal(map[string]any{"attest": "C", "origid": "abc", "iat": time.Now().Unix(), "orig": map[string]string{"tn": "14155550100"}, "dest": map[string][]string{"tn": {"15551212"}}})
 	input := base64.RawURLEncoding.EncodeToString(hdr) + "." + base64.RawURLEncoding.EncodeToString(body)
 	sum := sha256.Sum256([]byte(input))
@@ -378,7 +390,7 @@ func TestScreenVerifiesPassportAndDeniesBySigner(t *testing.T) {
 	sig := make([]byte, 64)
 	r.FillBytes(sig[:32])
 	s.FillBytes(sig[32:])
-	identity := input + "." + base64.RawURLEncoding.EncodeToString(sig) + ";info=<" + certSrv.URL + "/c.pem>;alg=ES256;ppt=shaken"
+	identity := input + "." + base64.RawURLEncoding.EncodeToString(sig) + ";info=<" + x5u + ">;alg=ES256;ppt=shaken"
 
 	raw := strings.Replace(cleanInvite("+14155550100", "Acme-SBC/1.0"), "Max-Forwards: 70\r\n", "Max-Forwards: 70\r\nIdentity: "+identity+"\r\n", 1)
 	res := screen(t, srv, "198.51.100.20", raw)
@@ -425,6 +437,52 @@ func TestScreenVerifiesPassportAndDeniesBySigner(t *testing.T) {
 	w = do(t, srv, http.MethodGet, "/v1/status", nil)
 	if !strings.Contains(w.Body.String(), `"roots":1`) || !strings.Contains(w.Body.String(), `"cached_chains":1`) {
 		t.Fatalf("status: %s", w.Body.String())
+	}
+}
+
+// A switch that signs after the screen reports the signing. The event names
+// the signer from the certificate, missing_identity is not charged, and the
+// claim never reaches telemetry.
+func TestScreenRecordsSwitchSigning(t *testing.T) {
+	x5u, trust, _ := testSigner(t, "8181", "Gateway Eight LLC")
+	srv, db := newTestServer(t)
+	srv.Trust = trust
+	srv.Verifier = testVerifier(trust)
+
+	w := do(t, srv, http.MethodPost, "/v1/screen", map[string]any{
+		"switch": "connexcs", "direction": "outbound", "customer": "4242", "method": "INVITE",
+		"request_uri": "sip:14155550100@connexcs.invalid", "source_ip": "203.0.113.9", "source_port": 5070,
+		"headers": map[string]string{
+			"From": "<sip:13125550188@203.0.113.9>;tag=cx", "To": "<sip:14155550100@connexcs.invalid>",
+			"Call-ID": "cx-sign-1", "User-Agent": "Acme SBC/3.6",
+		},
+		"signing": map[string]string{"attest": "a", "origid": "00000000-0000-4000-8000-000000000001", "x5u": x5u},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("screen %d %s", w.Code, w.Body.String())
+	}
+	var res score.Result
+	_ = json.Unmarshal(w.Body.Bytes(), &res)
+	for _, r := range res.Reasons {
+		if r.Code == "missing_identity" {
+			t.Fatalf("missing_identity charged on a call the switch signs: %+v", res.Reasons)
+		}
+	}
+	if res.Signals.SignerSPC != "" || res.Headers["X-Falcon-Signer"] != "" {
+		t.Fatalf("switch signing leaked into verification signals: %+v", res.Signals)
+	}
+
+	ev := waitEvents(t, db, 1)[0]
+	if ev.Attest != "A" || ev.SignerSPC != "8181" || ev.SignerName != "Gateway Eight LLC" || ev.Verstat != "" {
+		t.Fatalf("stored event: %+v", ev)
+	}
+	var sh shaken.Result
+	if err := json.Unmarshal(ev.Shaken, &sh); err != nil || sh.Source != shaken.SourceSwitch || !sh.Chain || !sh.CertValid || sh.Signature || sh.OrigID == "" {
+		t.Fatalf("stored signing: %s", ev.Shaken)
+	}
+	out := share.Redact(ev, []byte("k"))
+	if out.Attest != "" || out.SignerSPC != "" || out.SignerName != "" || out.Shaken != nil {
+		t.Fatalf("switch signing reached telemetry: %+v", out)
 	}
 }
 

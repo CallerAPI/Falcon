@@ -54,6 +54,16 @@ func event() store.Event {
 	}
 }
 
+func TestRedactDropsSwitchSigning(t *testing.T) {
+	ev := event()
+	ev.Verstat = ""
+	ev.Shaken, _ = json.Marshal(map[string]any{"present": false, "source": "switch", "attest": "A", "x5u": "https://cert.example/k.pem"})
+	out := Redact(ev, []byte("k"))
+	if out.Attest != "" || out.SignerSPC != "" || out.SignerName != "" || out.Shaken != nil {
+		t.Fatalf("switch signing shared: %+v", out)
+	}
+}
+
 func TestRedactHidesCalledPartyEverywhere(t *testing.T) {
 	out := Redact(event(), []byte("k"))
 	body, _ := json.Marshal(out)

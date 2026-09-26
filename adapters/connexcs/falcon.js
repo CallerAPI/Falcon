@@ -44,23 +44,11 @@ const TIMEOUT_MS = 1500;
 // 'inbound' on a DID: the call is coming to one of your numbers.
 const DIRECTION = env.FALCON_DIRECTION || 'outbound';
 
-// data.routing carries the fields of the Raw Data tab of a call log.
-// cli, dest_number, and account_id are documented by ConnexCS. The source
-// IP, User-Agent, and Call-ID keys differ by build, so the first key
-// present wins. Run the script once with Save and Run on a real log to
-// confirm them. An unknown key means an empty field, never a wrong one.
-const IP_KEYS = ['ip', 'src_ip', 'source_ip', 'customer_ip', 'ingress_ip', 'remote_ip'];
-const UA_KEYS = ['user_agent', 'ua', 'useragent'];
-const CALLID_KEYS = ['call_id', 'callid', 'sip_call_id'];
-
-function pick(obj, keys) {
-  for (const k of keys) {
-    if (obj && obj[k] !== undefined && obj[k] !== null && obj[k] !== '') {
-      return String(obj[k]);
-    }
-  }
-  return '';
-}
+// ConnexCS signs the call on the INVITE it sends to the carrier, after this
+// script returns, so the INVITE here has no Identity header.
+// routing.stir_shaken is that signing decision, and the PASSporT x5u is
+// CERT_BASE + cert_id + '.crt'.
+const CERT_BASE = env.FALCON_CERT_BASE || 'https://cdn.cnxcdn.com/shaken/';
 
 function sipURI(num, host) {
   num = String(num || '').trim();
@@ -70,9 +58,25 @@ function sipURI(num, host) {
   return '<sip:' + num + '@' + host + '>';
 }
 
-function payloadFor(routing) {
-  const ip = pick(routing, IP_KEYS);
+function signingFor(ss) {
+  if (!ss || !ss.attest) {
+    return null;
+  }
+  const certID = String(ss.cert_id || '');
   return {
+    attest: String(ss.attest),
+    origid: String(ss.origid || ''),
+    x5u: /^[A-Za-z0-9_-]+$/.test(certID) ? CERT_BASE + certID + '.crt' : '',
+  };
+}
+
+// data.routing is the Raw Data of the call log. params holds what the switch
+// read from the INVITE: si and sp are the source address and port, and
+// userAgent is the User-Agent header.
+function payloadFor(routing) {
+  const params = routing.params || {};
+  const ip = String(params.si || routing.switch || '');
+  const payload = {
     switch: 'connexcs',
     direction: DIRECTION,
     customer: routing.account_id !== undefined && routing.account_id !== null ? String(routing.account_id) : '',
@@ -80,12 +84,20 @@ function payloadFor(routing) {
     request_uri: 'sip:' + (routing.dest_number || 'unknown') + '@connexcs.invalid',
     source_ip: ip,
     headers: {
-      From: sipURI(routing.cli, ip || 'connexcs.invalid') + ';tag=cx',
+      From: sipURI(routing.cli || params.fU, ip || 'connexcs.invalid') + ';tag=cx',
       To: sipURI(routing.dest_number, 'connexcs.invalid'),
-      'Call-ID': pick(routing, CALLID_KEYS),
-      'User-Agent': pick(routing, UA_KEYS),
+      'Call-ID': String(routing.callid || params.callid || ''),
+      'User-Agent': String(params.userAgent || ''),
     },
   };
+  if (params.sp) {
+    payload.source_port = Number(params.sp);
+  }
+  const signing = signingFor(routing.stir_shaken);
+  if (signing) {
+    payload.signing = signing;
+  }
+  return payload;
 }
 
 async function screen(payload) {

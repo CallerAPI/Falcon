@@ -81,7 +81,18 @@
   function scoreCell(score, action) {
     return '<span class="score ' + esc(action) + '"><span class="bar"><i style="width:' + clamp(score, 0, 100) + '%"></i></span><span class="mono num">' + esc(score) + "</span></span>";
   }
-  function verstatChip(v, attest) {
+  function certDate(iso) {
+    return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  }
+  function errorsCard(sh) {
+    return sh.errors && sh.errors.length ? '<div class="card" style="border-color:rgba(239,68,68,0.35)"><h2 style="margin-bottom:6px">Errors</h2>' + sh.errors.map((e) => '<div class="small mono">' + esc(e) + "</div>").join("") + "</div>" : "";
+  }
+  function signerCard(sh) {
+    const s = sh.signer || {};
+    return '<div class="card"><h2 style="margin-bottom:8px">Signer</h2><dl class="kv"><dt>SPC</dt><dd>' + esc(s.spc || "—") + "</dd><dt>organization</dt><dd>" + esc(s.org || "—") + "</dd><dt>common name</dt><dd>" + esc(s.cn || "—") + "</dd><dt>issuer</dt><dd>" + esc(s.issuer || "—") + "</dd><dt>serial</dt><dd>" + esc(s.serial || "—") + "</dd><dt>valid</dt><dd>" + esc(s.not_before ? certDate(s.not_before) + " → " + certDate(s.not_after) : "—") + "</dd><dt>x5u</dt><dd>" + esc(sh.x5u || "—") + "</dd></dl></div>";
+  }
+  function verstatChip(v, attest, source) {
+    if (source === "switch") return '<span class="chip" title="The switch signs this call after Falcon screens it">switch signs' + (attest ? " · " + esc(attest) : "") + "</span>";
     if (!v && !attest) return '<span class="chip dim">no shaken</span>';
     let cls = "dim";
     let label = v || "unverified";
@@ -322,7 +333,7 @@
       '<td class="mono">' + esc(ev.to) + "</td>" +
       '<td class="mono nowrap">' + esc(ev.source_ip) + (ev.provider ? '<span class="sub" title="' + esc(ev.provider) + '">' + esc(ev.provider) + "</span>" : "") + "</td>" +
       '<td class="nowrap">' + (ev.signer_spc ? '<span class="chip">' + esc(ev.signer_spc) + "</span>" + (ev.signer_name ? '<span class="sub" title="' + esc(ev.signer_name) + '">' + esc(ev.signer_name) + "</span>" : "") : '<span class="muted">—</span>') + "</td>" +
-      "<td>" + verstatChip(ev.verstat, ev.shaken_attest) + "</td>" +
+      "<td>" + verstatChip(ev.verstat, ev.shaken_attest, ev.shaken && ev.shaken.source) + "</td>" +
       "<td>" + reasonChips(ev.reasons, 3) + "</td></tr>";
   }
 
@@ -743,7 +754,7 @@
     if (tab === "summary") {
       const sh = ev.shaken || {};
       const vs = ev.voice || null;
-      body.innerHTML = '<div class="toolbar">' + pill(ev.action) + scoreCell(ev.risk_score, ev.action) + verstatChip(ev.verstat, ev.shaken_attest) + (ev.direction === "outbound" ? '<span class="chip warn">outbound</span>' : "") + (ev.customer ? '<span class="chip">customer ' + esc(ev.customer) + "</span>" : "") + (ev.honeypot ? '<span class="chip bad">honeypot target</span>' : "") + (ev.provider ? '<span class="chip">' + esc(ev.provider) + "</span>" : "") + (ev.signer_spc ? '<span class="chip">SPC ' + esc(ev.signer_spc) + (ev.signer_name ? " · " + esc(ev.signer_name) : "") + "</span>" : "") + "</div>" +
+      body.innerHTML = '<div class="toolbar">' + pill(ev.action) + scoreCell(ev.risk_score, ev.action) + verstatChip(ev.verstat, ev.shaken_attest, sh.source) + (ev.direction === "outbound" ? '<span class="chip warn">outbound</span>' : "") + (ev.customer ? '<span class="chip">customer ' + esc(ev.customer) + "</span>" : "") + (ev.honeypot ? '<span class="chip bad">honeypot target</span>' : "") + (ev.provider ? '<span class="chip">' + esc(ev.provider) + "</span>" : "") + (ev.signer_spc ? '<span class="chip">SPC ' + esc(ev.signer_spc) + (ev.signer_name ? " · " + esc(ev.signer_name) : "") + "</span>" : "") + "</div>" +
         (ev.answered !== undefined || ev.sampled ? '<dl class="kv"><dt>outcome</dt><dd>' + (ev.answered === undefined ? "not reported yet" : (ev.answered ? "answered, " + esc(ev.duration_s || 0) + " s" : "not answered") + (ev.hangup_cause ? " · " + esc(ev.hangup_cause) : "")) + "</dd>" + (ev.sampled ? "<dt>audio</dt><dd>" + (vs ? esc(vs.seconds.toFixed(1)) + " s, " + esc(vs.channels) + (vs.channels > 1 ? " legs" : " channel") + (vs.repeat_count ? ' · <b style="color:' + colors.reject + '">same recording as ' + esc(vs.repeat_count) + " earlier calls</b>" : "") + (vs.caller_speech >= 0.55 && vs.callee_speech <= 0.08 && vs.channels > 1 ? " · one-way monologue" : "") : "requested, not received yet") + "</dd>" : "") + "</dl>" : "") +
         (vs && (vs.category || vs.error) ? '<div class="card" style="padding:6px 14px"><header style="margin:8px 0 2px"><h2>Voice analysis</h2><span class="hint">' + (vs.provider === "callerapi-live" ? "live · CallerAPI listened while the call was up" + (vs.seconds ? " · " + esc(Math.round(vs.seconds)) + " s" : "") : esc(vs.provider || "")) + "</span></header>" + (vs.error ? '<div class="small mono" style="color:' + colors.reject + '">' + esc(vs.error) + "</div>" : '<div class="toolbar"><span class="chip ' + (vs.score >= 0.7 ? "bad" : vs.score >= 0.4 ? "warn" : "dim") + '">' + esc(vs.category) + " · " + esc(Math.round(vs.score * 100)) + "%</span></div>" + (vs.summary ? '<p class="small">' + esc(vs.summary) + "</p>" : "") + (vs.transcript ? '<details class="small"><summary class="muted">transcript (stays on this host)</summary><pre style="white-space:pre-wrap;margin:6px 0 0">' + esc(vs.transcript) + "</pre></details>" : "")) + "</div>" : "") +
         '<dl class="kv"><dt>source</dt><dd>' + esc(ev.source_ip) + "</dd><dt>user agent</dt><dd>" + esc(ev.user_agent || "—") + "</dd><dt>call id</dt><dd>" + esc(ev.call_id || "—") + "</dd>" +
@@ -755,6 +766,21 @@
         ((ev.reasons || []).length ? ev.reasons.map((r) => '<div class="reason"><div><div class="code">' + esc(r.code) + '</div><div class="detail">' + esc(r.detail) + '</div></div><div class="w' + (r.weight ? "" : " zero") + '">' + (r.weight ? "+" + r.weight : "0") + "</div></div>").join("") : '<div class="muted small" style="padding:8px 0">Nothing looked wrong.</div>') + "</div>";
     } else if (tab === "shaken") {
       const sh = ev.shaken;
+      const roots = !!(state.status && state.status.shaken && state.status.shaken.trust && state.status.shaken.trust.roots);
+      if (sh && sh.source === "switch") {
+        const na = sh.pending || !sh.x5u;
+        const checks = [
+          ["Certificate chains to a trusted STI-CA", sh.chain_trusted, na || (!sh.chain_trusted && !roots)],
+          ["Certificate is within its validity period", sh.cert_valid, na],
+          ["Certificate is not on the STI-PA CRL", !sh.revoked, na],
+        ];
+        body.innerHTML = '<div class="toolbar">' + verstatChip(sh.verstat, sh.attest, sh.source) + (sh.pending ? '<span class="chip warn">certificate fetch pending</span>' : "") + (sh.cached ? '<span class="chip dim">from cache</span>' : "") + "</div>" +
+          '<p class="muted small">The switch signs this call on the way out, after Falcon screens the INVITE. Falcon read the certificate the switch signs with. There was no signature to check.</p>' +
+          '<div class="check">' + checks.map(([label, ok, skip]) => '<div class="c ' + (skip ? "na" : ok ? "ok" : "bad") + '"><span class="m">' + (skip ? "–" : ok ? "✓" : "✕") + "</span><span>" + esc(label) + "</span></div>").join("") + "</div>" +
+          errorsCard(sh) + signerCard(sh) +
+          '<div class="card"><h2 style="margin-bottom:8px">Signing</h2><dl class="kv"><dt>attestation</dt><dd>' + esc(sh.attest || "—") + "</dd><dt>origid</dt><dd>" + esc(sh.origid || "—") + "</dd></dl></div>";
+        return;
+      }
       if (!sh || !sh.present) {
         body.innerHTML = empty(ev.shaken_attest ? "The Identity header was decoded but verification did not run on this install." : "This INVITE carried no Identity header. Unsigned traffic is legal but weak. Attestation and signer are unknown.");
         return;
@@ -763,7 +789,7 @@
         ["Identity header parsed as a PASSporT", sh.parsed_jwt],
         ["Algorithm is ES256", sh.alg === "ES256"],
         ["Signature verifies with the x5u certificate", sh.signature_ok, sh.pending],
-        ["Certificate chains to a trusted STI-CA", sh.chain_trusted, sh.pending || !(state.status && state.status.shaken && state.status.shaken.trust && state.status.shaken.trust.roots)],
+        ["Certificate chains to a trusted STI-CA", sh.chain_trusted, sh.pending || (!sh.chain_trusted && !roots)],
         ["Certificate is within its validity period", sh.cert_valid, sh.pending],
         ["Certificate is not on the STI-PA CRL", sh.present && !sh.revoked && !sh.pending, sh.pending],
         ["iat is within 60 seconds", sh.fresh, !sh.iat],
@@ -777,8 +803,7 @@
       const payload = parts.length === 3 ? b64json(parts[1]) : null;
       body.innerHTML = '<div class="toolbar">' + verstatChip(sh.verstat, sh.attest) + (sh.pending ? '<span class="chip warn">certificate fetch pending</span>' : "") + (sh.cached ? '<span class="chip dim">from cache</span>' : "") + '<span class="chip dim">' + esc(sh.latency_ms) + " ms</span></div>" +
         '<div class="check">' + checks.map(([label, ok, na]) => '<div class="c ' + (na ? "na" : ok ? "ok" : "bad") + '"><span class="m">' + (na ? "–" : ok ? "✓" : "✕") + "</span><span>" + esc(label) + "</span></div>").join("") + "</div>" +
-        (sh.errors && sh.errors.length ? '<div class="card" style="border-color:rgba(239,68,68,0.35)"><h2 style="margin-bottom:6px">Errors</h2>' + sh.errors.map((e) => '<div class="small mono">' + esc(e) + "</div>").join("") + "</div>" : "") +
-        '<div class="card"><h2 style="margin-bottom:8px">Signer</h2><dl class="kv"><dt>SPC</dt><dd>' + esc(sh.signer && sh.signer.spc || "—") + "</dd><dt>organization</dt><dd>" + esc(sh.signer && sh.signer.org || "—") + "</dd><dt>common name</dt><dd>" + esc(sh.signer && sh.signer.cn || "—") + "</dd><dt>issuer</dt><dd>" + esc(sh.signer && sh.signer.issuer || "—") + "</dd><dt>serial</dt><dd>" + esc(sh.signer && sh.signer.serial || "—") + "</dd><dt>valid</dt><dd>" + esc(sh.signer && sh.signer.not_before ? fmtDate(sh.signer.not_before) + " → " + fmtDate(sh.signer.not_after) : "—") + "</dd><dt>x5u</dt><dd>" + esc(sh.x5u || "—") + "</dd></dl></div>" +
+        errorsCard(sh) + signerCard(sh) +
         '<div class="card"><h2 style="margin-bottom:8px">PASSporT</h2><dl class="kv"><dt>attestation</dt><dd>' + esc(sh.attest || "—") + "</dd><dt>orig tn</dt><dd>" + esc(sh.orig_tn || "—") + "</dd><dt>dest tn</dt><dd>" + esc((sh.dest_tn || []).join(", ") || "—") + "</dd><dt>origid</dt><dd>" + esc(sh.origid || "—") + "</dd><dt>iat</dt><dd>" + (sh.iat ? esc(new Date(sh.iat * 1000).toISOString()) : "—") + "</dd></dl>" +
         (hdr ? "<pre>" + esc(JSON.stringify(hdr, null, 2)) + "\n" + esc(JSON.stringify(payload, null, 2)) + "</pre>" : "") + "</div>";
     } else if (tab === "sip") {

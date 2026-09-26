@@ -24,6 +24,9 @@ type Enrichment struct {
 	IP *IPIntel
 	// Shaken is the verification outcome when the verifier ran.
 	Shaken *Shaken
+	// SwitchSigns is true when the switch reported that it signs the call
+	// on the way out. The INVITE it screens has no Identity header yet.
+	SwitchSigns bool
 	// List is the operator's own allow or deny rule when one matched.
 	List *ListHit
 	// Network is what every sharing install has seen of this signer and
@@ -232,7 +235,9 @@ func (e *Engine) Score(s sipmsg.Snapshot, en Enrichment) Result {
 	}
 
 	if s.Identity.Raw == "" {
-		add("missing_identity", "shaken", "Identity header is missing (no STIR/SHAKEN)", 15)
+		if !en.SwitchSigns {
+			add("missing_identity", "shaken", "Identity header is missing (no STIR/SHAKEN)", 15)
+		}
 	} else if !s.Identity.ValidJWT {
 		add("shaken_invalid", "shaken", "Identity header is not a readable PASSporT JWT", 30)
 	} else {

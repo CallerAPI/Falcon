@@ -144,6 +144,27 @@ func TestVerifyPassesAndReadsSPC(t *testing.T) {
 	}
 }
 
+// Describe names the signer from the certificate a switch signs with and
+// never claims a signature was checked.
+func TestDescribeReadsTheSwitchCertificate(t *testing.T) {
+	p := newPKI(t, "1234")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(p.chainPEM) }))
+	defer srv.Close()
+
+	r := newVerifier(trustWithRoot(p)).Describe(context.Background(), "b", "o-1", srv.URL+"/cert.pem")
+	if r.Source != SourceSwitch || r.Attest != "B" || r.OrigID != "o-1" || r.Verstat != "" || r.Signature || r.Present {
+		t.Fatalf("claim: %+v", r)
+	}
+	if r.Signer.SPC != "1234" || r.Signer.Org != "Example Carrier LLC" || !r.Chain || !r.CertValid || r.Revoked {
+		t.Fatalf("certificate: %+v", r)
+	}
+
+	var off *Verifier
+	if r := off.Describe(context.Background(), "A", "", srv.URL+"/cert.pem"); r.Source != SourceSwitch || r.Attest != "A" || r.Signer.SPC != "" {
+		t.Fatalf("nil verifier: %+v", r)
+	}
+}
+
 func TestVerifyFailsOnTamperedPayload(t *testing.T) {
 	p := newPKI(t, "1234")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(p.chainPEM) }))
