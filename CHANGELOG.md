@@ -4,6 +4,9 @@
 
 Added
 
+- Traffic shows inbound or outbound on every row and in the event drawer.
+  The direction filter stacks with decision, verification, and search.
+
 - An enabled dashboard plugin shows on existing installs at the next
   catalog refresh. No Falcon upgrade is required. A feed or live plugin
   still runs only after a grant. The Plugins page also shows the spam

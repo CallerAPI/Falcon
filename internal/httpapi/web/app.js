@@ -12,7 +12,7 @@
     range: localStorage.getItem("falcon_range") || "24h",
     live: false,
     q: "",
-    traffic: { action: "", verstat: "", rows: [], next: 0, loading: false },
+    traffic: { action: "", verstat: "", direction: "", rows: [], next: 0, loading: false },
     drawer: { ev: null, tab: "summary" },
     status: null,
     sse: null,
@@ -245,6 +245,7 @@
       $("#search").value = state.q;
       state.traffic.action = p.get("action") || "";
       state.traffic.verstat = p.get("verstat") || "";
+      state.traffic.direction = p.get("direction") || "";
     }
     render();
   }
@@ -324,10 +325,15 @@
   }
 
   // ---------- traffic ----------
+  function directionChip(ev) {
+    const outbound = ev.direction === "outbound";
+    return '<span class="chip ' + (outbound ? "warn" : "ok") + '">' + (outbound ? "outbound" : "inbound") + "</span>";
+  }
+
   function trafficRow(ev, isNew) {
     return '<tr class="row' + (isNew ? " new" : "") + '" data-id="' + ev.id + '">' +
       '<td class="mono muted" title="' + esc(ev.received_at) + '">' + esc(fmtTime(ev.received_at)) + "</td>" +
-      "<td>" + pill(ev.action) + "</td>" +
+      "<td>" + pill(ev.action) + directionChip(ev) + "</td>" +
       "<td>" + scoreCell(ev.risk_score, ev.action) + "</td>" +
       '<td class="mono">' + esc(ev.from) + "</td>" +
       '<td class="mono">' + esc(ev.to) + "</td>" +
@@ -342,16 +348,20 @@
     v.innerHTML = '<div class="toolbar">' +
       '<select id="fAction"><option value="">all decisions</option><option>allow</option><option>flag</option><option>challenge</option><option>reject</option></select>' +
       '<select id="fVerstat"><option value="">any verification</option><option value="TN-Validation-Passed">verified</option><option value="TN-Validation-Failed">failed</option><option value="No-TN-Validation">no validation</option></select>' +
+      '<select id="fDirection"><option value="">inbound and outbound</option><option value="inbound">inbound</option><option value="outbound">outbound</option></select>' +
       '<span class="spacer"></span><span class="muted small" id="tCount"></span>' +
       '<a class="btn sm" id="csvBtn" href="#">Export CSV</a></div>' +
       '<article class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th>time</th><th>decision</th><th>score</th><th>from</th><th>to</th><th>source</th><th>signer</th><th>shaken</th><th>reasons</th></tr></thead><tbody id="rows"></tbody></table></div>' +
       '<div style="padding:12px;text-align:center"><button class="btn" id="moreBtn">Load more</button></div></article>';
     $("#fAction").value = t.action;
     $("#fVerstat").value = t.verstat;
-    const csvHref = () => "/v1/events.csv?range=" + state.range + (t.action ? "&action=" + t.action : "") + (t.verstat ? "&verstat=" + t.verstat : "") + (state.q ? "&q=" + encodeURIComponent(state.q) : "") + (token ? "&token=" + encodeURIComponent(token) : "");
+    $("#fDirection").value = t.direction;
+    const csvHref = () => "/v1/events.csv?range=" + state.range + (t.action ? "&action=" + t.action : "") + (t.verstat ? "&verstat=" + t.verstat : "") + (t.direction ? "&direction=" + t.direction : "") + (state.q ? "&q=" + encodeURIComponent(state.q) : "") + (token ? "&token=" + encodeURIComponent(token) : "");
     $("#csvBtn").href = csvHref();
-    $("#fAction").onchange = (e) => { t.action = e.target.value; loadTraffic(true); $("#csvBtn").href = csvHref(); };
-    $("#fVerstat").onchange = (e) => { t.verstat = e.target.value; loadTraffic(true); $("#csvBtn").href = csvHref(); };
+    const onFilter = (key, value) => { t[key] = value; loadTraffic(true); $("#csvBtn").href = csvHref(); };
+    $("#fAction").onchange = (e) => onFilter("action", e.target.value);
+    $("#fVerstat").onchange = (e) => onFilter("verstat", e.target.value);
+    $("#fDirection").onchange = (e) => onFilter("direction", e.target.value);
     $("#moreBtn").onclick = () => loadTraffic(false);
     $("#rows").onclick = (e) => { const tr = e.target.closest("tr.row"); if (tr) openEvent(tr.dataset.id); };
     await loadTraffic(true);
@@ -365,6 +375,7 @@
       const params = new URLSearchParams({ range: state.range, limit: "100" });
       if (t.action) params.set("action", t.action);
       if (t.verstat) params.set("verstat", t.verstat);
+      if (t.direction) params.set("direction", t.direction);
       if (state.q) params.set("q", state.q);
       if (!reset && t.next) params.set("before", String(t.next));
       const res = await get("/v1/events?" + params.toString());
@@ -374,7 +385,7 @@
       const body = $("#rows");
       if (!body) return;
       if (!t.rows.length) {
-        body.innerHTML = '<tr><td colspan="9">' + empty(state.q || t.action || t.verstat ? "Nothing matches these filters in " + rangeLabel(state.range) + "." : "No SIP yet in " + rangeLabel(state.range) + ". Point a switch at POST /v1/screen.") + "</td></tr>";
+        body.innerHTML = '<tr><td colspan="9">' + empty(state.q || t.action || t.verstat || t.direction ? "Nothing matches these filters in " + rangeLabel(state.range) + "." : "No SIP yet in " + rangeLabel(state.range) + ". Point a switch at POST /v1/screen.") + "</td></tr>";
       } else if (reset) {
         body.innerHTML = t.rows.map((ev) => trafficRow(ev, false)).join("");
       } else {
@@ -754,7 +765,7 @@
     if (tab === "summary") {
       const sh = ev.shaken || {};
       const vs = ev.voice || null;
-      body.innerHTML = '<div class="toolbar">' + pill(ev.action) + scoreCell(ev.risk_score, ev.action) + verstatChip(ev.verstat, ev.shaken_attest, sh.source) + (ev.direction === "outbound" ? '<span class="chip warn">outbound</span>' : "") + (ev.customer ? '<span class="chip">customer ' + esc(ev.customer) + "</span>" : "") + (ev.honeypot ? '<span class="chip bad">honeypot target</span>' : "") + (ev.provider ? '<span class="chip">' + esc(ev.provider) + "</span>" : "") + (ev.signer_spc ? '<span class="chip">SPC ' + esc(ev.signer_spc) + (ev.signer_name ? " · " + esc(ev.signer_name) : "") + "</span>" : "") + "</div>" +
+      body.innerHTML = '<div class="toolbar">' + pill(ev.action) + scoreCell(ev.risk_score, ev.action) + directionChip(ev) + verstatChip(ev.verstat, ev.shaken_attest, sh.source) + (ev.customer ? '<span class="chip">customer ' + esc(ev.customer) + "</span>" : "") + (ev.honeypot ? '<span class="chip bad">honeypot target</span>' : "") + (ev.provider ? '<span class="chip">' + esc(ev.provider) + "</span>" : "") + (ev.signer_spc ? '<span class="chip">SPC ' + esc(ev.signer_spc) + (ev.signer_name ? " · " + esc(ev.signer_name) : "") + "</span>" : "") + "</div>" +
         (ev.answered !== undefined || ev.sampled ? '<dl class="kv"><dt>outcome</dt><dd>' + (ev.answered === undefined ? "not reported yet" : (ev.answered ? "answered, " + esc(ev.duration_s || 0) + " s" : "not answered") + (ev.hangup_cause ? " · " + esc(ev.hangup_cause) : "")) + "</dd>" + (ev.sampled ? "<dt>audio</dt><dd>" + (vs ? esc(vs.seconds.toFixed(1)) + " s, " + esc(vs.channels) + (vs.channels > 1 ? " legs" : " channel") + (vs.repeat_count ? ' · <b style="color:' + colors.reject + '">same recording as ' + esc(vs.repeat_count) + " earlier calls</b>" : "") + (vs.caller_speech >= 0.55 && vs.callee_speech <= 0.08 && vs.channels > 1 ? " · one-way monologue" : "") : "requested, not received yet") + "</dd>" : "") + "</dl>" : "") +
         (vs && (vs.category || vs.error) ? '<div class="card" style="padding:6px 14px"><header style="margin:8px 0 2px"><h2>Voice analysis</h2><span class="hint">' + (vs.provider === "callerapi-live" ? "live · CallerAPI listened while the call was up" + (vs.seconds ? " · " + esc(Math.round(vs.seconds)) + " s" : "") : esc(vs.provider || "")) + "</span></header>" + (vs.error ? '<div class="small mono" style="color:' + colors.reject + '">' + esc(vs.error) + "</div>" : '<div class="toolbar"><span class="chip ' + (vs.score >= 0.7 ? "bad" : vs.score >= 0.4 ? "warn" : "dim") + '">' + esc(vs.category) + " · " + esc(Math.round(vs.score * 100)) + "%</span></div>" + (vs.summary ? '<p class="small">' + esc(vs.summary) + "</p>" : "") + (vs.transcript ? '<details class="small"><summary class="muted">transcript (stays on this host)</summary><pre style="white-space:pre-wrap;margin:6px 0 0">' + esc(vs.transcript) + "</pre></details>" : "")) + "</div>" : "") +
         '<dl class="kv"><dt>source</dt><dd>' + esc(ev.source_ip) + "</dd><dt>user agent</dt><dd>" + esc(ev.user_agent || "—") + "</dd><dt>call id</dt><dd>" + esc(ev.call_id || "—") + "</dd>" +
@@ -839,6 +850,8 @@
           const t = state.traffic;
           if (t.action && ev.action !== t.action) return;
           if (t.verstat && ev.verstat !== t.verstat) return;
+          if (t.direction === "outbound" && ev.direction !== "outbound") return;
+          if (t.direction === "inbound" && ev.direction === "outbound") return;
           if (state.q && !JSON.stringify(ev).toLowerCase().includes(state.q.toLowerCase())) return;
           t.rows.unshift(ev);
           const body = $("#rows");

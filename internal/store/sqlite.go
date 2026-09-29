@@ -364,9 +364,13 @@ func whereFor(f Filter) ([]string, []any) {
 		where = append(where, "fingerprint = ?")
 		args = append(args, f.Fingerprint)
 	}
-	if f.Direction != "" {
+	switch strings.ToLower(strings.TrimSpace(f.Direction)) {
+	case "outbound":
 		where = append(where, "direction = ?")
-		args = append(args, f.Direction)
+		args = append(args, "outbound")
+	case "inbound":
+		where = append(where, "(direction = ? OR direction = '' OR direction IS NULL)")
+		args = append(args, "inbound")
 	}
 	if f.Customer != "" {
 		where = append(where, "customer = ?")

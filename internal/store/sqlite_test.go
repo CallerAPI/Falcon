@@ -71,3 +71,29 @@ func TestSQLiteRoundTrip(t *testing.T) {
 		t.Fatalf("kv %q %v", v, err)
 	}
 }
+
+func TestDirectionFilter(t *testing.T) {
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "falcon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	for _, dir := range []string{"inbound", "outbound", ""} {
+		if _, err := s.Insert(ctx, Event{Action: score.ActionAllow, Direction: dir, CallID: dir}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	in, err := s.Query(ctx, Filter{Direction: "inbound", Limit: 10})
+	if err != nil || len(in) != 2 {
+		t.Fatalf("inbound %+v %v", in, err)
+	}
+	out, err := s.Query(ctx, Filter{Direction: "outbound", Limit: 10})
+	if err != nil || len(out) != 1 || out[0].Direction != "outbound" {
+		t.Fatalf("outbound %+v %v", out, err)
+	}
+	both, err := s.Query(ctx, Filter{Action: "allow", Direction: "outbound", Limit: 10})
+	if err != nil || len(both) != 1 {
+		t.Fatalf("stacked %+v %v", both, err)
+	}
+}
