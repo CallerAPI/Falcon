@@ -224,6 +224,11 @@ func (s *Server) classifyClip(sample store.VoiceSample, ev store.Event, wav []by
 	if b, err := json.Marshal(map[string]any{"type": "voice", "event_id": ev.ID, "category": sample.Category, "score": sample.Score}); err == nil {
 		s.hub.publish(b)
 	}
+	if sample.Error == "" && voice.IsScamCategory(sample.Category) && sample.Score >= 0.7 {
+		if err := s.Store.NoteVoiceScam(ctx, ev.ID, sample.Category, sample.Score, sample.Summary); err != nil {
+			log.Printf("falcon voice reason: %v", err)
+		}
+	}
 	if sample.Error == "" && voice.IsScamCategory(sample.Category) && sample.Score >= 0.7 && s.Alerts != nil {
 		who := ev.From
 		if ev.Customer != "" {

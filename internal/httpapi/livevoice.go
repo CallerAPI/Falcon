@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -195,6 +196,11 @@ func (s *Server) liveAlert(ctx context.Context, sample store.VoiceSample, ev liv
 	}
 	if !voice.IsScamCategory(ev.Verdict.Category) || ev.Verdict.Score < liveScamThreshold {
 		return
+	}
+	if sample.EventID != 0 {
+		if err := s.Store.NoteVoiceScam(ctx, sample.EventID, ev.Verdict.Category, ev.Verdict.Score, ev.Verdict.Summary); err != nil {
+			log.Printf("falcon voice reason: %v", err)
+		}
 	}
 	who := sample.From
 	if sample.Customer != "" {

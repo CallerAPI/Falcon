@@ -799,6 +799,10 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 	if v, ok, err := s.Store.VoiceSampleForEvent(r.Context(), ev.ID); err == nil && ok {
 		out["voice"] = v
 	}
+	out["listen"] = map[string]any{
+		"clips":    s.Sampler != nil && s.Sampler.Enabled,
+		"live_key": s.Cfg.CallerAPIKey != "",
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 

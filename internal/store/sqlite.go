@@ -382,8 +382,8 @@ func whereFor(f Filter) ([]string, []any) {
 	}
 	if q := strings.TrimSpace(f.Q); q != "" {
 		like := "%" + q + "%"
-		where = append(where, "(from_num LIKE ? OR to_num LIKE ? OR source_ip LIKE ? OR call_id LIKE ? OR user_agent LIKE ? OR provider LIKE ? OR signer_spc LIKE ? OR signer_name LIKE ? OR reasons LIKE ? OR fingerprint LIKE ?)")
-		for i := 0; i < 10; i++ {
+		where = append(where, "(from_num LIKE ? OR to_num LIKE ? OR source_ip LIKE ? OR call_id LIKE ? OR user_agent LIKE ? OR provider LIKE ? OR signer_spc LIKE ? OR signer_name LIKE ? OR reasons LIKE ? OR fingerprint LIKE ? OR EXISTS (SELECT 1 FROM voice_samples vs WHERE vs.transcript LIKE ? AND ((vs.event_id != 0 AND vs.event_id = events.id) OR (vs.call_id != '' AND vs.call_id = events.call_id))))")
+		for i := 0; i < 11; i++ {
 			args = append(args, like)
 		}
 	}

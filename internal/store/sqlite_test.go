@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,5 +131,48 @@ func TestSuspectsRanksHeldCallers(t *testing.T) {
 	out, err := s.Suspects(ctx, now.Add(-time.Hour), now.Add(time.Hour), "outbound", 10)
 	if err != nil || len(out) != 1 || out[0].Number != "+15125758227" {
 		t.Fatalf("outbound %+v %v", out, err)
+	}
+}
+
+func TestTranscriptSearchAndVoiceScamTag(t *testing.T) {
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "falcon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	id, err := s.Insert(ctx, Event{ReceivedAt: now, Action: score.ActionFlag, RiskScore: 45, From: "+15125758227", CallID: "said-cards", Direction: "outbound"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddVoiceSample(ctx, VoiceSample{EventID: id, CallID: "said-cards", Transcript: "pay with gift cards now", Category: "Tax Collection", Score: 0.93, Summary: "demands gift cards"}); err != nil {
+		t.Fatal(err)
+	}
+	found, err := s.Query(ctx, Filter{Q: "gift cards", Limit: 10})
+	if err != nil || len(found) != 1 || found[0].ID != id {
+		t.Fatalf("search %+v %v", found, err)
+	}
+	if err := s.NoteVoiceScam(ctx, id, "Tax Collection", 0.93, "demands gift cards"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.NoteVoiceScam(ctx, id, "Tax Collection", 0.93, "again"); err != nil {
+		t.Fatal(err)
+	}
+	ev, err := s.Get(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, reason := range ev.Reasons {
+		if reason.Code == "voice_scam" {
+			n++
+			if reason.Weight != 0 || !strings.Contains(reason.Detail, "93%") {
+				t.Fatalf("tag %+v", reason)
+			}
+		}
+	}
+	if n != 1 || ev.RiskScore != 45 {
+		t.Fatalf("event %+v tags %d", ev, n)
 	}
 }

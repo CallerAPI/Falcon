@@ -5,8 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"strings"
 	"time"
+
+	"github.com/callerapi/falcon/internal/score"
 )
 
 // Outcome is what the switch reports when a call ends. It turns an INVITE
@@ -309,6 +313,36 @@ func (s *SQLite) AddVoiceSample(ctx context.Context, v VoiceSample) (int64, erro
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// NoteVoiceScam tags the screened call with voice_scam once. The weight
+// stays 0 so the INVITE score is not rewritten. The detail is the evidence.
+func (s *SQLite) NoteVoiceScam(ctx context.Context, eventID int64, category string, voiceScore float64, summary string) error {
+	if eventID == 0 {
+		return nil
+	}
+	ev, err := s.Get(ctx, eventID)
+	if err != nil {
+		return err
+	}
+	for _, reason := range ev.Reasons {
+		if reason.Code == "voice_scam" {
+			return nil
+		}
+	}
+	detail := strings.TrimSpace(category)
+	if voiceScore > 0 {
+		detail = fmt.Sprintf("%s at %d%%", detail, int(math.Round(voiceScore*100)))
+	}
+	if s := strings.TrimSpace(summary); s != "" {
+		detail = strings.TrimSpace(detail + ". " + s)
+	}
+	if len(detail) > 180 {
+		detail = detail[:180]
+	}
+	ev.Reasons = append(ev.Reasons, score.Reason{Code: "voice_scam", Detail: detail, Category: "voice"})
+	_, err = s.db.ExecContext(ctx, `UPDATE events SET reasons = ? WHERE id = ?`, ReasonsJSON(ev.Reasons), eventID)
+	return err
 }
 
 // UpdateVoiceSample writes the provider's result onto a stored clip.

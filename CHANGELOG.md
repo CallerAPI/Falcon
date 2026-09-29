@@ -4,6 +4,11 @@
 
 Added
 
+- A traffic event has a Transcript tab. It shows the voice score and
+  whether the verdict is spam. A call that was not listened to says so.
+  Search matches words in the transcript. A scam verdict adds a
+  `voice_scam` reason marked evidence. It does not change the INVITE score.
+
 - Numbers is its own page. It ranks calling numbers by score and shows
   the reasons that produced the score, heaviest first. Traffic stays the
   call list. Direction is its own column there. Decision, verification,

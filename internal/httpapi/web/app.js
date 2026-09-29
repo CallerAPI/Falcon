@@ -103,7 +103,7 @@
     return '<span class="chip ' + cls + '">' + esc(label) + (attest ? " · " + esc(attest) : "") + "</span>";
   }
   function reasonChips(reasons, max) {
-    const rs = (reasons || []).filter((r) => r.weight > 0 || (reasons || []).length === 1);
+    const rs = (reasons || []).filter((r) => r.weight > 0 || r.code === "voice_scam" || (reasons || []).length === 1);
     const shown = rs.slice(0, max || 3).map((r) => '<span class="chip">' + esc(r.code) + "</span>").join("");
     const more = rs.length > (max || 3) ? '<span class="chip dim">+' + (rs.length - (max || 3)) + "</span>" : "";
     return shown + more;
@@ -809,6 +809,41 @@
       return line;
     }).join("\n");
   }
+  const clearVoice = { "": 1, "Store": 1, "Company": 1, "Surveys": 1, "Advertising": 1, "Hang Up": 1, "No Subject Provided": 1, "Other": 1, "none": 1 };
+
+  function voiceIsSpam(vs) {
+    if (!vs || !vs.category || clearVoice[vs.category]) return false;
+    return vs.score >= 0.7;
+  }
+
+  function transcriptTab(ev) {
+    const vs = ev.voice || null;
+    const listen = ev.listen || {};
+    if (vs && vs.error && !vs.transcript && !vs.category) {
+      return '<div class="card"><h2>Transcript</h2><p>The listen failed.</p><p class="mono small" style="color:' + colors.reject + '">' + esc(vs.error) + "</p></div>";
+    }
+    if (vs && (vs.transcript || vs.category)) {
+      const spam = voiceIsSpam(vs);
+      const verdict = vs.category ? (spam ? "spam" : "not spam") : "no verdict yet";
+      const tone = spam ? "bad" : (vs.category ? "ok" : "dim");
+      return '<div class="toolbar"><span class="chip ' + tone + '">' + esc(verdict) + "</span>" +
+        (vs.category ? '<span class="chip">' + esc(vs.category) + "</span>" : "") +
+        '<span class="chip">' + esc(Math.round((vs.score || 0) * 100)) + "%</span>" +
+        (vs.provider === "callerapi-live" ? '<span class="chip dim">live filter</span>' : "") +
+        "</div>" +
+        (vs.summary ? '<p class="small">' + esc(vs.summary) + "</p>" : "") +
+        (vs.transcript ? '<pre style="white-space:pre-wrap">' + esc(vs.transcript) + "</pre>" : '<p class="muted">No transcript text yet.</p>') +
+        '<p class="muted small">The transcript stays on this host.</p>';
+    }
+    if (ev.sampled) {
+      return '<div class="card"><h2>Transcript</h2><p>Falcon asked for the first seconds of this call. The transcript is not in yet.</p></div>';
+    }
+    if (!listen.clips && !listen.live_key) {
+      return '<div class="card"><h2>Transcript</h2><p>This install is not listening to calls.</p><p class="muted small">A clip needs a voice provider. The live filter needs the switch to fork the audio and a CallerAPI key on Falcon so the verdict can be checked.</p></div>';
+    }
+    return '<div class="card"><h2>Transcript</h2><p>This call was not listened to.</p><p class="muted small">Falcon asks for a clip on a honeypot, fan-out, sequential dialing, a low answer rate, short calls, network reputation, or an outbound flag, and only inside the hourly budget. It does not listen because a score crossed a line you set. The live filter hears a call only when the switch forks that call.</p></div>';
+  }
+
   function renderDrawer() {
     const ev = state.drawer.ev;
     if (!ev) return;
@@ -816,17 +851,17 @@
     const tab = state.drawer.tab;
     if (tab === "summary") {
       const sh = ev.shaken || {};
-      const vs = ev.voice || null;
       body.innerHTML = '<div class="toolbar">' + pill(ev.action) + scoreCell(ev.risk_score, ev.action) + directionChip(ev) + verstatChip(ev.verstat, ev.shaken_attest, sh.source) + (ev.customer ? '<span class="chip">customer ' + esc(ev.customer) + "</span>" : "") + (ev.honeypot ? '<span class="chip bad">honeypot target</span>' : "") + (ev.provider ? '<span class="chip">' + esc(ev.provider) + "</span>" : "") + (ev.signer_spc ? '<span class="chip">SPC ' + esc(ev.signer_spc) + (ev.signer_name ? " · " + esc(ev.signer_name) : "") + "</span>" : "") + "</div>" +
         (ev.answered !== undefined || ev.sampled ? '<dl class="kv"><dt>outcome</dt><dd>' + (ev.answered === undefined ? "not reported yet" : (ev.answered ? "answered, " + esc(ev.duration_s || 0) + " s" : "not answered") + (ev.hangup_cause ? " · " + esc(ev.hangup_cause) : "")) + "</dd>" + (ev.sampled ? "<dt>audio</dt><dd>" + (vs ? esc(vs.seconds.toFixed(1)) + " s, " + esc(vs.channels) + (vs.channels > 1 ? " legs" : " channel") + (vs.repeat_count ? ' · <b style="color:' + colors.reject + '">same recording as ' + esc(vs.repeat_count) + " earlier calls</b>" : "") + (vs.caller_speech >= 0.55 && vs.callee_speech <= 0.08 && vs.channels > 1 ? " · one-way monologue" : "") : "requested, not received yet") + "</dd>" : "") + "</dl>" : "") +
-        (vs && (vs.category || vs.error) ? '<div class="card" style="padding:6px 14px"><header style="margin:8px 0 2px"><h2>Voice analysis</h2><span class="hint">' + (vs.provider === "callerapi-live" ? "live · CallerAPI listened while the call was up" + (vs.seconds ? " · " + esc(Math.round(vs.seconds)) + " s" : "") : esc(vs.provider || "")) + "</span></header>" + (vs.error ? '<div class="small mono" style="color:' + colors.reject + '">' + esc(vs.error) + "</div>" : '<div class="toolbar"><span class="chip ' + (vs.score >= 0.7 ? "bad" : vs.score >= 0.4 ? "warn" : "dim") + '">' + esc(vs.category) + " · " + esc(Math.round(vs.score * 100)) + "%</span></div>" + (vs.summary ? '<p class="small">' + esc(vs.summary) + "</p>" : "") + (vs.transcript ? '<details class="small"><summary class="muted">transcript (stays on this host)</summary><pre style="white-space:pre-wrap;margin:6px 0 0">' + esc(vs.transcript) + "</pre></details>" : "")) + "</div>" : "") +
         '<dl class="kv"><dt>source</dt><dd>' + esc(ev.source_ip) + "</dd><dt>user agent</dt><dd>" + esc(ev.user_agent || "—") + "</dd><dt>call id</dt><dd>" + esc(ev.call_id || "—") + "</dd>" +
         (ev.fingerprint ? '<dt>tool fingerprint</dt><dd class="mono"><a href="#traffic?q=' + esc(ev.fingerprint) + '" title="show every call from software with these habits">' + esc(ev.fingerprint) + "</a>" + (ev.network_fingerprint ? ' <span class="chip ' + (ev.network_fingerprint.score >= 80 ? "bad" : ev.network_fingerprint.score >= 50 ? "warn" : "dim") + '">network ' + esc(ev.network_fingerprint.score) + " · " + esc(ev.network_fingerprint.installs) + " installs</span>" : "") + "</dd>" : "") +
         (ev.network_signer ? '<dt>signer on network</dt><dd>score ' + esc(ev.network_signer.score) + " across " + esc(ev.network_signer.installs) + " installs · " + esc(ev.network_signer.failed) + " failed · " + esc(ev.network_signer.spam_hits) + " spam hits</dd>" : "") +
         "<dt>SIP response</dt><dd>" + (ev.action === "reject" ? "603 Decline" : ev.action === "challenge" ? "407 Proxy Authentication Required" : "pass through") + "</dd></dl>" +
         (ev.fingerprint_parts ? '<details class="small" style="margin:0 0 10px"><summary class="muted">what the fingerprint is made of</summary><pre style="margin:6px 0 0">' + esc(ev.fingerprint_parts.join("\n")) + "</pre></details>" : "") +
         '<div class="card" style="padding:6px 14px"><header style="margin:8px 0 2px"><h2>Reasons</h2><span class="hint">weight adds to the score, capped at 100</span></header>' +
-        ((ev.reasons || []).length ? ev.reasons.map((r) => '<div class="reason"><div><div class="code">' + esc(r.code) + '</div><div class="detail">' + esc(r.detail) + '</div></div><div class="w' + (r.weight ? "" : " zero") + '">' + (r.weight ? "+" + r.weight : "0") + "</div></div>").join("") : '<div class="muted small" style="padding:8px 0">Nothing looked wrong.</div>') + "</div>";
+        ((ev.reasons || []).length ? ev.reasons.map((r) => '<div class="reason"><div><div class="code">' + esc(r.code) + '</div><div class="detail">' + esc(r.detail) + '</div></div><div class="w' + (r.weight ? "" : " zero") + '">' + (r.code === "voice_scam" && !r.weight ? "evidence" : (r.weight ? "+" + r.weight : "0")) + "</div></div>").join("") : '<div class="muted small" style="padding:8px 0">Nothing looked wrong.</div>') + "</div>";
+    } else if (tab === "transcript") {
+      body.innerHTML = transcriptTab(ev);
     } else if (tab === "shaken") {
       const sh = ev.shaken;
       const roots = !!(state.status && state.status.shaken && state.status.shaken.trust && state.status.shaken.trust.roots);
