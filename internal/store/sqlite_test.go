@@ -97,3 +97,35 @@ func TestDirectionFilter(t *testing.T) {
 		t.Fatalf("stacked %+v %v", both, err)
 	}
 }
+
+func TestSuspectsRanksHeldCallers(t *testing.T) {
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "falcon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	rows := []Event{
+		{ReceivedAt: now, Action: score.ActionAllow, RiskScore: 5, From: "+15120000001", To: "+19150000001", Direction: "outbound", CallID: "quiet"},
+		{ReceivedAt: now, Action: score.ActionFlag, RiskScore: 45, From: "+15125758227", To: "+19152953172", Direction: "outbound", CallID: "hot-1"},
+		{ReceivedAt: now, Action: score.ActionFlag, RiskScore: 45, From: "+15125758227", To: "+16185474997", Direction: "outbound", CallID: "hot-2"},
+		{ReceivedAt: now, Action: score.ActionReject, RiskScore: 80, From: "+18005550199", To: "+19150000002", Direction: "inbound", CallID: "drop"},
+	}
+	for _, ev := range rows {
+		if _, err := s.Insert(ctx, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.Suspects(ctx, now.Add(-time.Hour), now.Add(time.Hour), "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Number != "+18005550199" || got[1].Number != "+15125758227" || got[1].Destinations != 2 || got[1].Outbound != 2 {
+		t.Fatalf("rank %+v", got)
+	}
+	out, err := s.Suspects(ctx, now.Add(-time.Hour), now.Add(time.Hour), "outbound", 10)
+	if err != nil || len(out) != 1 || out[0].Number != "+15125758227" {
+		t.Fatalf("outbound %+v %v", out, err)
+	}
+}

@@ -127,6 +127,21 @@ type Party struct {
 	LastSeen        time.Time `json:"last_seen"`
 }
 
+// Suspect is one calling number worth acting on in a window.
+// Held is flag plus challenge. Destinations is how many different numbers it reached.
+type Suspect struct {
+	Number       string    `json:"number"`
+	Calls        int       `json:"calls"`
+	Reject       int       `json:"reject"`
+	Held         int       `json:"held"`
+	AvgScore     float64   `json:"avg_score"`
+	MaxScore     int       `json:"max_score"`
+	Destinations int       `json:"destinations"`
+	Outbound     int       `json:"outbound"`
+	Inbound      int       `json:"inbound"`
+	LastSeen     time.Time `json:"last_seen"`
+}
+
 // Store persists events, rules, and install settings.
 // AuditEntry records who changed what. Every mutation through the API
 // writes one.
@@ -159,6 +174,7 @@ type Store interface {
 	Stats(ctx context.Context, from, to time.Time) (Stats, error)
 	Histogram(ctx context.Context, from, to time.Time) ([]int, error)
 	Parties(ctx context.Context, by string, from, to time.Time, limit int) ([]Party, error)
+	Suspects(ctx context.Context, from, to time.Time, direction string, limit int) ([]Suspect, error)
 	Unexported(ctx context.Context, limit int) ([]Event, error)
 	MarkExported(ctx context.Context, ids []int64) error
 	Prune(ctx context.Context, before time.Time) (int64, error)

@@ -134,6 +134,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/stats", s.withAuth(s.handleStats))
 	mux.HandleFunc("/v1/histogram", s.withAuth(s.handleHistogram))
 	mux.HandleFunc("/v1/parties", s.withAuth(s.handleParties))
+	mux.HandleFunc("/v1/suspects", s.withAuth(s.handleSuspects))
 	mux.HandleFunc("/v1/status", s.withAuth(s.handleStatus))
 	mux.HandleFunc("/v1/config", s.withAuth(s.handleConfig))
 	mux.HandleFunc("/v1/rules", s.withAuth(s.handleRules))
@@ -856,6 +857,21 @@ func (s *Server) handleParties(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"by": by, "data": parties, "from": from, "to": to})
+}
+
+func (s *Server) handleSuspects(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method"})
+		return
+	}
+	from, to := windowFrom(r)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	rows, err := s.Store.Suspects(r.Context(), from, to, r.URL.Query().Get("direction"), limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": rows, "from": from, "to": to})
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {

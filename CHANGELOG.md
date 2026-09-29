@@ -4,8 +4,10 @@
 
 Added
 
-- Traffic shows inbound or outbound on every row and in the event drawer.
-  The direction filter stacks with decision, verification, and search.
+- Traffic shows inbound or outbound in its own column. Above the call
+  list, numbers to act on ranks callers by rejects, flags, and how many
+  numbers they reached. Decision, verification, direction, and search
+  still stack.
 
 - An enabled dashboard plugin shows on existing installs at the next
   catalog refresh. No Falcon upgrade is required. A feed or live plugin

@@ -333,8 +333,9 @@
   function trafficRow(ev, isNew) {
     return '<tr class="row' + (isNew ? " new" : "") + '" data-id="' + ev.id + '">' +
       '<td class="mono muted" title="' + esc(ev.received_at) + '">' + esc(fmtTime(ev.received_at)) + "</td>" +
-      "<td>" + pill(ev.action) + directionChip(ev) + "</td>" +
+      "<td>" + pill(ev.action) + "</td>" +
       "<td>" + scoreCell(ev.risk_score, ev.action) + "</td>" +
+      "<td>" + directionChip(ev) + "</td>" +
       '<td class="mono">' + esc(ev.from) + "</td>" +
       '<td class="mono">' + esc(ev.to) + "</td>" +
       '<td class="mono nowrap">' + esc(ev.source_ip) + (ev.provider ? '<span class="sub" title="' + esc(ev.provider) + '">' + esc(ev.provider) + "</span>" : "") + "</td>" +
@@ -351,20 +352,54 @@
       '<select id="fDirection"><option value="">inbound and outbound</option><option value="inbound">inbound</option><option value="outbound">outbound</option></select>' +
       '<span class="spacer"></span><span class="muted small" id="tCount"></span>' +
       '<a class="btn sm" id="csvBtn" href="#">Export CSV</a></div>' +
-      '<article class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th>time</th><th>decision</th><th>score</th><th>from</th><th>to</th><th>source</th><th>signer</th><th>shaken</th><th>reasons</th></tr></thead><tbody id="rows"></tbody></table></div>' +
+      '<article class="card" style="padding:0;margin-bottom:14px"><header style="padding:14px 18px 0"><h2>Numbers to act on</h2><span class="hint">rejects, flags, and how many numbers they reached</span></header><div class="table-wrap"><table><thead><tr><th>number</th><th>direction</th><th class="right">calls</th><th class="right">reached</th><th class="right">held</th><th class="right">score</th><th>last</th><th></th></tr></thead><tbody id="suspects"></tbody></table></div></article>' +
+      '<article class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th>time</th><th>decision</th><th>score</th><th>direction</th><th>from</th><th>to</th><th>source</th><th>signer</th><th>shaken</th><th>reasons</th></tr></thead><tbody id="rows"></tbody></table></div>' +
       '<div style="padding:12px;text-align:center"><button class="btn" id="moreBtn">Load more</button></div></article>';
     $("#fAction").value = t.action;
     $("#fVerstat").value = t.verstat;
     $("#fDirection").value = t.direction;
     const csvHref = () => "/v1/events.csv?range=" + state.range + (t.action ? "&action=" + t.action : "") + (t.verstat ? "&verstat=" + t.verstat : "") + (t.direction ? "&direction=" + t.direction : "") + (state.q ? "&q=" + encodeURIComponent(state.q) : "") + (token ? "&token=" + encodeURIComponent(token) : "");
     $("#csvBtn").href = csvHref();
-    const onFilter = (key, value) => { t[key] = value; loadTraffic(true); $("#csvBtn").href = csvHref(); };
+    const onFilter = (key, value) => { t[key] = value; loadSuspects(); loadTraffic(true); $("#csvBtn").href = csvHref(); };
     $("#fAction").onchange = (e) => onFilter("action", e.target.value);
     $("#fVerstat").onchange = (e) => onFilter("verstat", e.target.value);
     $("#fDirection").onchange = (e) => onFilter("direction", e.target.value);
     $("#moreBtn").onclick = () => loadTraffic(false);
     $("#rows").onclick = (e) => { const tr = e.target.closest("tr.row"); if (tr) openEvent(tr.dataset.id); };
+    $("#suspects").onclick = async (e) => {
+      const b = e.target.closest("button[data-deny]");
+      if (!b) return;
+      b.disabled = true;
+      await addRule("deny", "number", b.dataset.deny, "from numbers to act on");
+      b.disabled = false;
+    };
+    loadSuspects();
     await loadTraffic(true);
+  }
+
+  function suspectDirection(row) {
+    if (row.outbound && !row.inbound) return directionChip({ direction: "outbound" });
+    if (row.inbound && !row.outbound) return directionChip({ direction: "inbound" });
+    return directionChip({ direction: "inbound" }) + directionChip({ direction: "outbound" });
+  }
+
+  async function loadSuspects() {
+    const body = $("#suspects");
+    if (!body) return;
+    const t = state.traffic;
+    try {
+      const params = new URLSearchParams({ range: state.range, limit: "25" });
+      if (t.direction) params.set("direction", t.direction);
+      const res = await get("/v1/suspects?" + params.toString());
+      const rows = res.data || [];
+      body.innerHTML = rows.length ? rows.map((row) => {
+        const held = (row.held || 0) + (row.reject || 0);
+        const q = "#traffic?q=" + encodeURIComponent(row.number) + (t.direction ? "&direction=" + encodeURIComponent(t.direction) : "");
+        return "<tr><td class=\"mono\">" + esc(row.number) + "</td><td>" + suspectDirection(row) + '</td><td class="right mono num">' + fmtN(row.calls) + '</td><td class="right mono num">' + fmtN(row.destinations) + '</td><td class="right mono num"' + (held ? ' style="color:' + colors.reject + '"' : "") + ">" + fmtN(held) + '</td><td class="right mono num">' + Math.round(row.max_score) + '</td><td class="muted small">' + esc(timeAgo(row.last_seen)) + '</td><td><a class="btn sm" href="' + q + '">Calls</a> <button class="btn sm danger" data-deny="' + esc(row.number) + '">Deny</button></td></tr>';
+      }).join("") : '<tr><td colspan="8">' + empty("No number stands out in " + rangeLabel(state.range) + ".") + "</td></tr>";
+    } catch (e) {
+      body.innerHTML = '<tr><td colspan="8">' + empty(e.message) + "</td></tr>";
+    }
   }
 
   async function loadTraffic(reset) {
@@ -385,7 +420,7 @@
       const body = $("#rows");
       if (!body) return;
       if (!t.rows.length) {
-        body.innerHTML = '<tr><td colspan="9">' + empty(state.q || t.action || t.verstat || t.direction ? "Nothing matches these filters in " + rangeLabel(state.range) + "." : "No SIP yet in " + rangeLabel(state.range) + ". Point a switch at POST /v1/screen.") + "</td></tr>";
+        body.innerHTML = '<tr><td colspan="10">' + empty(state.q || t.action || t.verstat || t.direction ? "Nothing matches these filters in " + rangeLabel(state.range) + "." : "No SIP yet in " + rangeLabel(state.range) + ". Point a switch at POST /v1/screen.") + "</td></tr>";
       } else if (reset) {
         body.innerHTML = t.rows.map((ev) => trafficRow(ev, false)).join("");
       } else {

@@ -640,6 +640,63 @@ GROUP BY 1 ORDER BY 3 DESC LIMIT ?`, col, label, col)
 	return out, rows.Err()
 }
 
+// Suspects ranks calling numbers by rejects, flags, score, and how many
+// numbers they reached. A quiet allow stays off the list.
+func (s *SQLite) Suspects(ctx context.Context, from, to time.Time, direction string, limit int) ([]Suspect, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	where := "received_unix >= ? AND received_unix < ? AND from_num != ''"
+	args := []any{from.UTC().Unix(), to.UTC().Unix()}
+	switch strings.ToLower(strings.TrimSpace(direction)) {
+	case "outbound":
+		where += " AND direction = ?"
+		args = append(args, "outbound")
+	case "inbound":
+		where += " AND (direction = ? OR direction = '' OR direction IS NULL)"
+		args = append(args, "inbound")
+	}
+	q := `
+SELECT from_num, COUNT(*),
+  SUM(CASE WHEN action = 'reject' THEN 1 ELSE 0 END),
+  SUM(CASE WHEN action = 'flag' OR action = 'challenge' THEN 1 ELSE 0 END),
+  AVG(risk_score), MAX(risk_score),
+  COUNT(DISTINCT to_num),
+  SUM(CASE WHEN direction = 'outbound' THEN 1 ELSE 0 END),
+  SUM(CASE WHEN direction != 'outbound' THEN 1 ELSE 0 END),
+  MAX(received_unix)
+FROM events
+WHERE ` + where + `
+GROUP BY from_num
+HAVING SUM(CASE WHEN action IN ('flag', 'challenge', 'reject') THEN 1 ELSE 0 END) > 0
+  OR MAX(risk_score) >= 40
+  OR COUNT(DISTINCT to_num) >= 8
+ORDER BY (SUM(CASE WHEN action = 'reject' THEN 3 ELSE 0 END) + SUM(CASE WHEN action = 'flag' OR action = 'challenge' THEN 1 ELSE 0 END)) DESC,
+  MAX(risk_score) DESC,
+  COUNT(DISTINCT to_num) DESC
+LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Suspect
+	for rows.Next() {
+		var row Suspect
+		var last int64
+		if err := rows.Scan(&row.Number, &row.Calls, &row.Reject, &row.Held, &row.AvgScore, &row.MaxScore, &row.Destinations, &row.Outbound, &row.Inbound, &last); err != nil {
+			return nil, err
+		}
+		row.LastSeen = time.Unix(last, 0).UTC()
+		out = append(out, row)
+	}
+	if out == nil {
+		out = []Suspect{}
+	}
+	return out, rows.Err()
+}
+
 func (s *SQLite) Unexported(ctx context.Context, limit int) ([]Event, error) {
 	if limit <= 0 {
 		limit = 50
