@@ -671,9 +671,7 @@ GROUP BY from_num
 HAVING SUM(CASE WHEN action IN ('flag', 'challenge', 'reject') THEN 1 ELSE 0 END) > 0
   OR MAX(risk_score) >= 40
   OR COUNT(DISTINCT to_num) >= 8
-ORDER BY (SUM(CASE WHEN action = 'reject' THEN 3 ELSE 0 END) + SUM(CASE WHEN action = 'flag' OR action = 'challenge' THEN 1 ELSE 0 END)) DESC,
-  MAX(risk_score) DESC,
-  COUNT(DISTINCT to_num) DESC
+ORDER BY MAX(risk_score) DESC, COUNT(DISTINCT to_num) DESC
 LIMIT ?`
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -689,12 +687,111 @@ LIMIT ?`
 			return nil, err
 		}
 		row.LastSeen = time.Unix(last, 0).UTC()
+		row.Reasons = []ReasonHit{}
 		out = append(out, row)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.attachReasons(ctx, from, to, direction, out); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].MaxScore != out[j].MaxScore {
+			return out[i].MaxScore > out[j].MaxScore
+		}
+		return reasonWeight(out[i]) > reasonWeight(out[j])
+	})
 	if out == nil {
 		out = []Suspect{}
 	}
-	return out, rows.Err()
+	return out, nil
+}
+
+func reasonWeight(row Suspect) int {
+	n := 0
+	for _, hit := range row.Reasons {
+		n += hit.Weight
+	}
+	return n
+}
+
+func (s *SQLite) attachReasons(ctx context.Context, from, to time.Time, direction string, rows []Suspect) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	where := "received_unix >= ? AND received_unix < ? AND from_num IN ("
+	args := []any{from.UTC().Unix(), to.UTC().Unix()}
+	for i, row := range rows {
+		if i > 0 {
+			where += ","
+		}
+		where += "?"
+		args = append(args, row.Number)
+	}
+	where += ")"
+	switch strings.ToLower(strings.TrimSpace(direction)) {
+	case "outbound":
+		where += " AND direction = ?"
+		args = append(args, "outbound")
+	case "inbound":
+		where += " AND (direction = ? OR direction = '' OR direction IS NULL)"
+		args = append(args, "inbound")
+	}
+	qrows, err := s.db.QueryContext(ctx, `SELECT from_num, COALESCE(reasons, '') FROM events WHERE `+where, args...)
+	if err != nil {
+		return err
+	}
+	defer qrows.Close()
+	type acc struct {
+		weight int
+		calls  int
+	}
+	byNumber := map[string]map[string]*acc{}
+	for qrows.Next() {
+		var number, raw string
+		if err := qrows.Scan(&number, &raw); err != nil {
+			return err
+		}
+		bucket := byNumber[number]
+		if bucket == nil {
+			bucket = map[string]*acc{}
+			byNumber[number] = bucket
+		}
+		for _, reason := range ParseReasons(raw) {
+			if reason.Code == "" || reason.Weight <= 0 {
+				continue
+			}
+			hit := bucket[reason.Code]
+			if hit == nil {
+				hit = &acc{}
+				bucket[reason.Code] = hit
+			}
+			hit.weight += reason.Weight
+			hit.calls++
+		}
+	}
+	if err := qrows.Err(); err != nil {
+		return err
+	}
+	for i := range rows {
+		bucket := byNumber[rows[i].Number]
+		hits := make([]ReasonHit, 0, len(bucket))
+		for code, hit := range bucket {
+			hits = append(hits, ReasonHit{Code: code, Weight: hit.weight, Calls: hit.calls})
+		}
+		sort.Slice(hits, func(a, b int) bool {
+			if hits[a].Weight != hits[b].Weight {
+				return hits[a].Weight > hits[b].Weight
+			}
+			return hits[a].Calls > hits[b].Calls
+		})
+		if len(hits) > 5 {
+			hits = hits[:5]
+		}
+		rows[i].Reasons = hits
+	}
+	return nil
 }
 
 func (s *SQLite) Unexported(ctx context.Context, limit int) ([]Event, error) {

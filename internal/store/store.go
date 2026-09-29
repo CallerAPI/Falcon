@@ -127,19 +127,28 @@ type Party struct {
 	LastSeen        time.Time `json:"last_seen"`
 }
 
+// ReasonHit is one reason code summed across a calling number's calls.
+type ReasonHit struct {
+	Code   string `json:"code"`
+	Weight int    `json:"weight"`
+	Calls  int    `json:"calls"`
+}
+
 // Suspect is one calling number worth acting on in a window.
 // Held is flag plus challenge. Destinations is how many different numbers it reached.
+// Reasons are the codes that added score, heaviest first.
 type Suspect struct {
-	Number       string    `json:"number"`
-	Calls        int       `json:"calls"`
-	Reject       int       `json:"reject"`
-	Held         int       `json:"held"`
-	AvgScore     float64   `json:"avg_score"`
-	MaxScore     int       `json:"max_score"`
-	Destinations int       `json:"destinations"`
-	Outbound     int       `json:"outbound"`
-	Inbound      int       `json:"inbound"`
-	LastSeen     time.Time `json:"last_seen"`
+	Number       string      `json:"number"`
+	Calls        int         `json:"calls"`
+	Reject       int         `json:"reject"`
+	Held         int         `json:"held"`
+	AvgScore     float64     `json:"avg_score"`
+	MaxScore     int         `json:"max_score"`
+	Destinations int         `json:"destinations"`
+	Outbound     int         `json:"outbound"`
+	Inbound      int         `json:"inbound"`
+	Reasons      []ReasonHit `json:"reasons"`
+	LastSeen     time.Time   `json:"last_seen"`
 }
 
 // Store persists events, rules, and install settings.

@@ -4,10 +4,10 @@
 
 Added
 
-- Traffic shows inbound or outbound in its own column. Above the call
-  list, numbers to act on ranks callers by rejects, flags, and how many
-  numbers they reached. Decision, verification, direction, and search
-  still stack.
+- Numbers is its own page. It ranks calling numbers by score and shows
+  the reasons that produced the score, heaviest first. Traffic stays the
+  call list. Direction is its own column there. Decision, verification,
+  direction, and search still stack.
 
 - An enabled dashboard plugin shows on existing installs at the next
   catalog refresh. No Falcon upgrade is required. A feed or live plugin

@@ -108,8 +108,8 @@ func TestSuspectsRanksHeldCallers(t *testing.T) {
 	now := time.Now().UTC()
 	rows := []Event{
 		{ReceivedAt: now, Action: score.ActionAllow, RiskScore: 5, From: "+15120000001", To: "+19150000001", Direction: "outbound", CallID: "quiet"},
-		{ReceivedAt: now, Action: score.ActionFlag, RiskScore: 45, From: "+15125758227", To: "+19152953172", Direction: "outbound", CallID: "hot-1"},
-		{ReceivedAt: now, Action: score.ActionFlag, RiskScore: 45, From: "+15125758227", To: "+16185474997", Direction: "outbound", CallID: "hot-2"},
+		{ReceivedAt: now, Action: score.ActionFlag, RiskScore: 45, From: "+15125758227", To: "+19152953172", Direction: "outbound", CallID: "hot-1", Reasons: []score.Reason{{Code: "invite_no_sdp", Weight: 5}, {Code: "caller_fanout", Weight: 40}}},
+		{ReceivedAt: now, Action: score.ActionFlag, RiskScore: 45, From: "+15125758227", To: "+16185474997", Direction: "outbound", CallID: "hot-2", Reasons: []score.Reason{{Code: "caller_fanout", Weight: 40}}},
 		{ReceivedAt: now, Action: score.ActionReject, RiskScore: 80, From: "+18005550199", To: "+19150000002", Direction: "inbound", CallID: "drop"},
 	}
 	for _, ev := range rows {
@@ -121,8 +121,11 @@ func TestSuspectsRanksHeldCallers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Number != "+18005550199" || got[1].Number != "+15125758227" || got[1].Destinations != 2 || got[1].Outbound != 2 {
+	if len(got) != 2 || got[0].Number != "+18005550199" || got[0].MaxScore != 80 || got[1].Number != "+15125758227" || got[1].Destinations != 2 || got[1].Outbound != 2 {
 		t.Fatalf("rank %+v", got)
+	}
+	if len(got[1].Reasons) < 2 || got[1].Reasons[0].Code != "caller_fanout" || got[1].Reasons[0].Weight != 80 || got[1].Reasons[1].Code != "invite_no_sdp" {
+		t.Fatalf("reasons %+v", got[1].Reasons)
 	}
 	out, err := s.Suspects(ctx, now.Add(-time.Hour), now.Add(time.Hour), "outbound", 10)
 	if err != nil || len(out) != 1 || out[0].Number != "+15125758227" {

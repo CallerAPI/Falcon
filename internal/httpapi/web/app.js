@@ -13,6 +13,7 @@
     live: false,
     q: "",
     traffic: { action: "", verstat: "", direction: "", rows: [], next: 0, loading: false },
+    numbers: { direction: "" },
     drawer: { ev: null, tab: "summary" },
     status: null,
     sse: null,
@@ -224,6 +225,7 @@
   const titles = {
     overview: ["Overview", "What the switch saw"],
     traffic: ["Traffic", "Every screened request"],
+    numbers: ["Numbers", "Calling numbers ranked by score"],
     signers: ["Signers", "Who attested the calls (STIR/SHAKEN SPC)"],
     providers: ["Providers", "Where the SIP came from"],
     lists: ["Lists", "Your allow and deny rules"],
@@ -246,6 +248,7 @@
       state.traffic.action = p.get("action") || "";
       state.traffic.verstat = p.get("verstat") || "";
       state.traffic.direction = p.get("direction") || "";
+      if (state.view === "numbers") state.numbers.direction = p.get("direction") || "";
     }
     render();
   }
@@ -257,7 +260,7 @@
     const v = $("#view");
     v.innerHTML = "";
     $("#search").placeholder = state.view === "plugins" ? "Search a number" : "Search number, IP, Call-ID, signer  ( / )";
-    ({ overview: renderOverview, traffic: renderTraffic, signers: renderSigners, providers: renderProviders, lists: renderLists, tuning: renderTuning, system: renderSystem, plugins: renderPlugins })[state.view](v);
+    ({ overview: renderOverview, traffic: renderTraffic, numbers: renderNumbers, signers: renderSigners, providers: renderProviders, lists: renderLists, tuning: renderTuning, system: renderSystem, plugins: renderPlugins })[state.view](v);
   }
   function schedule(fn, ms) { state.timers.push(setTimeout(fn, ms)); }
 
@@ -352,7 +355,6 @@
       '<select id="fDirection"><option value="">inbound and outbound</option><option value="inbound">inbound</option><option value="outbound">outbound</option></select>' +
       '<span class="spacer"></span><span class="muted small" id="tCount"></span>' +
       '<a class="btn sm" id="csvBtn" href="#">Export CSV</a></div>' +
-      '<article class="card" style="padding:0;margin-bottom:14px"><header style="padding:14px 18px 0"><h2>Numbers to act on</h2><span class="hint">rejects, flags, and how many numbers they reached</span></header><div class="table-wrap"><table><thead><tr><th>number</th><th>direction</th><th class="right">calls</th><th class="right">reached</th><th class="right">held</th><th class="right">score</th><th>last</th><th></th></tr></thead><tbody id="suspects"></tbody></table></div></article>' +
       '<article class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th>time</th><th>decision</th><th>score</th><th>direction</th><th>from</th><th>to</th><th>source</th><th>signer</th><th>shaken</th><th>reasons</th></tr></thead><tbody id="rows"></tbody></table></div>' +
       '<div style="padding:12px;text-align:center"><button class="btn" id="moreBtn">Load more</button></div></article>';
     $("#fAction").value = t.action;
@@ -360,21 +362,30 @@
     $("#fDirection").value = t.direction;
     const csvHref = () => "/v1/events.csv?range=" + state.range + (t.action ? "&action=" + t.action : "") + (t.verstat ? "&verstat=" + t.verstat : "") + (t.direction ? "&direction=" + t.direction : "") + (state.q ? "&q=" + encodeURIComponent(state.q) : "") + (token ? "&token=" + encodeURIComponent(token) : "");
     $("#csvBtn").href = csvHref();
-    const onFilter = (key, value) => { t[key] = value; loadSuspects(); loadTraffic(true); $("#csvBtn").href = csvHref(); };
+    const onFilter = (key, value) => { t[key] = value; loadTraffic(true); $("#csvBtn").href = csvHref(); };
     $("#fAction").onchange = (e) => onFilter("action", e.target.value);
     $("#fVerstat").onchange = (e) => onFilter("verstat", e.target.value);
     $("#fDirection").onchange = (e) => onFilter("direction", e.target.value);
     $("#moreBtn").onclick = () => loadTraffic(false);
     $("#rows").onclick = (e) => { const tr = e.target.closest("tr.row"); if (tr) openEvent(tr.dataset.id); };
-    $("#suspects").onclick = async (e) => {
+    await loadTraffic(true);
+  }
+
+  async function renderNumbers(v) {
+    v.innerHTML = '<div class="toolbar">' +
+      '<select id="nDirection"><option value="">inbound and outbound</option><option value="inbound">inbound</option><option value="outbound">outbound</option></select>' +
+      '<span class="spacer"></span><span class="muted small" id="nCount"></span></div>' +
+      '<article class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th class="right">score</th><th>number</th><th>direction</th><th>reasons</th><th class="right">calls</th><th class="right">reached</th><th>last</th><th></th></tr></thead><tbody id="numbers"></tbody></table></div></article>';
+    $("#nDirection").value = state.numbers.direction;
+    $("#nDirection").onchange = (e) => { state.numbers.direction = e.target.value; loadNumbers(); };
+    $("#numbers").onclick = async (e) => {
       const b = e.target.closest("button[data-deny]");
       if (!b) return;
       b.disabled = true;
-      await addRule("deny", "number", b.dataset.deny, "from numbers to act on");
+      await addRule("deny", "number", b.dataset.deny, "from numbers");
       b.disabled = false;
     };
-    loadSuspects();
-    await loadTraffic(true);
+    await loadNumbers();
   }
 
   function suspectDirection(row) {
@@ -383,19 +394,25 @@
     return directionChip({ direction: "inbound" }) + directionChip({ direction: "outbound" });
   }
 
-  async function loadSuspects() {
-    const body = $("#suspects");
+  async function loadNumbers() {
+    const body = $("#numbers");
     if (!body) return;
-    const t = state.traffic;
+    const direction = state.numbers.direction;
     try {
-      const params = new URLSearchParams({ range: state.range, limit: "25" });
-      if (t.direction) params.set("direction", t.direction);
+      const params = new URLSearchParams({ range: state.range, limit: "50" });
+      if (direction) params.set("direction", direction);
       const res = await get("/v1/suspects?" + params.toString());
-      const rows = res.data || [];
+      let rows = res.data || [];
+      if (state.q) {
+        const q = state.q.toLowerCase();
+        rows = rows.filter((row) => String(row.number || "").toLowerCase().includes(q) || (row.reasons || []).some((r) => String(r.code || "").toLowerCase().includes(q)));
+      }
+      const count = $("#nCount");
+      if (count) count.textContent = fmtN(rows.length) + " numbers";
       body.innerHTML = rows.length ? rows.map((row) => {
-        const held = (row.held || 0) + (row.reject || 0);
-        const q = "#traffic?q=" + encodeURIComponent(row.number) + (t.direction ? "&direction=" + encodeURIComponent(t.direction) : "");
-        return "<tr><td class=\"mono\">" + esc(row.number) + "</td><td>" + suspectDirection(row) + '</td><td class="right mono num">' + fmtN(row.calls) + '</td><td class="right mono num">' + fmtN(row.destinations) + '</td><td class="right mono num"' + (held ? ' style="color:' + colors.reject + '"' : "") + ">" + fmtN(held) + '</td><td class="right mono num">' + Math.round(row.max_score) + '</td><td class="muted small">' + esc(timeAgo(row.last_seen)) + '</td><td><a class="btn sm" href="' + q + '">Calls</a> <button class="btn sm danger" data-deny="' + esc(row.number) + '">Deny</button></td></tr>';
+        const q = "#traffic?q=" + encodeURIComponent(row.number) + (direction ? "&direction=" + encodeURIComponent(direction) : "");
+        const reasons = (row.reasons || []).map((r) => '<span class="chip" title="' + esc(r.calls) + ' calls">' + esc(r.code) + " +" + esc(r.weight) + "</span>").join("");
+        return '<tr><td class="right mono num">' + Math.round(row.max_score) + '</td><td class="mono">' + esc(row.number) + "</td><td>" + suspectDirection(row) + "</td><td>" + (reasons || '<span class="muted">—</span>') + '</td><td class="right mono num">' + fmtN(row.calls) + '</td><td class="right mono num">' + fmtN(row.destinations) + '</td><td class="muted small">' + esc(timeAgo(row.last_seen)) + '</td><td><a class="btn sm" href="' + q + '">Calls</a> <button class="btn sm danger" data-deny="' + esc(row.number) + '">Deny</button></td></tr>';
       }).join("") : '<tr><td colspan="8">' + empty("No number stands out in " + rangeLabel(state.range) + ".") + "</td></tr>";
     } catch (e) {
       body.innerHTML = '<tr><td colspan="8">' + empty(e.message) + "</td></tr>";
@@ -1252,7 +1269,8 @@
       if (state.view === "plugins") {
         const slug = new URLSearchParams((location.hash.split("?")[1] || "")).get("slug") || "";
         location.hash = "#plugins?slug=" + encodeURIComponent(slug) + (state.q ? "&q=" + encodeURIComponent(state.q) : "");
-      } else if (state.view !== "traffic") location.hash = "#traffic?q=" + encodeURIComponent(state.q);
+      } else if (state.view === "numbers") loadNumbers();
+      else if (state.view !== "traffic") location.hash = "#traffic?q=" + encodeURIComponent(state.q);
       else loadTraffic(true);
     }, 250);
   };
