@@ -229,7 +229,7 @@
     lists: ["Lists", "Your allow and deny rules"],
     tuning: ["Tuning", "Where the thresholds sit against real traffic"],
     system: ["System", "Trust, feeds, storage, and configuration"],
-    plugins: ["Plugins", "Granted extensions"],
+    plugins: ["Plugins", "Extensions"],
   };
 
   function navigate() {
@@ -856,29 +856,73 @@
   }
   $("#liveBtn").onclick = () => setLive(!state.live);
 
+  function pluginSection(title, html) {
+    if (!html) return "";
+    return '<h2 class="plugin-head">' + esc(title) + '</h2><section class="plugin-list">' + html + "</section>";
+  }
+
+  function pluginCard(p, mode) {
+    const title = p.title || p.slug;
+    const blurb = p.summary || "";
+    const state = mode === "available" ? "Not on this install" : (mode === "on" ? "On" : "Open");
+    const kicker = mode === "available" ? "Available" : (p.kind || "view");
+    const inner = '<span class="kicker">' + esc(kicker) + "</span><strong>" + esc(title) + '</strong><span class="muted small">' + esc(blurb) + '</span><span class="muted small">' + esc(state) + "</span>";
+    if (mode === "open") {
+      return '<a class="card plugin-card" href="#plugins?slug=' + encodeURIComponent(p.slug) + '">' + inner + "</a>";
+    }
+    return '<article class="card plugin-card' + (mode === "available" ? " locked" : "") + '">' + inner + "</article>";
+  }
+
+  function productCard(title, on, body) {
+    return '<article class="card plugin-card' + (on ? "" : " locked") + '"><span class="kicker">' + (on ? "On" : "Available") + "</span><strong>" + esc(title) + '</strong><span class="muted small">' + esc(body) + "</span></article>";
+  }
+
+  function productCards(status) {
+    const feed = (status && status.spam_feed) || {};
+    const fw = (status && status.voice_firewall) || {};
+    const feedOn = !!feed.configured;
+    const fwOn = !!fw.configured;
+    const feedBody = feedOn
+      ? fmtN(feed.count || 0) + " numbers loaded" + (feed.error ? ". " + feed.error : "")
+      : "Set FALCON_SPAM_FEED=true with a CallerAPI key. A listed number is a hard reject.";
+    const fwBody = fwOn
+      ? "Each INVITE is checked against live reputation. A spam hit flags the call."
+      : "Set FALCON_VOICE_FIREWALL=true with a CallerAPI key. On ConnexCS, fork the audio with the ConneXML app.";
+    return productCard("Spam database feed", feedOn, feedBody) + productCard("Voice firewall", fwOn, fwBody);
+  }
+
   async function renderPlugins(v) {
     const params = new URLSearchParams((location.hash.split("?")[1] || ""));
     const slug = params.get("slug") || "";
     let catalog;
+    let status = {};
     try {
       catalog = await get("/v1/plugins");
     } catch (e) {
       v.innerHTML = '<div class="card">' + esc(e.message) + "</div>";
       return;
     }
+    try {
+      status = await get("/v1/status");
+    } catch (e) { /* the shelf still renders without install status */ }
     const items = (catalog && catalog.plugins) || [];
+    const available = (catalog && catalog.available) || [];
     const views = items.filter((p) => p.surface === "native" || p.surface === "iframe");
     if (!slug) {
-      if (!views.length) {
-        v.innerHTML = empty("No plugin pages are granted to this install.");
-        return;
-      }
-      v.innerHTML = '<section class="plugin-list">' + views.map((p) =>
-        '<a class="card plugin-card" href="#plugins?slug=' + encodeURIComponent(p.slug) + '"><span class="kicker">' + esc(p.kind || "view") + "</span><strong>" + esc(p.title || p.slug) + "</strong><span class=\"muted small\">" + esc(p.slug) + "</span></a>"
-      ).join("") + "</section>";
+      const open = views.map((p) => pluginCard(p, "open")).join("");
+      const running = items.filter((p) => p.kind === "feed" || p.kind === "live").map((p) => pluginCard(p, "on")).join("");
+      const shelf = available.map((p) => pluginCard(p, "available")).join("");
+      const products = productCards(status);
+      v.innerHTML = pluginSection("On this install", open + running) + pluginSection("Available", shelf) + pluginSection("CallerAPI", products);
       return;
     }
+    const offer = available.find((p) => p.slug === slug);
     const item = views.find((p) => p.slug === slug);
+    if (!item && offer) {
+      $("#viewTitle").textContent = offer.title || offer.slug;
+      v.innerHTML = '<article class="card"><h2>' + esc(offer.title || offer.slug) + "</h2><p>" + esc(offer.summary || "") + '</p><p class="muted">Not on this install.</p></article>';
+      return;
+    }
     $("#viewTitle").textContent = item ? (item.title || item.slug) : slug;
     if (item && item.surface === "iframe") {
       const frame = document.createElement("iframe");

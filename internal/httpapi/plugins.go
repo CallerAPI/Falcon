@@ -16,12 +16,16 @@ func (s *Server) handlePlugins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items := []sdk.Manifest{}
+	available := []sdk.Manifest{}
 	if s.Plugins != nil {
 		if listed := s.Plugins.List(); listed != nil {
 			items = listed
 		}
+		if listed := s.Plugins.Available(); listed != nil {
+			available = listed
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"plugins": items})
+	writeJSON(w, http.StatusOK, map[string]any{"plugins": items, "available": available})
 }
 
 func (s *Server) handlePluginView(w http.ResponseWriter, r *http.Request) {

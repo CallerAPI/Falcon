@@ -78,6 +78,7 @@ type Manifest struct {
 	KeyField string   `json:"key_field"`
 	Mode     string   `json:"mode"`
 	Timeout  int      `json:"timeout_ms"`
+	Summary  string   `json:"summary,omitempty"`
 }
 
 // Column is one native table column.

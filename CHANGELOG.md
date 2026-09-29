@@ -4,6 +4,11 @@
 
 Added
 
+- An enabled dashboard plugin shows on existing installs at the next
+  catalog refresh. No Falcon upgrade is required. A feed or live plugin
+  still runs only after a grant. The Plugins page also shows the spam
+  database feed and the voice firewall.
+
 - Number check can recheck a saved list on a schedule. The page sets the
   interval, the days, the hours, and the timezone. Each recheck costs 1
   credit per number.

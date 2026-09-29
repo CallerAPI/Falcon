@@ -337,10 +337,14 @@ screened by Call-ID, shows it in the event drawer, pages your webhook with
 
 1. Set `CALLERAPI_API_KEY` on Falcon. The webhook is signed with that key
    and Falcon refuses anything else.
-2. Class 5 > Apps > + > ConneXML. Paste `connexcs/falcon-live.xml`. Fill
-   in the key and your Falcon host.
-3. Route the calls you want listened to through the app. Start with one
-   route or a sampled share.
+2. Class 5 > Apps > +. Name it Falcon Live. Pick the customer, or leave
+   Customer empty so every customer can use it. Destination is an unused
+   extension, for example 88001. That extension is what you point a route
+   at. It is not the Falcon host. Leave PBX Server on Distributed.
+3. Save, open the editor, and paste `connexcs/falcon-live.xml`. Fill in
+   the key and your Falcon host.
+4. Point one route at that extension. Start with one route or a sampled
+   share.
 
 Cost is per listened minute on CallerAPI. The keyword rules run on every
 line for free; the model runs at most twice a minute per call. Every call

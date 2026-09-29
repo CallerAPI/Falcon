@@ -158,6 +158,33 @@ func TestPanelAcceptsSameHostFrame(t *testing.T) {
 	}
 }
 
+func TestAvailablePluginDoesNotRun(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/falcon/v1/plugins" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"plugins":[],"available":[{"slug":"number-check","kind":"feed","title":"Number check","summary":"Import a file of numbers."}]}`))
+	}))
+	defer srv.Close()
+	rt := New(srv.URL, "key", time.Minute, time.Second)
+	rt.HTTP = srv.Client()
+	rt.refresh(context.Background())
+	if len(rt.List()) != 0 {
+		t.Fatalf("available plugin was loaded to run: %+v", rt.List())
+	}
+	got := rt.Available()
+	if len(got) != 1 || got[0].Slug != "number-check" || got[0].Summary == "" {
+		t.Fatalf("shelf %+v", got)
+	}
+	res := rt.Apply(context.Background(), View("+14155550100", "", "", "", "", "", "", "", "", "", "", "", 0, "allow", nil),
+		score.Result{Action: score.ActionAllow, RiskScore: 5, Headers: map[string]string{}},
+		score.Thresholds{Flag: 40, Challenge: 60, Reject: 80})
+	if res.Action != score.ActionAllow || res.RiskScore != 5 {
+		t.Fatalf("available plugin changed the decision: %+v", res)
+	}
+}
+
 func hasReason(res score.Result, code string) bool {
 	for _, r := range res.Reasons {
 		if r.Code == code {

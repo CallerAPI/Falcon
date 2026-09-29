@@ -10,11 +10,15 @@
   from that number. Nobody touches the live call.
 
   Setup:
-  1. Class 5 > Apps > + > ConneXML. Paste this file.
-  2. Replace YOUR_CALLERAPI_KEY and falcon.example.com.
-  3. Route the calls you want listened to through this app. Start with one
-     route or a sampled share. Every call through here is a Class 5 call
-     on ConnexCS and a metered minute on CallerAPI.
+  1. Class 5 > Apps > +. Name: Falcon Live.
+     Customer: that one customer, or leave it empty for every customer.
+     Destination: an unused extension, for example 88001. Point a route
+     at this extension. It is not the Falcon host.
+     PBX Server: Distributed.
+  2. Save, open the editor, and paste the Response below.
+     Replace YOUR_CALLERAPI_KEY and falcon.example.com.
+  3. Point one route at that extension. Every call through here is a
+     Class 5 call on ConnexCS and a metered minute on CallerAPI.
   4. report=true files a confirmed scam caller into the CallerAPI spam
      database at the end of the call. Start with report=false.
 

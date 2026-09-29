@@ -34,9 +34,10 @@ type Runtime struct {
 	Budget  time.Duration
 	HTTP    *http.Client
 
-	mu    sync.RWMutex
-	items []sdk.Manifest
-	feeds map[string]map[string]struct{}
+	mu        sync.RWMutex
+	items     []sdk.Manifest
+	available []sdk.Manifest
+	feeds     map[string]map[string]struct{}
 }
 
 func New(baseURL, apiKey string, refresh, budget time.Duration) *Runtime {
@@ -106,7 +107,8 @@ func (r *Runtime) refresh(ctx context.Context) {
 		return
 	}
 	var body struct {
-		Plugins []sdk.Manifest `json:"plugins"`
+		Plugins   []sdk.Manifest `json:"plugins"`
+		Available []sdk.Manifest `json:"available"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
 		log.Printf("falcon plugins: %v", err)
@@ -130,8 +132,29 @@ func (r *Runtime) refresh(ctx context.Context) {
 	}
 	r.mu.Lock()
 	r.items = body.Plugins
+	r.available = offersOnly(body.Plugins, body.Available)
 	r.feeds = feeds
 	r.mu.Unlock()
+}
+
+// offersOnly keeps plugins that are not already granted. A granted plugin
+// runs. An available plugin is only a dashboard card.
+func offersOnly(granted, available []sdk.Manifest) []sdk.Manifest {
+	on := map[string]struct{}{}
+	for _, item := range granted {
+		on[item.Slug] = struct{}{}
+	}
+	out := make([]sdk.Manifest, 0, len(available))
+	for _, item := range available {
+		if item.Slug == "" {
+			continue
+		}
+		if _, ok := on[item.Slug]; ok {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func (r *Runtime) pullFeed(ctx context.Context, slug string) ([]string, error) {
@@ -322,7 +345,7 @@ func trimDetail(s string) string {
 	return s
 }
 
-// List is the catalog the dashboard may show.
+// List is the granted catalog. These plugins may run.
 func (r *Runtime) List() []sdk.Manifest {
 	if r == nil {
 		return nil
@@ -330,6 +353,17 @@ func (r *Runtime) List() []sdk.Manifest {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return append([]sdk.Manifest(nil), r.items...)
+}
+
+// Available is the enabled catalog this install does not have. Nothing in
+// this list runs on an INVITE.
+func (r *Runtime) Available() []sdk.Manifest {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return append([]sdk.Manifest(nil), r.available...)
 }
 
 // Panel loads one plugin view. The query is the operator search. Screening

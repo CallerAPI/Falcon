@@ -462,7 +462,11 @@ All endpoints take the token. Ranges are `range=15m|1h|6h|24h|7d|30d` or
 
 A plugin is a catalog row on CallerAPI, not a new Falcon binary. Falcon
 asks `GET /api/falcon/v1/plugins` once a minute when `CALLERAPI_API_KEY` is
-set. Grant the plugin to that account and the next refresh loads it.
+set. An enabled plugin with a dashboard page is in that list for every
+install. The next refresh shows it. No Falcon upgrade is required.
+A feed or live plugin is in that list only after a grant, because Falcon
+runs those on the INVITE. The Plugins page also shows the spam database
+feed and the voice firewall, on or off for this install.
 `FALCON_PLUGINS=false` turns the catalog off.
 
 The contract is `sdk.Input` and `sdk.Output` in `sdk/plugin.go`. A plugin
