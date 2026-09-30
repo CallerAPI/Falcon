@@ -33,7 +33,7 @@ func TestPluginHTTPRoutes(t *testing.T) {
 	rt.HTTP = upstream.Client()
 	rt.Load(context.Background())
 	srv, _ := newTestServer(t)
-	srv.Plugins = rt
+	srv.SetPlugins(rt)
 
 	list := do(t, srv, http.MethodGet, "/v1/plugins", nil)
 	if list.Code != 200 || !strings.Contains(list.Body.String(), "numbers") {
@@ -54,11 +54,11 @@ func TestPluginHTTPRoutes(t *testing.T) {
 		t.Fatalf("missing view %d", missing.Code)
 	}
 	empty := plugin.New(upstream.URL, "key", time.Minute, time.Millisecond)
-	srv.Plugins = empty
+	srv.SetPlugins(empty)
 	if blank := do(t, srv, http.MethodGet, "/v1/plugins", nil); blank.Code != 200 || !strings.Contains(blank.Body.String(), `"plugins":[]`) {
 		t.Fatalf("empty list %d %s", blank.Code, blank.Body.String())
 	}
-	srv.Plugins = rt
+	srv.SetPlugins(rt)
 	if missing := do(t, srv, http.MethodGet, "/v1/plugins/nope", nil); missing.Code != 404 {
 		t.Fatalf("missing %d", missing.Code)
 	}
@@ -100,7 +100,7 @@ func TestPluginHTTPRoutes(t *testing.T) {
 	rt = plugin.New(upstream.URL, "key", time.Minute, time.Millisecond)
 	rt.HTTP = upstream.Client()
 	rt.Load(context.Background())
-	srv.Plugins = rt
+	srv.SetPlugins(rt)
 	req := httptest.NewRequest(http.MethodPost, "/v1/plugins/numbers/import", strings.NewReader("number,+16502530000\n"))
 	req.Header.Set("Content-Type", "text/plain")
 	req.Header.Set("X-Falcon-Token", "secret")
@@ -133,7 +133,7 @@ func TestPluginHTTPRoutes(t *testing.T) {
 	if missing := do(t, srv, http.MethodPost, "/v1/plugins/missing/import", "x"); missing.Code != http.StatusNotFound {
 		t.Fatalf("import missing %d", missing.Code)
 	}
-	bare.Plugins = nil
+	bare.SetPlugins(nil)
 	if off := do(t, bare, http.MethodPost, "/v1/plugins/numbers/import", "x"); off.Code != http.StatusNotFound {
 		t.Fatalf("import off %d", off.Code)
 	}
@@ -200,7 +200,7 @@ func TestPluginScheduleRoute(t *testing.T) {
 	rt.HTTP = upstream.Client()
 	rt.Load(context.Background())
 	srv, _ := newTestServer(t)
-	srv.Plugins = rt
+	srv.SetPlugins(rt)
 	got := do(t, srv, http.MethodGet, "/v1/plugins/numbers/schedule", nil)
 	if got.Code != 200 || !strings.Contains(got.Body.String(), `"state":"off"`) {
 		t.Fatalf("get %d %s", got.Code, got.Body.String())

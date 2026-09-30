@@ -45,7 +45,7 @@ func TestScreenUsesCatalogAndKeepsCalledNumber(t *testing.T) {
 	rt.Load(context.Background())
 
 	srv, _ := newTestServer(t)
-	srv.Plugins = rt
+	srv.SetPlugins(rt)
 	res := screen(t, srv, "198.51.100.20", cleanInvite("+14155550100", "Acme-SBC/1.0"))
 	if res.Headers["X-Falcon-Plugin"] == "" || res.Headers["X-Falcon-Score"] != strconv.Itoa(res.RiskScore) {
 		t.Fatalf("catalog did not apply: action %s score %d headers %v", res.Action, res.RiskScore, res.Headers)
