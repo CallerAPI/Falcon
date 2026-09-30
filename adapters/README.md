@@ -17,7 +17,7 @@ Fail open if Falcon does not answer. Every adapter here does.
 | FreeSWITCH 1.10, FusionPBX | `freeswitch/falcon.lua` | Real FreeSWITCH 1.10 container with `mod_curl` in CI, plus a Lua harness |
 | Kamailio 5.x | `kamailio/falcon.cfg`, or `kamailio/falcon_async.cfg` for a busy proxy | Real Kamailio 5.5 container in CI, both routes |
 | OpenSIPS 3.x | `opensips/falcon.cfg`, or `opensips/falcon_async.cfg` for a busy proxy | Real OpenSIPS 3.6 container in CI, both routes |
-| ConnexCS | `connexcs/falcon.js` (ScriptForge App) for the INVITE. `connexcs/falcon-transcript.js` (ScriptForge App+) for route transcription | Node harness in CI, all three enforcement postures |
+| ConnexCS | `connexcs/falcon.js` (one ScriptForge App, on the route) | Node harness in CI, all three enforcement postures |
 | Sansay VSXi, Sippy, PortaSwitch, Telinta, Metaswitch, Ribbon, Oracle SBC, AudioCodes, Cisco CUBE, TelcoBridges, BroadWorks, VOS3000, and any switch that can route to a SIP redirect server | SIP redirect listener, no adapter file | UDP and TCP tests, `sipsend` in CI |
 | 2600Hz Kazoo | HTTP from a Pivot callflow | Not yet |
 | Twilio, Telnyx, Bandwidth, Vonage, Plivo, SignalWire | HTTP from your voice webhook | Not yet |
@@ -325,38 +325,28 @@ The e2e harness runs all three postures against a live Falcon: monitor
 never throws, enforce with hard blocks only throws on the deny list and
 not on a scanner score, full enforce throws on both.
 
-### Live voice on a carrier route
+### Transcription
 
-ScriptForge screens the INVITE. It does not hear the call. ConnexCS
-transcribes a route when that route's Transcription switch is on. Customers
-dial the normal number.
+The route has one ScriptForge slot. `falcon.js` is that app. Do not add a
+second script, and do not change this one from type App to App+.
 
-1. Set `CALLERAPI_API_KEY` on Falcon. Falcon uses it to score the text.
-2. Management > Customer > Routing > [Route]. Turn on Transcription. Save.
-3. IDE > Script Forge > Add Script. App Type App+. Paste
-   `connexcs/falcon-transcript.js`. Set `FALCON_URL` to
-   `https://<falcon-host>/v1/voice/transcript` and `FALCON_TOKEN`.
-4. Save the script and leave it running. It posts each transcription
-   message to Falcon. Falcon stores the text, scores it, and shows it on
-   the Transcript tab. A scam verdict adds `voice_scam` as evidence. The
-   INVITE score does not change.
+The app runs when the INVITE arrives and has to return before the timeout.
+The caller has not spoken yet. ConnexCS does not put the transcript in
+`data.routing`. The documented live-transcription listener is a different
+script that stays open on a websocket. A route that already has this app
+cannot take that second script.
 
-Falcon joins the transcript to the traffic row by Call-ID. The screening
-script already stores `routing.callid` on that row. The transcription
-message has to carry the same id. Falcon reads it from `callid`, `call_id`,
-`callId`, or `Call-ID`. The bus payload is not documented, so the script
-sends the message unchanged. A message with no call id is stored and is
-not attached to a traffic row. A message with no text is stored as JSON
-and is not scored.
+Turn Transcription on for the route if you want ConnexCS to store the text.
+Falcon stores and scores a transcript only when something posts it to
+`POST /v1/voice/transcript` with the same Call-ID this app already sent
+(`routing.callid`). A scam verdict adds `voice_scam` as evidence. The
+INVITE score does not change. Scoring is CallerAPI `POST /api/voice/scan`,
+2 credits, and only when `CALLERAPI_API_KEY` is set.
 
 `connexcs/falcon-live.xml` is a Class 5 app. It runs only when the call is
-already inside that app. It does not attach to a carrier route, and the
-customer does not dial a prefix to reach it.
-
-Scoring is CallerAPI `POST /api/voice/scan` on the transcript. A scan is
-2 credits. Falcon does not score a message that has no text, and it does
-not change the INVITE decision. ConnexCS has no documented hangup API, so
-Falcon does not end the live call.
+already inside that app. It does not attach to a carrier route. Do not
+point a route at an extension, and do not prefix the number the customer
+dials.
 
 ## curl
 

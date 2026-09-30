@@ -2,10 +2,9 @@
 <!--
   Optional audio fork for a call that is already inside a Class 5 app.
 
-  This is not how a carrier route is transcribed. A carrier route does not
-  enter this app. For live traffic, turn Transcription on for the route and
-  run falcon-transcript.js. Do not point a route at an extension. Do not
-  prefix the number the customer dials.
+  This is not how a carrier route is screened. The route already has one
+  ScriptForge app, falcon.js. Do not add a second script. Do not point a
+  route at an extension. Do not prefix the number the customer dials.
 
   If a call is already inside this app, ConnexCS can fork its audio to
   CallerAPI. Replace YOUR_CALLERAPI_KEY and falcon.example.com. Leave

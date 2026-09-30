@@ -301,11 +301,12 @@ Switch adapters for Asterisk (and the FreePBX family), FreeSWITCH (and
 FusionPBX), Kamailio, OpenSIPS, and ConnexCS live in `adapters/`. Each one
 is tested in CI against a live Falcon on a real switch container.
 
-On ConnexCS, a carrier route is transcribed by the route Transcription
-switch plus `adapters/connexcs/falcon-transcript.js`. The script forwards
-the text. Falcon stores it and scores it, and joins it to the traffic row
-by the same Call-ID the INVITE screen already stored. A Class 5 app does
-not cover that route.
+On ConnexCS the route has one ScriptForge app, `adapters/connexcs/falcon.js`.
+That app screens the INVITE and returns. It does not receive the
+transcript. Do not add a second script on that route. A Class 5 app does
+not cover a carrier route. Falcon joins a transcript to the traffic row
+only when the text is posted to `/v1/voice/transcript` with the same
+Call-ID.
 
 On a class 4 or wholesale ingress run `FALCON_PROFILE=carrier`. The default
 scoring is tuned for a PBX trunk and rejects a normal call center CLI

@@ -839,9 +839,9 @@
       return '<div class="card"><h2>Transcript</h2><p>Falcon asked for the first seconds of this call. The transcript is not in yet.</p></div>';
     }
     if (!listen.clips && !listen.live_key) {
-      return '<div class="card"><h2>Transcript</h2><p>This install is not receiving transcripts.</p><p class="muted small">On ConnexCS, turn Transcription on for the route and run the transcript script. Falcon joins the text to this row by Call-ID. A clip needs a voice provider on this host.</p></div>';
+      return '<div class="card"><h2>Transcript</h2><p>This install is not receiving transcripts.</p><p class="muted small">On ConnexCS the route script screens the INVITE and returns before anyone speaks. Falcon shows a transcript here only after the text is posted to this host with that call\'s Call-ID. A clip needs a voice provider on this host.</p></div>';
     }
-    return '<div class="card"><h2>Transcript</h2><p>This call has no transcript.</p><p class="muted small">Falcon joins a transcript to this row by Call-ID. On ConnexCS that id is the route call id, sent by the transcript script. A clip is separate: honeypot, fan-out, sequential dialing, a low answer rate, short calls, network reputation, or an outbound flag, inside the hourly budget.</p></div>';
+    return '<div class="card"><h2>Transcript</h2><p>This call has no transcript.</p><p class="muted small">Falcon joins a transcript to this row by Call-ID. On ConnexCS the route script sends that id at INVITE and does not receive the spoken text. A clip is separate: honeypot, fan-out, sequential dialing, a low answer rate, short calls, network reputation, or an outbound flag, inside the hourly budget.</p></div>';
   }
 
   function renderDrawer() {

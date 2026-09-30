@@ -4,9 +4,9 @@
 
 Added
 
-- A route transcript joins the traffic row by Call-ID, the same id the
-  INVITE screen stored. The public ConnexCS path is route Transcription
-  plus `falcon-transcript.js`.
+- A ConnexCS route has one ScriptForge app, `falcon.js`. Do not add a
+  second script for transcription. That app screens the INVITE and
+  returns. It does not receive the spoken text.
 
 - ConnexCS route transcription posts to `POST /v1/voice/transcript`
   from `adapters/connexcs/falcon-transcript.js`. Falcon stores the text
