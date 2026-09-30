@@ -25,15 +25,18 @@ func (s *Server) handlePlugins(w http.ResponseWriter, r *http.Request) {
 			available = listed
 		}
 	}
-	items = append([]sdk.Manifest{aiVoiceManifest()}, items...)
 	writeJSON(w, http.StatusOK, map[string]any{"plugins": items, "available": available})
 }
 
 func (s *Server) handlePluginView(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/v1/plugins/")
 	slug, kind, ok := strings.Cut(rest, "/")
-	if !ok || slug == "" || strings.Contains(slug, ".") || (kind != "view" && kind != "frame" && kind != "import" && kind != "schedule") {
+	if !ok || slug == "" || strings.Contains(slug, ".") || (kind != "view" && kind != "frame" && kind != "import" && kind != "schedule" && kind != "settings") {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	if kind == "settings" {
+		s.handleBridgeSettings(w, r, slug)
 		return
 	}
 	if kind == "schedule" {

@@ -991,32 +991,34 @@
     return productCard("Spam database feed", feedOn, feedBody) + productCard("INVITE reputation", fwOn, fwBody);
   }
 
-  async function renderAIVoice(v) {
-    let cfg = { script_id: "", token_set: false, connected: false, last_error: "", last_at: "" };
-    try { cfg = await get("/v1/plugins/ai-voice"); } catch (e) { v.innerHTML = '<div class="card">' + esc(e.message) + "</div>"; return; }
-    const status = cfg.connected ? "Connected" : (cfg.token_set ? "Connecting" : "Off");
+  async function renderBridge(v, item) {
+    let cfg;
+    try { cfg = await get("/v1/plugins/" + encodeURIComponent(item.slug) + "/settings"); }
+    catch (e) { v.innerHTML = '<div class="card">' + esc(e.message) + "</div>"; return; }
+    const fields = cfg.settings || [];
+    const ready = fields.every((f) => f.secret ? f.set : f.value);
+    const status = cfg.connected ? "Connected" : (ready ? "Connecting" : "Off");
     const tone = cfg.connected ? "ok" : "dim";
-    v.innerHTML = '<article class="card"><h2>AI voice firewall</h2>' +
-      '<p>Falcon holds the ConnexCS transcription socket and scores the text. The route keeps the screening app. Do not assign this script on the route.</p>' +
-      '<p><span class="chip ' + tone + '">' + esc(status) + "</span>" +
-      (cfg.last_at ? '<span class="muted small"> last text ' + esc(cfg.last_at) + "</span>" : "") +
+    const inputs = fields.map((f) => '<label>' + esc(f.label) + '<input name="' + esc(f.key) + '" type="' + (f.secret ? "password" : "text") + '" value="' + esc(f.secret ? "" : (f.value || "")) + '" placeholder="' + (f.secret && f.set ? "saved" : "") + '" autocomplete="off"></label>').join("");
+    v.innerHTML = '<article class="card"><h2>' + esc(cfg.title || item.title || item.slug) + "</h2>" +
+      '<p>' + esc(cfg.summary || item.summary || "") + "</p>" +
+      '<p><span class="chip ' + tone + '">' + esc(status) + "</span> <span class=\"muted small\">" + esc(cfg.sink || "") + "</span>" +
+      (cfg.last_at ? '<span class="muted small"> last ' + esc(cfg.last_at) + "</span>" : "") +
       (cfg.last_error ? '<span class="muted small"> ' + esc(cfg.last_error) + "</span>" : "") + "</p>" +
-      '<form class="form" id="aiVoiceForm" style="grid-template-columns: 160px 1fr auto">' +
-      '<label>Script id<input name="script_id" type="text" value="' + esc(cfg.script_id || "") + '" inputmode="numeric" autocomplete="off"></label>' +
-      '<label>Access token<input name="token" type="password" placeholder="' + (cfg.token_set ? "saved" : "") + '" autocomplete="off"></label>' +
+      '<form class="form" id="bridgeForm" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)) auto">' + inputs +
       '<button class="btn primary" type="submit">Save</button></form>' +
-      '<p class="muted small">On the route, turn Transcription on and leave ScriptForge on the screening app. In the IDE, add a script of type App+ and paste the listener below. Copy the script id from that page URL. Create an Opaque access token under Setup, Integrations. Scoring uses the CallerAPI key already on this install. A scan is 2 credits.</p>' +
-      '<pre class="mono small">import { subscribe } from \'cxPubSub\';\nimport * as socket from \'cxWebSocket\';\n\nexport async function main() {\n  subscribe(\'transcription\', \'*\', (msg) => {\n    const body = typeof msg === \'string\' ? msg : JSON.stringify(msg == null ? {} : msg);\n    socket.send(body);\n  });\n  await socket.waitForClose();\n}</pre></article>';
-    $("#aiVoiceForm").onsubmit = async (e) => {
+      '<p class="muted small">Falcon runs the core API named above. It does not run plugin code. Values stay on this host.</p></article>';
+    $("#bridgeForm").onsubmit = async (e) => {
       e.preventDefault();
-      const form = e.target;
+      const values = {};
+      [...e.target.elements].forEach((el) => { if (el.name) values[el.name] = el.value.trim(); });
       try {
-        await api("/v1/plugins/ai-voice", { method: "PUT", body: JSON.stringify({ script_id: form.script_id.value.trim(), token: form.token.value.trim() }) });
+        await api("/v1/plugins/" + encodeURIComponent(item.slug) + "/settings", { method: "PUT", body: JSON.stringify({ values: values }) });
         toast("Saved", "ok");
-        renderAIVoice(v);
+        renderBridge(v, item);
       } catch (err) { toast(err.message); }
     };
-    if (cfg.token_set && !cfg.connected) schedule(() => renderAIVoice(v), 4000);
+    if (ready && !cfg.connected) schedule(() => renderBridge(v, item), 4000);
   }
 
   async function renderPlugins(v) {
@@ -1037,16 +1039,17 @@
     const available = (catalog && catalog.available) || [];
     const views = items.filter((p) => p.surface === "native" || p.surface === "iframe");
     if (!slug) {
-      const open = views.map((p) => pluginCard(p, "open")).join("");
+      const open = views.map((p) => pluginCard(p, "open")).join("") + items.filter((p) => p.kind === "bridge").map((p) => pluginCard(p, "open")).join("");
       const running = items.filter((p) => p.kind === "feed" || p.kind === "live").map((p) => pluginCard(p, "on")).join("");
       const shelf = available.map((p) => pluginCard(p, "available")).join("");
       const products = productCards(status);
       v.innerHTML = pluginSection("On this install", open + running) + pluginSection("Available", shelf) + pluginSection("CallerAPI", products);
       return;
     }
-    if (slug === "ai-voice") {
-      $("#viewTitle").textContent = "AI voice firewall";
-      renderAIVoice(v);
+    const bridge = items.find((p) => p.slug === slug && p.kind === "bridge");
+    if (bridge) {
+      $("#viewTitle").textContent = bridge.title || bridge.slug;
+      renderBridge(v, bridge);
       return;
     }
     const offer = available.find((p) => p.slug === slug);

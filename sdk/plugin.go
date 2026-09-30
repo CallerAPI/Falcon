@@ -79,6 +79,9 @@ type Manifest struct {
 	Mode     string   `json:"mode"`
 	Timeout  int      `json:"timeout_ms"`
 	Summary  string   `json:"summary,omitempty"`
+	// Bridge is set for kind bridge. Falcon runs the named core API.
+	// The block is catalog data. Falcon does not run plugin code.
+	Bridge *Bridge `json:"bridge,omitempty"`
 }
 
 // Column is one native table column.

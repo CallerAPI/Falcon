@@ -327,8 +327,11 @@ not on a scanner score, full enforce throws on both.
 
 ### Transcription
 
-Open Plugins and choose AI voice firewall. Falcon holds the ConnexCS
-socket and scores the text. There is no second process.
+Open Plugins and choose AI voice firewall after the account is granted
+that plugin. The plugin is a catalog row. Falcon calls the core API it
+names. Falcon does not run plugin code, and a new plugin that uses an
+existing core API does not need a new Falcon release. Secrets stay on
+this host.
 
 The route ScriptForge slot stays on `falcon.js`. Do not replace it and do
 not change it to App+. That app screens the INVITE and returns before

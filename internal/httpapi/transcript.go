@@ -118,6 +118,26 @@ func (t *transcriptScore) due(callID, text string, final bool) bool {
 	return true
 }
 
+func (s *Server) acceptTranscript(body []byte) {
+	line := readTranscript(body)
+	text := line.Text
+	if text == "" {
+		text = line.Raw
+	}
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	sample, err := s.saveTranscript(ctx, line, text)
+	if err != nil {
+		return
+	}
+	if line.Text != "" && s.Cfg.CallerAPIKey != "" && transcriptMarks.due(sample.CallID, line.Text, line.Final) {
+		go s.scoreTranscript(sample, line)
+	}
+}
+
 func (s *Server) handleVoiceTranscript(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})

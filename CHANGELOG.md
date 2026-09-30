@@ -4,8 +4,9 @@
 
 Added
 
-- AI voice firewall is a Plugins page entry. Falcon holds the ConnexCS
-  transcription socket. The route app stays `falcon.js`.
+- A bridge plugin is catalog data that names a core API. Falcon does not
+  run plugin code. Secrets stay on the host. A new plugin that uses an
+  existing core API does not need a Falcon release.
 
 - ConnexCS route transcription posts to `POST /v1/voice/transcript`
   from `adapters/connexcs/falcon-transcript.js`. Falcon stores the text
