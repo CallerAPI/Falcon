@@ -17,7 +17,7 @@ Fail open if Falcon does not answer. Every adapter here does.
 | FreeSWITCH 1.10, FusionPBX | `freeswitch/falcon.lua` | Real FreeSWITCH 1.10 container with `mod_curl` in CI, plus a Lua harness |
 | Kamailio 5.x | `kamailio/falcon.cfg`, or `kamailio/falcon_async.cfg` for a busy proxy | Real Kamailio 5.5 container in CI, both routes |
 | OpenSIPS 3.x | `opensips/falcon.cfg`, or `opensips/falcon_async.cfg` for a busy proxy | Real OpenSIPS 3.6 container in CI, both routes |
-| ConnexCS | `connexcs/falcon.js` (ScriptForge App) for INVITE, `connexcs/falcon-live.xml` (ConneXML) for live voice | Node harness in CI, all three enforcement postures |
+| ConnexCS | `connexcs/falcon.js` (ScriptForge App) for the INVITE. `connexcs/falcon-transcript.js` (ScriptForge App+) for route transcription | Node harness in CI, all three enforcement postures |
 | Sansay VSXi, Sippy, PortaSwitch, Telinta, Metaswitch, Ribbon, Oracle SBC, AudioCodes, Cisco CUBE, TelcoBridges, BroadWorks, VOS3000, and any switch that can route to a SIP redirect server | SIP redirect listener, no adapter file | UDP and TCP tests, `sipsend` in CI |
 | 2600Hz Kazoo | HTTP from a Pivot callflow | Not yet |
 | Twilio, Telnyx, Bandwidth, Vonage, Plivo, SignalWire | HTTP from your voice webhook | Not yet |
@@ -341,10 +341,13 @@ dial the normal number.
    the Transcript tab. A scam verdict adds `voice_scam` as evidence. The
    INVITE score does not change.
 
-The bus payload is not documented. The script sends the message as ConnexCS
-emits it. Falcon looks for the call id, the caller, the called number, and
-the text under several names. A message with no text is stored as JSON and
-is not scored.
+Falcon joins the transcript to the traffic row by Call-ID. The screening
+script already stores `routing.callid` on that row. The transcription
+message has to carry the same id. Falcon reads it from `callid`, `call_id`,
+`callId`, or `Call-ID`. The bus payload is not documented, so the script
+sends the message unchanged. A message with no call id is stored and is
+not attached to a traffic row. A message with no text is stored as JSON
+and is not scored.
 
 `connexcs/falcon-live.xml` is a Class 5 app. It runs only when the call is
 already inside that app. It does not attach to a carrier route, and the

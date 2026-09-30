@@ -4,6 +4,10 @@
 
 Added
 
+- A route transcript joins the traffic row by Call-ID, the same id the
+  INVITE screen stored. The public ConnexCS path is route Transcription
+  plus `falcon-transcript.js`.
+
 - ConnexCS route transcription posts to `POST /v1/voice/transcript`
   from `adapters/connexcs/falcon-transcript.js`. Falcon stores the text
   and scores it. The script does not score.

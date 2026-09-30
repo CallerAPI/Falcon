@@ -151,35 +151,33 @@ func (s *Server) handleVoiceTranscript(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) saveTranscript(ctx context.Context, line transcriptLine, text string) (store.VoiceSample, error) {
 	callID := line.CallID
-	if callID == "" {
-		callID = "transcript"
-	}
 	var eventID int64
-	if line.CallID != "" {
-		if events, err := s.Store.Query(ctx, store.Filter{Q: line.CallID, Limit: 5}); err == nil {
-			for _, ev := range events {
-				if ev.CallID == line.CallID {
-					eventID = ev.ID
-					break
-				}
-			}
-		}
-	}
-	if existing, ok, err := s.Store.VoiceSampleByCallID(ctx, callID); err != nil {
-		return store.VoiceSample{}, err
-	} else if ok {
-		if eventID != 0 {
-			existing.EventID = eventID
-		}
-		existing.Transcript = text
-		if line.From != "" {
-			existing.From = line.From
-		}
-		existing.Provider = transcriptProvider
-		if err := s.Store.UpdateVoiceSample(ctx, existing); err != nil {
+	if callID != "" {
+		ev, ok, err := s.Store.EventByCallID(ctx, callID)
+		if err != nil {
 			return store.VoiceSample{}, err
 		}
-		return existing, nil
+		if ok {
+			eventID = ev.ID
+		}
+		existing, found, err := s.Store.VoiceSampleByCallID(ctx, callID)
+		if err != nil {
+			return store.VoiceSample{}, err
+		}
+		if found {
+			if eventID != 0 {
+				existing.EventID = eventID
+			}
+			existing.Transcript = text
+			if line.From != "" {
+				existing.From = line.From
+			}
+			existing.Provider = transcriptProvider
+			if err := s.Store.UpdateVoiceSample(ctx, existing); err != nil {
+				return store.VoiceSample{}, err
+			}
+			return existing, nil
+		}
 	}
 	sample := store.VoiceSample{
 		EventID:    eventID,
@@ -194,6 +192,26 @@ func (s *Server) saveTranscript(ctx context.Context, line transcriptLine, text s
 	}
 	sample.ID = id
 	return sample, nil
+}
+
+// voiceForEvent returns the transcript for a traffic row. The row and the
+// transcript share the Call-ID the switch sent at INVITE.
+func (s *Server) voiceForEvent(ctx context.Context, ev store.Event) (store.VoiceSample, bool) {
+	if v, ok, err := s.Store.VoiceSampleForEvent(ctx, ev.ID); err == nil && ok {
+		return v, true
+	}
+	if ev.CallID == "" {
+		return store.VoiceSample{}, false
+	}
+	v, ok, err := s.Store.VoiceSampleByCallID(ctx, ev.CallID)
+	if err != nil || !ok {
+		return store.VoiceSample{}, false
+	}
+	if v.EventID == 0 {
+		v.EventID = ev.ID
+		_ = s.Store.UpdateVoiceSample(ctx, v)
+	}
+	return v, true
 }
 
 func (s *Server) scoreTranscript(sample store.VoiceSample, line transcriptLine) {

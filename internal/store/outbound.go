@@ -155,6 +155,21 @@ type VoiceSample struct {
 	From         string    `json:"from,omitempty"`
 }
 
+// EventByCallID returns the newest screened INVITE with this Call-ID.
+func (s *SQLite) EventByCallID(ctx context.Context, callID string) (Event, bool, error) {
+	if strings.TrimSpace(callID) == "" {
+		return Event{}, false, nil
+	}
+	ev, err := scanEvent(s.db.QueryRowContext(ctx, selectEvents(false)+` WHERE call_id = ? ORDER BY id DESC LIMIT 1`, callID))
+	if err == sql.ErrNoRows {
+		return Event{}, false, nil
+	}
+	if err != nil {
+		return Event{}, false, err
+	}
+	return ev, true, nil
+}
+
 // SetOutcome records how a call ended, by Call-ID. Returns the event.
 func (s *SQLite) SetOutcome(ctx context.Context, callID string, o Outcome) (Event, error) {
 	answered := 0

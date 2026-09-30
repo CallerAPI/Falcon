@@ -180,6 +180,7 @@ type Store interface {
 	Recent(ctx context.Context, limit int) ([]Event, error)
 	Query(ctx context.Context, f Filter) ([]Event, error)
 	Get(ctx context.Context, id int64) (Event, error)
+	EventByCallID(ctx context.Context, callID string) (Event, bool, error)
 	Stats(ctx context.Context, from, to time.Time) (Stats, error)
 	Histogram(ctx context.Context, from, to time.Time) ([]int, error)
 	Parties(ctx context.Context, by string, from, to time.Time, limit int) ([]Party, error)

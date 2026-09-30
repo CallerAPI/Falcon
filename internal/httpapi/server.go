@@ -797,7 +797,7 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 			out["network_fingerprint"] = f
 		}
 	}
-	if v, ok, err := s.Store.VoiceSampleForEvent(r.Context(), ev.ID); err == nil && ok {
+	if v, ok := s.voiceForEvent(r.Context(), ev); ok {
 		out["voice"] = v
 	}
 	out["listen"] = map[string]any{

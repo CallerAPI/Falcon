@@ -1,37 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  CallerAPI live voice filter for a call that is already inside a Class 5 app.
+  Optional audio fork for a call that is already inside a Class 5 app.
 
-  A carrier route does not enter this app. For live traffic on a route,
-  turn on Transcription and run falcon-transcript.js. Do not prefix the
-  number the customer dials.
+  This is not how a carrier route is transcribed. A carrier route does not
+  enter this app. For live traffic, turn Transcription on for the route and
+  run falcon-transcript.js. Do not point a route at an extension. Do not
+  prefix the number the customer dials.
 
-  ConnexCS forks the call audio to CallerAPI while the call runs. CallerAPI
-  transcribes it, runs the scam rules on every line, runs the model when
-  the rules cannot phrase it, and posts a verdict to your Falcon the moment
-  the score changes. Falcon ties the verdict to the INVITE it screened,
-  shows it in the dashboard, pages your webhook, and blocks the next call
-  from that number. Nobody touches the live call.
-
-  Setup:
-  1. Class 5 > Apps > +. Name: Falcon Live.
-     Customer: that one customer, or leave it empty for every customer.
-     Destination: an unused extension, for example 88001. Point a route
-     at this extension. It is not the Falcon host.
-     PBX Server: Distributed.
-  2. Save, open the editor, and paste the Response below.
-     Replace YOUR_CALLERAPI_KEY and falcon.example.com.
-  3. Point one route at that extension. Every call through here is a
-     Class 5 call on ConnexCS and a metered minute on CallerAPI.
-  4. report=true files a confirmed scam caller into the CallerAPI spam
-     database at the end of the call. Start with report=false.
-
-  Confirm with ConnexCS support before go-live, the docs do not state them:
-  - The audio format on the socket. CallerAPI accepts Twilio style JSON
-    frames, its own JSON start line, or bare mu-law or PCM16 frames. Bare
-    frames take call_id and from from the URL, so both are set twice below.
-  - The variable names for the caller, the destination, and the call id in
-    ConneXML. {{ cli }}, {{ dest }}, and {{ call_id }} are placeholders.
+  If a call is already inside this app, ConnexCS can fork its audio to
+  CallerAPI. Replace YOUR_CALLERAPI_KEY and falcon.example.com. Leave
+  report=false until you want a confirmed scam filed. {{ cli }}, {{ dest }},
+  and {{ call_id }} are placeholders. ConnexCS does not document those names.
 -->
 <Response>
   <Start>

@@ -839,9 +839,9 @@
       return '<div class="card"><h2>Transcript</h2><p>Falcon asked for the first seconds of this call. The transcript is not in yet.</p></div>';
     }
     if (!listen.clips && !listen.live_key) {
-      return '<div class="card"><h2>Transcript</h2><p>This install is not listening to calls.</p><p class="muted small">A clip needs a voice provider. The live filter needs the switch to fork the audio and a CallerAPI key on Falcon so the verdict can be checked.</p></div>';
+      return '<div class="card"><h2>Transcript</h2><p>This install is not receiving transcripts.</p><p class="muted small">On ConnexCS, turn Transcription on for the route and run the transcript script. Falcon joins the text to this row by Call-ID. A clip needs a voice provider on this host.</p></div>';
     }
-    return '<div class="card"><h2>Transcript</h2><p>This call was not listened to.</p><p class="muted small">Falcon asks for a clip on a honeypot, fan-out, sequential dialing, a low answer rate, short calls, network reputation, or an outbound flag, and only inside the hourly budget. It does not listen because a score crossed a line you set. The live filter hears a call only when the switch forks that call.</p></div>';
+    return '<div class="card"><h2>Transcript</h2><p>This call has no transcript.</p><p class="muted small">Falcon joins a transcript to this row by Call-ID. On ConnexCS that id is the route call id, sent by the transcript script. A clip is separate: honeypot, fan-out, sequential dialing, a low answer rate, short calls, network reputation, or an outbound flag, inside the hourly budget.</p></div>';
   }
 
   function renderDrawer() {
@@ -987,7 +987,7 @@
       : "Set FALCON_SPAM_FEED=true with a CallerAPI key. A listed number is a hard reject.";
     const fwBody = fwOn
       ? "Each INVITE is checked against live reputation. A spam hit flags the call."
-      : "Set FALCON_VOICE_FIREWALL=true with a CallerAPI key. On ConnexCS, fork the audio with the ConneXML app.";
+      : "Set FALCON_VOICE_FIREWALL=true with a CallerAPI key. This flags the INVITE from live number reputation. It does not hear the call.";
     return productCard("Spam database feed", feedOn, feedBody) + productCard("Voice firewall", fwOn, fwBody);
   }
 
