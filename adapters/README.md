@@ -346,7 +346,7 @@ minute filter needs a Class 5 app, and this route does not enter one.
 3. Setup > Integrations > Opaque Tokens. Create an Access Token.
 4. On the plugin page, enter the script id and the token. Save.
 
-`CALLERAPI_API_KEY` must be set. A scan is 2 credits. A scam verdict adds
+`CALLERAPI_API_KEY` must be set. A scan is 1 credit per started minute of speech. A scam verdict adds
 `voice_scam` as evidence. The INVITE score does not change. Falcon joins
 the row by Call-ID (`routing.callid`). ConnexCS does not document the
 transcription field names.

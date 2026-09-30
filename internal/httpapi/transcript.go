@@ -237,7 +237,7 @@ func (s *Server) voiceForEvent(ctx context.Context, ev store.Event) (store.Voice
 func (s *Server) scoreTranscript(sample store.VoiceSample, line transcriptLine) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	verdict, err := scoreCallerAPIText(ctx, s.Cfg.CallerAPIBase, s.Cfg.CallerAPIKey, line.Text, line.From, line.To)
+	verdict, err := scoreCallerAPIText(ctx, s.Cfg.CallerAPIBase, s.Cfg.CallerAPIKey, line.Text, line.From, line.To, sample.CallID)
 	if err != nil {
 		log.Printf("falcon transcript score: %v", err)
 		sample.Error = err.Error()
@@ -263,11 +263,12 @@ func (s *Server) scoreTranscript(sample store.VoiceSample, line transcriptLine) 
 	}
 }
 
-func scoreCallerAPIText(ctx context.Context, base, key, text, from, to string) (voice.Verdict, error) {
+func scoreCallerAPIText(ctx context.Context, base, key, text, from, to, callID string) (voice.Verdict, error) {
 	payload, _ := json.Marshal(map[string]any{
 		"transcript": text,
 		"from":       from,
 		"to":         to,
+		"call_id":    callID,
 		"report":     false,
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(base, "/")+"/api/voice/scan", bytes.NewReader(payload))
