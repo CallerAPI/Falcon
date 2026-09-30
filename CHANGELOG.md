@@ -4,9 +4,10 @@
 
 Added
 
-- A ConnexCS route has one ScriptForge app, `falcon.js`. Do not add a
-  second script for transcription. That app screens the INVITE and
-  returns. It does not receive the spoken text.
+- ConnexCS live text is the route Transcription switch plus an App+
+  script that is not selected on the route. `transcript_listen.py` on
+  the Falcon host holds the socket open and posts each message. The
+  route app stays `falcon.js`.
 
 - ConnexCS route transcription posts to `POST /v1/voice/transcript`
   from `adapters/connexcs/falcon-transcript.js`. Falcon stores the text

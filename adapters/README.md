@@ -327,26 +327,36 @@ not on a scanner score, full enforce throws on both.
 
 ### Transcription
 
-The route has one ScriptForge slot. `falcon.js` is that app. Do not add a
-second script, and do not change this one from type App to App+.
+The route ScriptForge slot stays on `falcon.js`. Do not replace it and do
+not change it to App+. That app screens the INVITE and returns before
+anyone speaks. ConnexCS does not put the transcript in `data.routing`.
 
-The app runs when the INVITE arrives and has to return before the timeout.
-The caller has not spoken yet. ConnexCS does not put the transcript in
-`data.routing`. The documented live-transcription listener is a different
-script that stays open on a websocket. A route that already has this app
-cannot take that second script.
+CallerAPI does not hear the audio on a carrier route. The 1 credit per
+minute filter needs a Class 5 app, and this route does not enter one. What
+you can run here is ConnexCS transcription, scored by Falcon.
 
-Turn Transcription on for the route if you want ConnexCS to store the text.
-Falcon stores and scores a transcript only when something posts it to
-`POST /v1/voice/transcript` with the same Call-ID this app already sent
-(`routing.callid`). A scam verdict adds `voice_scam` as evidence. The
-INVITE score does not change. Scoring is CallerAPI `POST /api/voice/scan`,
-2 credits, and only when `CALLERAPI_API_KEY` is set.
+1. On the route, turn Transcription on. Save. Leave ScriptForge on Falcon.
+   Customers keep dialing the normal number.
+2. IDE > Script Forge > Add Script. App Type App+. Paste
+   `connexcs/falcon-transcript.js`. Do not select this script on the route.
+   Copy the numeric script id.
+3. Setup > Integrations > Opaque Tokens. Create an Access Token.
+4. On the Falcon host, run `connexcs/transcript_listen.py`. It holds the
+   ConnexCS socket open and posts each message to
+   `POST /v1/voice/transcript`. The script in ConnexCS stops sending when
+   that process disconnects.
+5. Set `CALLERAPI_API_KEY` on Falcon. Falcon stores every message. It
+   scores one when the message has text. A scan is 2 credits. A scam
+   verdict adds `voice_scam` as evidence. The INVITE score does not change.
 
-`connexcs/falcon-live.xml` is a Class 5 app. It runs only when the call is
-already inside that app. It does not attach to a carrier route. Do not
-point a route at an extension, and do not prefix the number the customer
-dials.
+Falcon joins the row by Call-ID. The route app already stored
+`routing.callid`. The transcription message has to carry that same id.
+ConnexCS does not document the field names. A message with no call id is
+stored and is not attached to a traffic row.
+
+`connexcs/falcon-live.xml` is a Class 5 app. It does not attach to a
+carrier route. Do not point a route at an extension, and do not prefix
+the number the customer dials.
 
 ## curl
 

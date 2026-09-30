@@ -1,8 +1,9 @@
 // CallerAPI Falcon for ConnexCS. ScriptForge App for Class 4 Routing.
 //
-// This is the only script on the route. Create it as type App (a Script
-// cannot make HTTP calls). Do not add a second script for transcription,
-// and do not change this one to App+. Assign it under
+// This is the only script assigned on the route. Create it as type App (a
+// Script cannot make HTTP calls). Do not change it to App+. The
+// transcription listener is a different script and is not selected here.
+// Assign it under
 // Management > Customer > Routing > [Route] > ScriptForge for the calls your
 // customers send you, or under Management > Customer > DID > [DID] >
 // ScriptForge for calls to your DIDs. Set the ScriptForge Timeout to 3000
