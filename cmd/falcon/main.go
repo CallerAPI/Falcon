@@ -269,7 +269,7 @@ func main() {
 	}
 	if cfg.Plugins && cfg.CallerAPIKey != "" {
 		plugins := plugin.New(cfg.CallerAPIBase, cfg.CallerAPIKey, cfg.PluginRefresh, cfg.PluginBudget)
-		api.Plugins = plugins
+		api.SetPlugins(plugins)
 		go plugins.Run(ctx)
 		log.Printf("falcon plugins: catalog from %s every %s, live budget %s", cfg.CallerAPIBase, cfg.PluginRefresh, cfg.PluginBudget)
 	}

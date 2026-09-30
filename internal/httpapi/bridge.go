@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/callerapi/falcon/internal/plugin"
 	"github.com/callerapi/falcon/sdk"
 	"github.com/coder/websocket"
 )
@@ -33,7 +34,9 @@ func (s *Server) startBridges() {
 	if s.bridges == nil {
 		s.bridges = &bridgeHost{runs: map[string]*bridgeRun{}}
 	}
+	s.bridges.mu.Lock()
 	s.bridges.live = true
+	s.bridges.mu.Unlock()
 	go func() {
 		t := time.NewTicker(15 * time.Second)
 		defer t.Stop()
@@ -44,12 +47,34 @@ func (s *Server) startBridges() {
 	}()
 }
 
+// SetPlugins publishes the catalog. The bridge sync loop reads the pointer
+// under bridgeHost.mu, so a write after Init takes that lock too.
+func (s *Server) SetPlugins(rt *plugin.Runtime) {
+	s.publishPlugins(rt, nil)
+}
+
+// publishPlugins writes the catalog. A non-nil live value is stored in the
+// same critical section, so sync cannot dial a catalog the caller just paused.
+func (s *Server) publishPlugins(rt *plugin.Runtime, live *bool) {
+	if s.bridges != nil {
+		s.bridges.mu.Lock()
+		defer s.bridges.mu.Unlock()
+		if live != nil {
+			s.bridges.live = *live
+		}
+	}
+	s.Plugins = rt
+}
+
 func (h *bridgeHost) sync(s *Server) {
-	if s.Plugins == nil {
+	h.mu.Lock()
+	plugins := s.Plugins
+	h.mu.Unlock()
+	if plugins == nil {
 		return
 	}
 	want := map[string]sdk.Manifest{}
-	for _, item := range s.Plugins.List() {
+	for _, item := range plugins.List() {
 		if item.Kind != "bridge" || item.Bridge == nil {
 			continue
 		}
