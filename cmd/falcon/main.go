@@ -271,6 +271,7 @@ func main() {
 		plugins := plugin.New(cfg.CallerAPIBase, cfg.CallerAPIKey, cfg.PluginRefresh, cfg.PluginBudget)
 		api.Plugins = plugins
 		go plugins.Run(ctx)
+		go api.RunBridges(ctx)
 		log.Printf("falcon plugins: catalog from %s every %s, live budget %s", cfg.CallerAPIBase, cfg.PluginRefresh, cfg.PluginBudget)
 	}
 	if cfg.UpdateCheck {

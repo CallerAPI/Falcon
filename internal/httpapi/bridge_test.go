@@ -20,8 +20,10 @@ func TestBridgeSettingsStayOnHost(t *testing.T) {
 	rt.HTTP = upstream.Client()
 	rt.Load(context.Background())
 	srv, _ := newTestServer(t)
+	srv.bridges.mu.Lock()
 	srv.Plugins = rt
 	srv.bridges.live = false
+	srv.bridges.mu.Unlock()
 
 	missing := do(t, srv, http.MethodPut, "/v1/plugins/other/settings", map[string]any{"values": map[string]string{}})
 	if missing.Code != http.StatusNotFound {

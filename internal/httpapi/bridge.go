@@ -34,14 +34,22 @@ func (s *Server) startBridges() {
 		s.bridges = &bridgeHost{runs: map[string]*bridgeRun{}}
 	}
 	s.bridges.live = true
-	go func() {
-		t := time.NewTicker(15 * time.Second)
-		defer t.Stop()
-		s.bridges.sync(s)
-		for range t.C {
+}
+
+// RunBridges keeps catalog bridges connected. Call it after Plugins is set.
+func (s *Server) RunBridges(ctx context.Context) {
+	s.startBridges()
+	t := time.NewTicker(15 * time.Second)
+	defer t.Stop()
+	s.bridges.sync(s)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
 			s.bridges.sync(s)
 		}
-	}()
+	}
 }
 
 func (h *bridgeHost) sync(s *Server) {
