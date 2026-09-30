@@ -325,44 +325,35 @@ The e2e harness runs all three postures against a live Falcon: monitor
 never throws, enforce with hard blocks only throws on the deny list and
 not on a scanner score, full enforce throws on both.
 
-### Live voice (ConneXML)
+### Live voice on a carrier route
 
-CallerAPI listens to the call as it happens. ConnexCS forks the audio to
-`wss://api.callerapi.com/api/voice/filter/stream`. CallerAPI transcribes,
-runs the scam rules on every line, runs the model when the rules cannot
-phrase it, and posts a verdict to Falcon the moment the score changes.
-Falcon receives it at `POST /v1/voice/verdict`, ties it to the INVITE it
-screened by Call-ID, shows it in the event drawer, pages your webhook with
-`kind: voice_scam, live: true`, and blocks the next call from that number.
+ScriptForge screens the INVITE. It does not hear the call. ConnexCS
+transcribes a route when that route's Transcription switch is on. Customers
+dial the normal number.
 
-1. Set `CALLERAPI_API_KEY` on Falcon. The webhook is signed with that key
-   and Falcon refuses anything else.
-2. Class 5 > Apps > +. Name it Falcon Live. Pick the customer, or leave
-   Customer empty so every customer can use it. Destination is an unused
-   extension, for example 88001. That extension is what you point a route
-   at. It is not the Falcon host. Leave PBX Server on Distributed.
-3. Save, open the editor, and paste `connexcs/falcon-live.xml`. Fill in
-   the key and your Falcon host.
-4. Point one route at that extension. Start with one route or a sampled
-   share.
+1. Set `CALLERAPI_API_KEY` on Falcon. Falcon uses it to score the text.
+2. Management > Customer > Routing > [Route]. Turn on Transcription. Save.
+3. IDE > Script Forge > Add Script. App Type App+. Paste
+   `connexcs/falcon-transcript.js`. Set `FALCON_URL` to
+   `https://<falcon-host>/v1/voice/transcript` and `FALCON_TOKEN`.
+4. Save the script and leave it running. It posts each transcription
+   message to Falcon. Falcon stores the text, scores it, and shows it on
+   the Transcript tab. A scam verdict adds `voice_scam` as evidence. The
+   INVITE score does not change.
 
-Cost is per listened minute on CallerAPI. The keyword rules run on every
-line for free; the model runs at most twice a minute per call. Every call
-through the app is a Class 5 call on ConnexCS.
+The bus payload is not documented. The script sends the message as ConnexCS
+emits it. Falcon looks for the call id, the caller, the called number, and
+the text under several names. A message with no text is stored as JSON and
+is not scored.
 
-Two things the ConnexCS docs do not state. Confirm them with ConnexCS
-support before go-live. The audio format on the socket: CallerAPI accepts
-Twilio style JSON frames, its own JSON start line, or bare mu-law or PCM16
-frames with the call id on the URL, so the likely formats all work. The
-ConneXML variable names for caller, destination, and call id: the template
-uses placeholders.
+`connexcs/falcon-live.xml` is a Class 5 app. It runs only when the call is
+already inside that app. It does not attach to a carrier route, and the
+customer does not dial a prefix to reach it.
 
-Ending the live call: ConnexCS has no documented API for it. The Control
-Panel has End Calls under Global Dialogs and the terminal has
-`calls kill <CallID>`. Falcon's page arrives within seconds of the verdict
-with `call_id`, `customer_id`, `calling_number`, and `suggested_action`,
-so your automation can end the call, unassign the DID, and open the case.
-Ask ConnexCS for a hangup API and Falcon will call it.
+Scoring is CallerAPI `POST /api/voice/scan` on the transcript. A scan is
+2 credits. Falcon does not score a message that has no text, and it does
+not change the INVITE decision. ConnexCS has no documented hangup API, so
+Falcon does not end the live call.
 
 ## curl
 

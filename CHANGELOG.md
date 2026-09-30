@@ -4,6 +4,10 @@
 
 Added
 
+- ConnexCS route transcription posts to `POST /v1/voice/transcript`
+  from `adapters/connexcs/falcon-transcript.js`. Falcon stores the text
+  and scores it. The script does not score.
+
 - A traffic event has a Transcript tab. It shows the voice score and
   whether the verdict is spam. A call that was not listened to says so.
   Search matches words in the transcript. A scam verdict adds a

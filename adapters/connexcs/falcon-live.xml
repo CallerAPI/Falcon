@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  CallerAPI live voice filter for ConnexCS, as a ConneXML app.
+  CallerAPI live voice filter for a call that is already inside a Class 5 app.
+
+  A carrier route does not enter this app. For live traffic on a route,
+  turn on Transcription and run falcon-transcript.js. Do not prefix the
+  number the customer dials.
 
   ConnexCS forks the call audio to CallerAPI while the call runs. CallerAPI
   transcribes it, runs the scam rules on every line, runs the model when

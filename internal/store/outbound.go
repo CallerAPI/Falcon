@@ -347,8 +347,8 @@ func (s *SQLite) NoteVoiceScam(ctx context.Context, eventID int64, category stri
 
 // UpdateVoiceSample writes the provider's result onto a stored clip.
 func (s *SQLite) UpdateVoiceSample(ctx context.Context, v VoiceSample) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE voice_samples SET transcript = ?, category = ?, score = ?, summary = ?, provider = ?, error = ?, seconds = ? WHERE id = ?`,
-		v.Transcript, v.Category, v.Score, v.Summary, v.Provider, v.Error, v.Seconds, v.ID)
+	_, err := s.db.ExecContext(ctx, `UPDATE voice_samples SET transcript = ?, category = ?, score = ?, summary = ?, provider = ?, error = ?, seconds = ?, event_id = CASE WHEN ? > 0 THEN ? ELSE event_id END WHERE id = ?`,
+		v.Transcript, v.Category, v.Score, v.Summary, v.Provider, v.Error, v.Seconds, v.EventID, v.EventID, v.ID)
 	return err
 }
 
