@@ -63,8 +63,40 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: sigstore/cosign-installer@v3
         if: github.ref != 'refs/heads/main' || steps.ver.outputs.skip == 'false'
-      - uses: anchore/sbom-action/download-syft@v0
+      # GoReleaser runs syft from PATH. anchore/sbom-action/download-syft
+      # shells out to install.sh, which keeps curl's http code and accepts
+      # only 200. GitHub release assets answer 302 and redirect to
+      # release-assets.githubusercontent.com. When that hop fails, curl
+      # exits 7, reports 302, and writes no file. install.sh does not
+      # retry, so the publish stops and this job deletes the tag.
+      # Fetch the pinned release, retry the hop, and check the checksum.
+      - name: Install Syft
         if: github.ref != 'refs/heads/main' || steps.ver.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          version=1.42.3
+          case "$(uname -m)" in
+            x86_64) goarch=amd64 ;;
+            aarch64|arm64) goarch=arm64 ;;
+            *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+          asset="syft_${version}_linux_${goarch}.tar.gz"
+          sums="syft_${version}_checksums.txt"
+          base="https://github.com/anchore/syft/releases/download/v${version}"
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
+            -o "${work}/${sums}" "${base}/${sums}"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
+            -o "${work}/${asset}" "${base}/${asset}"
+          grep -F "  ${asset}" "${work}/${sums}" >/dev/null
+          (cd "$work" && sha256sum -c "$sums" --ignore-missing)
+          tar -C "$work" -xzf "${work}/${asset}"
+          install_dir="${HOME}/.local/bin"
+          mkdir -p "$install_dir"
+          install -m 0755 "${work}/syft" "${install_dir}/syft"
+          echo "$install_dir" >> "$GITHUB_PATH"
+          "${install_dir}/syft" version
       # Binaries for linux and darwin on amd64 and arm64, checksums, an SBOM
       # per archive, keyless cosign signatures, and multi-arch images on
       # GHCR. See .goreleaser.yaml.
