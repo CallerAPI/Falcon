@@ -258,7 +258,9 @@ func (s scrubber) sip(raw string) string {
 		case droppedHeaders[canon]:
 			out = append(out, strings.TrimSpace(name)+": "+Redacted)
 		case calledPartyHeaders[canon]:
-			out = append(out, strings.TrimSpace(name)+": "+redactNameAddr(strings.TrimSpace(value)))
+			// A To value can put digits in front of tel:, which the URI
+			// rewrite does not see. The digit pass still has to run.
+			out = append(out, strings.TrimSpace(name)+": "+s.text(redactNameAddr(strings.TrimSpace(value))))
 		case canon == "content-length":
 			out = append(out, strings.TrimSpace(name)+": 0")
 		default:
