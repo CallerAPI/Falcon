@@ -55,7 +55,7 @@ func TestPluginHTTPRoutes(t *testing.T) {
 	}
 	empty := plugin.New(upstream.URL, "key", time.Minute, time.Millisecond)
 	srv.Plugins = empty
-	if blank := do(t, srv, http.MethodGet, "/v1/plugins", nil); blank.Code != 200 || !strings.Contains(blank.Body.String(), `"plugins":[]`) {
+	if blank := do(t, srv, http.MethodGet, "/v1/plugins", nil); blank.Code != 200 || !strings.Contains(blank.Body.String(), "ai-voice") {
 		t.Fatalf("empty list %d %s", blank.Code, blank.Body.String())
 	}
 	srv.Plugins = rt

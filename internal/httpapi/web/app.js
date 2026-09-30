@@ -988,7 +988,35 @@
     const fwBody = fwOn
       ? "Each INVITE is checked against live reputation. A spam hit flags the call."
       : "Set FALCON_VOICE_FIREWALL=true with a CallerAPI key. This flags the INVITE from live number reputation. It does not hear the call.";
-    return productCard("Spam database feed", feedOn, feedBody) + productCard("Voice firewall", fwOn, fwBody);
+    return productCard("Spam database feed", feedOn, feedBody) + productCard("INVITE reputation", fwOn, fwBody);
+  }
+
+  async function renderAIVoice(v) {
+    let cfg = { script_id: "", token_set: false, connected: false, last_error: "", last_at: "" };
+    try { cfg = await get("/v1/plugins/ai-voice"); } catch (e) { v.innerHTML = '<div class="card">' + esc(e.message) + "</div>"; return; }
+    const status = cfg.connected ? "Connected" : (cfg.token_set ? "Connecting" : "Off");
+    const tone = cfg.connected ? "ok" : "dim";
+    v.innerHTML = '<article class="card"><h2>AI voice firewall</h2>' +
+      '<p>Falcon holds the ConnexCS transcription socket and scores the text. The route keeps the screening app. Do not assign this script on the route.</p>' +
+      '<p><span class="chip ' + tone + '">' + esc(status) + "</span>" +
+      (cfg.last_at ? '<span class="muted small"> last text ' + esc(cfg.last_at) + "</span>" : "") +
+      (cfg.last_error ? '<span class="muted small"> ' + esc(cfg.last_error) + "</span>" : "") + "</p>" +
+      '<form class="form" id="aiVoiceForm" style="grid-template-columns: 160px 1fr auto">' +
+      '<label>Script id<input name="script_id" type="text" value="' + esc(cfg.script_id || "") + '" inputmode="numeric" autocomplete="off"></label>' +
+      '<label>Access token<input name="token" type="password" placeholder="' + (cfg.token_set ? "saved" : "") + '" autocomplete="off"></label>' +
+      '<button class="btn primary" type="submit">Save</button></form>' +
+      '<p class="muted small">On the route, turn Transcription on and leave ScriptForge on the screening app. In the IDE, add a script of type App+ and paste the listener below. Copy the script id from that page URL. Create an Opaque access token under Setup, Integrations. Scoring uses the CallerAPI key already on this install. A scan is 2 credits.</p>' +
+      '<pre class="mono small">import { subscribe } from \'cxPubSub\';\nimport * as socket from \'cxWebSocket\';\n\nexport async function main() {\n  subscribe(\'transcription\', \'*\', (msg) => {\n    const body = typeof msg === \'string\' ? msg : JSON.stringify(msg == null ? {} : msg);\n    socket.send(body);\n  });\n  await socket.waitForClose();\n}</pre></article>';
+    $("#aiVoiceForm").onsubmit = async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      try {
+        await api("/v1/plugins/ai-voice", { method: "PUT", body: JSON.stringify({ script_id: form.script_id.value.trim(), token: form.token.value.trim() }) });
+        toast("Saved", "ok");
+        renderAIVoice(v);
+      } catch (err) { toast(err.message); }
+    };
+    if (cfg.token_set && !cfg.connected) schedule(() => renderAIVoice(v), 4000);
   }
 
   async function renderPlugins(v) {
@@ -1014,6 +1042,11 @@
       const shelf = available.map((p) => pluginCard(p, "available")).join("");
       const products = productCards(status);
       v.innerHTML = pluginSection("On this install", open + running) + pluginSection("Available", shelf) + pluginSection("CallerAPI", products);
+      return;
+    }
+    if (slug === "ai-voice") {
+      $("#viewTitle").textContent = "AI voice firewall";
+      renderAIVoice(v);
       return;
     }
     const offer = available.find((p) => p.slug === slug);

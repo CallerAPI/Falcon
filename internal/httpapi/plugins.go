@@ -25,6 +25,7 @@ func (s *Server) handlePlugins(w http.ResponseWriter, r *http.Request) {
 			available = listed
 		}
 	}
+	items = append([]sdk.Manifest{aiVoiceManifest()}, items...)
 	writeJSON(w, http.StatusOK, map[string]any{"plugins": items, "available": available})
 }
 

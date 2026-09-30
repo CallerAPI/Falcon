@@ -3,7 +3,7 @@
 // Do not assign this on the route. The route already has falcon.js.
 // This script stays up only while a client is connected to
 // wss://app.connexcs.com/api/cp/scriptforge/<this script id>.
-// That client is adapters/connexcs/transcript_listen.py on the Falcon host.
+// Falcon connects to it from Plugins > AI voice firewall.
 //
 // 1. On the route, turn Transcription on. Leave ScriptForge on falcon.js.
 // 2. IDE > Script Forge > Add Script. App Type = App+. Paste this file. Save.

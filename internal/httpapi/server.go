@@ -82,6 +82,7 @@ type Server struct {
 	rules   *lists.Index
 
 	hub     *hub
+	ai      *aiVoiceState
 	metrics *metrics
 }
 
@@ -92,6 +93,7 @@ func (s *Server) Init(ctx context.Context) error {
 	if s.StartedAt.IsZero() {
 		s.StartedAt = time.Now().UTC()
 	}
+	s.startAIVoice(ctx)
 	return s.ReloadRules(ctx)
 }
 
@@ -160,6 +162,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/customers", s.withAuth(s.handleCustomers))
 	mux.HandleFunc("/v1/customers/", s.withAuth(s.handleCustomer))
 	mux.HandleFunc("/v1/plugins", s.withAuth(s.handlePlugins))
+	mux.HandleFunc("/v1/plugins/ai-voice", s.withAuth(s.handleAIVoice))
 	mux.HandleFunc("/v1/plugins/", s.withAuth(s.handlePluginView))
 
 	if s.Web != nil {

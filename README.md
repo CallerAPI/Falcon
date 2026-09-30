@@ -304,9 +304,8 @@ is tested in CI against a live Falcon on a real switch container.
 On ConnexCS the route keeps one ScriptForge app,
 `adapters/connexcs/falcon.js`. That app screens the INVITE and returns.
 It does not receive the transcript, and CallerAPI does not hear the audio
-on that route. Live text comes from the route Transcription switch plus
-an App+ script that is not selected on the route. See `adapters/README.md`.
-A Class 5 app does not cover a carrier route.
+on that route. Live text is the AI voice firewall plugin. See
+`adapters/README.md`. A Class 5 app does not cover a carrier route.
 
 On a class 4 or wholesale ingress run `FALCON_PROFILE=carrier`. The default
 scoring is tuned for a PBX trunk and rejects a normal call center CLI

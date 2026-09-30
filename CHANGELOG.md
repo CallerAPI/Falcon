@@ -4,10 +4,8 @@
 
 Added
 
-- ConnexCS live text is the route Transcription switch plus an App+
-  script that is not selected on the route. `transcript_listen.py` on
-  the Falcon host holds the socket open and posts each message. The
-  route app stays `falcon.js`.
+- AI voice firewall is a Plugins page entry. Falcon holds the ConnexCS
+  transcription socket. The route app stays `falcon.js`.
 
 - ConnexCS route transcription posts to `POST /v1/voice/transcript`
   from `adapters/connexcs/falcon-transcript.js`. Falcon stores the text

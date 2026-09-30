@@ -327,32 +327,26 @@ not on a scanner score, full enforce throws on both.
 
 ### Transcription
 
+Open Plugins and choose AI voice firewall. Falcon holds the ConnexCS
+socket and scores the text. There is no second process.
+
 The route ScriptForge slot stays on `falcon.js`. Do not replace it and do
 not change it to App+. That app screens the INVITE and returns before
 anyone speaks. ConnexCS does not put the transcript in `data.routing`.
 
 CallerAPI does not hear the audio on a carrier route. The 1 credit per
-minute filter needs a Class 5 app, and this route does not enter one. What
-you can run here is ConnexCS transcription, scored by Falcon.
+minute filter needs a Class 5 app, and this route does not enter one.
 
 1. On the route, turn Transcription on. Save. Leave ScriptForge on Falcon.
-   Customers keep dialing the normal number.
 2. IDE > Script Forge > Add Script. App Type App+. Paste
    `connexcs/falcon-transcript.js`. Do not select this script on the route.
-   Copy the numeric script id.
 3. Setup > Integrations > Opaque Tokens. Create an Access Token.
-4. On the Falcon host, run `connexcs/transcript_listen.py`. It holds the
-   ConnexCS socket open and posts each message to
-   `POST /v1/voice/transcript`. The script in ConnexCS stops sending when
-   that process disconnects.
-5. Set `CALLERAPI_API_KEY` on Falcon. Falcon stores every message. It
-   scores one when the message has text. A scan is 2 credits. A scam
-   verdict adds `voice_scam` as evidence. The INVITE score does not change.
+4. On the plugin page, enter the script id and the token. Save.
 
-Falcon joins the row by Call-ID. The route app already stored
-`routing.callid`. The transcription message has to carry that same id.
-ConnexCS does not document the field names. A message with no call id is
-stored and is not attached to a traffic row.
+`CALLERAPI_API_KEY` must be set. A scan is 2 credits. A scam verdict adds
+`voice_scam` as evidence. The INVITE score does not change. Falcon joins
+the row by Call-ID (`routing.callid`). ConnexCS does not document the
+transcription field names.
 
 `connexcs/falcon-live.xml` is a Class 5 app. It does not attach to a
 carrier route. Do not point a route at an extension, and do not prefix
