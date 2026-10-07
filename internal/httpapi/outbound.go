@@ -123,6 +123,9 @@ func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {
 	}
 	callID := strings.TrimSpace(r.URL.Query().Get("call_id"))
 	if callID == "" {
+		callID = strings.TrimSpace(r.Header.Get("X-Call-Id"))
+	}
+	if callID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "call_id query parameter required"})
 		return
 	}
@@ -147,20 +150,16 @@ func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "clip too large"})
 		return
 	}
+	if trimmed, err := voice.TrimWAV(wav, voice.ScanSeconds); err == nil {
+		wav = trimmed
+	}
 	clip, err := voice.DecodeWAV(wav)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	events, err := s.Store.Query(r.Context(), store.Filter{Q: callID, Limit: 5})
-	var ev store.Event
-	for _, e := range events {
-		if e.CallID == callID {
-			ev = e
-			break
-		}
-	}
-	if err != nil || ev.ID == 0 {
+	ev, ok, err := s.Store.EventByCallID(r.Context(), callID)
+	if err != nil || !ok || ev.ID == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no event with that call id"})
 		return
 	}

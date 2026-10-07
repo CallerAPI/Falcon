@@ -92,6 +92,58 @@ func DecodeWAV(b []byte) (Clip, error) {
 	return c, nil
 }
 
+// ScanSeconds is how much of a recording is sent for transcription.
+// A longer file is rejected by the speech service.
+const ScanSeconds = 25
+
+// TrimWAV keeps the first seconds of a PCM WAV. A shorter file is returned unchanged.
+func TrimWAV(b []byte, seconds int) ([]byte, error) {
+	c, err := DecodeWAV(b)
+	if err != nil {
+		return nil, err
+	}
+	if seconds < 1 {
+		seconds = ScanSeconds
+	}
+	keep := c.Rate * seconds
+	if len(c.Channels) == 0 || len(c.Channels[0]) <= keep {
+		return b, nil
+	}
+	for i := range c.Channels {
+		c.Channels[i] = c.Channels[i][:keep]
+	}
+	return encodeWAV(c), nil
+}
+
+func encodeWAV(c Clip) []byte {
+	channels := len(c.Channels)
+	frames := 0
+	if channels > 0 {
+		frames = len(c.Channels[0])
+	}
+	data := make([]byte, frames*channels*2)
+	for i := 0; i < frames; i++ {
+		for ch := 0; ch < channels; ch++ {
+			binary.LittleEndian.PutUint16(data[(i*channels+ch)*2:], uint16(c.Channels[ch][i]))
+		}
+	}
+	out := make([]byte, 44+len(data))
+	copy(out, "RIFF")
+	binary.LittleEndian.PutUint32(out[4:], uint32(36+len(data)))
+	copy(out[8:], "WAVEfmt ")
+	binary.LittleEndian.PutUint32(out[16:], 16)
+	binary.LittleEndian.PutUint16(out[20:], 1)
+	binary.LittleEndian.PutUint16(out[22:], uint16(channels))
+	binary.LittleEndian.PutUint32(out[24:], uint32(c.Rate))
+	binary.LittleEndian.PutUint32(out[28:], uint32(c.Rate*channels*2))
+	binary.LittleEndian.PutUint16(out[32:], uint16(channels*2))
+	binary.LittleEndian.PutUint16(out[34:], 16)
+	copy(out[36:], "data")
+	binary.LittleEndian.PutUint32(out[40:], uint32(len(data)))
+	copy(out[44:], data)
+	return out
+}
+
 // Features are what the host can tell without a model.
 type Features struct {
 	Seconds  float64 `json:"seconds"`

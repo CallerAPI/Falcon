@@ -208,6 +208,9 @@ type CallerAPI struct {
 func (c *CallerAPI) Name() string { return "callerapi" }
 
 func (c *CallerAPI) Analyse(ctx context.Context, wav []byte, meta Meta) (Verdict, error) {
+	if trimmed, err := TrimWAV(wav, ScanSeconds); err == nil {
+		wav = trimmed
+	}
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	fw, _ := mw.CreateFormFile("audio", "clip.wav")
