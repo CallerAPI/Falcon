@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/callerapi/falcon/internal/sipmsg"
@@ -174,10 +175,31 @@ func DefaultBehaviour(l Limits) Limits {
 
 // Engine scores a SIP snapshot.
 type Engine struct {
+	mu     sync.RWMutex
 	Thresh Thresholds
 	Limits Limits
 	Vel    *velocity.Window
 	Now    func() time.Time
+}
+
+// Thresholds is a stable copy. The dashboard may replace the live set.
+func (e *Engine) Thresholds() Thresholds {
+	if e == nil {
+		return Thresholds{}
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.Thresh
+}
+
+// SetThresholds replaces the live set. flag, challenge, and reject stay in order.
+func (e *Engine) SetThresholds(t Thresholds) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.Thresh = t
+	e.mu.Unlock()
 }
 
 func NewEngine(t Thresholds, lim Limits) *Engine {
@@ -434,7 +456,7 @@ func (e *Engine) Score(s sipmsg.Snapshot, en Enrichment) Result {
 		total = 100
 	}
 
-	action := e.Thresh.Action(total)
+	action := e.Thresholds().Action(total)
 	if hardBlock {
 		total = 100
 		action = ActionReject

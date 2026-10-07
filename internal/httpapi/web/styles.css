@@ -203,6 +203,8 @@ pre .hl { background: rgba(99, 102, 241, 0.18); border-radius: 3px; }
 
 .slider { display: grid; grid-template-columns: 110px 1fr 60px; gap: 12px; align-items: center; margin: 8px 0; }
 .slider input[type="range"] { width: 100%; accent-color: var(--accent); }
+.tune-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 10px 0 2px; }
+.tune-foot .btn { flex: none; white-space: nowrap; height: 32px; padding: 0 14px; font-weight: 500; }
 .whatif { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 12px; }
 .whatif .w { background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; }
 .whatif .w b { display: block; font: 600 20px/1.2 var(--mono); }

@@ -125,6 +125,30 @@ func TestTracebackPackCarriesEventsAndRawSIP(t *testing.T) {
 	}
 }
 
+func TestThresholdsPersistAndApply(t *testing.T) {
+	srv, _ := newTestServer(t)
+	w := do(t, srv, http.MethodPut, "/v1/settings", map[string]int{"flag_score": 20, "challenge_score": 45, "reject_score": 70})
+	if w.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	got := srv.Engine.Thresholds()
+	if got.Flag != 20 || got.Challenge != 45 || got.Reject != 70 {
+		t.Fatalf("live = %+v", got)
+	}
+	srv.Engine.SetThresholds(score.Thresholds{Flag: 40, Challenge: 60, Reject: 80})
+	srv.LoadThresholds(context.Background())
+	got = srv.Engine.Thresholds()
+	if got.Flag != 20 || got.Challenge != 45 || got.Reject != 70 {
+		t.Fatalf("reloaded = %+v", got)
+	}
+	if w := do(t, srv, http.MethodPut, "/v1/settings", map[string]int{"flag_score": 90, "challenge_score": 10, "reject_score": 80}); w.Code != http.StatusBadRequest {
+		t.Fatalf("order: %d %s", w.Code, w.Body.String())
+	}
+	if got = srv.Engine.Thresholds(); got.Challenge != 45 {
+		t.Fatalf("rejected write changed live set: %+v", got)
+	}
+}
+
 func keys(m map[string]string) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

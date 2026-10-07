@@ -416,7 +416,7 @@ func (s *Server) Screen(ctx context.Context, req ScreenRequest) (score.Result, e
 			result.Signals.From, snap.SourceIP, snap.UserAgent, snap.CallID, snap.Identity.Attest,
 			result.Signals.Verstat, result.Signals.SignerSPC, result.Signals.SignerName, result.Signals.IPProvider,
 			fingerprint.Compute(msg), en.Direction, snap.Method, result.RiskScore, string(result.Action), result.Reasons,
-		), result, s.Engine.Thresh)
+		), result, s.Engine.Thresholds())
 	}
 	decision := result
 	result = s.hold(result)
@@ -828,7 +828,7 @@ func (s *Server) handleHistogram(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"buckets":    h,
-		"thresholds": map[string]int{"flag": s.Engine.Thresh.Flag, "challenge": s.Engine.Thresh.Challenge, "reject": s.Engine.Thresh.Reject},
+		"thresholds": thresholdMap(s.Engine.Thresholds()),
 		"from":       from,
 		"to":         to,
 	})
@@ -937,7 +937,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"model":    s.Assistant.Model,
 		},
 		"raw_sip_stored": s.Cfg.StoreRawSIP,
-		"thresholds":     map[string]int{"flag": s.Engine.Thresh.Flag, "challenge": s.Engine.Thresh.Challenge, "reject": s.Engine.Thresh.Reject},
+		"thresholds":     thresholdMap(s.Engine.Thresholds()),
 		"spam_feed": map[string]any{
 			"configured": s.Cfg.FeedEnabled() || (s.Cfg.Demo && s.Cfg.DemoProfile == "paid" && feedCount > 0),
 			"count":      feedCount,

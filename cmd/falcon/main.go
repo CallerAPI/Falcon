@@ -153,6 +153,7 @@ func main() {
 	if err := api.Init(ctx); err != nil {
 		log.Fatalf("falcon rules: %v", err)
 	}
+	api.LoadThresholds(ctx)
 
 	q := &export.Queue{
 		Store: db,

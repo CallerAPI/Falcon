@@ -632,14 +632,19 @@
   // ---------- tuning ----------
   async function renderTuning(v) {
     v.innerHTML = '<section class="grid wide-narrow"><article class="card"><header><h2>Score distribution</h2><span class="hint" id="hHint"></span></header><canvas class="chart" id="hist"></canvas>' +
-      '<div id="sliders"></div><div class="whatif" id="whatif"></div><p class="muted small" id="envHint"></p></article>' +
+      '<div id="sliders"></div><div class="tune-foot" id="tuneFoot" hidden><span class="hint">Applies on the next call</span><button class="btn primary" id="saveThresh" type="button">Save</button></div><div class="whatif" id="whatif"></div></article>' +
       '<article class="card"><header><h2>Reasons by weight</h2><span class="hint">held calls only</span></header><div class="rank" id="reasons"></div></article></section>';
     try {
       const [h, stats] = await Promise.all([get("/v1/histogram?range=" + state.range), get("/v1/stats?range=" + state.range)]);
       const buckets = h.buckets || [];
       const th = Object.assign({}, h.thresholds);
+      const live = { flag: th.flag, challenge: th.challenge, reject: th.reject };
       const total = buckets.reduce((a, b) => a + b, 0);
       $("#hHint").textContent = fmtN(total) + " requests · dashed lines are the live thresholds";
+      const paintSave = () => {
+        const dirty = th.flag !== live.flag || th.challenge !== live.challenge || th.reject !== live.reject;
+        $("#tuneFoot").hidden = !dirty;
+      };
       const draw = () => {
         drawHistogram($("#hist"), buckets, th);
         let allow = 0, flag = 0, challenge = 0, reject = 0;
@@ -648,9 +653,9 @@
           if (lo >= th.reject) reject += n; else if (lo >= th.challenge) challenge += n; else if (lo >= th.flag) flag += n; else allow += n;
         });
         $("#whatif").innerHTML = [["allow", allow, colors.allow], ["flag", flag, colors.flag], ["challenge", challenge, colors.challenge], ["reject", reject, colors.reject]].map(([k, n, c]) => '<div class="w"><b style="color:' + c + '">' + fmtN(n) + "</b><span>" + k + " · " + pct(n, total) + "%</span></div>").join("");
-        $("#envHint").innerHTML = "Thresholds are environment values. To apply these: <code class='mono'>FALCON_FLAG_SCORE=" + th.flag + " FALCON_CHALLENGE_SCORE=" + th.challenge + " FALCON_REJECT_SCORE=" + th.reject + "</code>. Buckets are ten points wide, so the what-if is a ten point approximation.";
+        paintSave();
       };
-      $("#sliders").innerHTML = ["flag", "challenge", "reject"].map((k) => '<div class="slider"><span style="color:' + colors[k] + '">' + k + ' at</span><input type="range" min="0" max="100" step="10" value="' + th[k] + '" data-k="' + k + '"><span class="mono num" id="v_' + k + '">' + th[k] + "</span></div>").join("");
+      $("#sliders").innerHTML = ["flag", "challenge", "reject"].map((k) => '<div class="slider"><span style="color:' + colors[k] + '">' + k + ' at</span><input type="range" min="0" max="101" step="1" value="' + th[k] + '" data-k="' + k + '"><span class="mono num" id="v_' + k + '">' + th[k] + "</span></div>").join("");
       $("#sliders").oninput = (e) => {
         const k = e.target.dataset.k;
         if (!k) return;
@@ -660,6 +665,19 @@
         if (k === "reject") { th.challenge = Math.min(th.challenge, th.reject); th.flag = Math.min(th.flag, th.challenge); }
         ["flag", "challenge", "reject"].forEach((kk) => { $('#sliders input[data-k="' + kk + '"]').value = th[kk]; $("#v_" + kk).textContent = th[kk]; });
         draw();
+      };
+      $("#saveThresh").onclick = async () => {
+        const btn = $("#saveThresh");
+        btn.disabled = true;
+        try {
+          await api("/v1/settings", { method: "PUT", body: JSON.stringify({ flag_score: th.flag, challenge_score: th.challenge, reject_score: th.reject }) });
+          live.flag = th.flag;
+          live.challenge = th.challenge;
+          live.reject = th.reject;
+          paintSave();
+          toast("Thresholds saved", "ok");
+        } catch (err) { toast(err.message, "bad"); }
+        btn.disabled = false;
       };
       draw();
       renderRank($("#reasons"), stats.top_reasons, (r) => "#traffic?q=" + encodeURIComponent(r.name));
