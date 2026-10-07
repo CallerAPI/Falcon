@@ -49,3 +49,28 @@ func TestTrimWAVKeepsTheOpening(t *testing.T) {
 		t.Fatalf("short clip changed length %d -> %d", len(short), len(same))
 	}
 }
+
+func TestSplitWAVCoversTheWholeCall(t *testing.T) {
+	in := wavMono(8000, 8000*70)
+	parts, err := SplitWAV(in, ScanSeconds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 3 {
+		t.Fatalf("parts = %d", len(parts))
+	}
+	var frames int
+	for i, p := range parts {
+		c, err := DecodeWAV(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i < 2 && (c.Seconds() < 24.9 || c.Seconds() > 25.1) {
+			t.Fatalf("part %d seconds = %v", i, c.Seconds())
+		}
+		frames += len(c.Channels[0])
+	}
+	if frames != 8000*70 {
+		t.Fatalf("frames = %d", frames)
+	}
+}

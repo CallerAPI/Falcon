@@ -18,9 +18,9 @@ import (
 	"github.com/callerapi/falcon/internal/voice"
 )
 
-// MaxClipBytes caps an uploaded audio clip: twenty seconds of stereo 16 kHz
-// PCM is 1.3 MB.
-const MaxClipBytes = 4 << 20
+// MaxClipBytes caps an uploaded recording. 8 kHz mono 16-bit is about
+// half an hour at this size. The scan is sent in short pieces.
+const MaxClipBytes = 32 << 20
 
 // behaviour fills the direction, customer, honeypot, and caller activity
 // parts of the enrichment. All of it comes from this install's own store.
@@ -113,7 +113,7 @@ func (s *Server) handleOutcome(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"event_id": ev.ID, "answered": body.Answered, "duration_s": body.DurationS})
 }
 
-// handleAudio takes the first seconds of a call the sampler asked for.
+// handleAudio stores a recording and transcribes the whole file.
 // Local analysis is synchronous and free; the provider runs after the
 // response, within the clip budget already spent by the sampler.
 func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {
@@ -149,9 +149,6 @@ func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {
 	if len(wav) > MaxClipBytes {
 		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "clip too large"})
 		return
-	}
-	if trimmed, err := voice.TrimWAV(wav, voice.ScanSeconds); err == nil {
-		wav = trimmed
 	}
 	clip, err := voice.DecodeWAV(wav)
 	if err != nil {
@@ -207,7 +204,7 @@ func providerName(p voice.Provider) string {
 // classifyClip runs the provider and stores what it said. The transcript
 // stays in this database; it is never shared.
 func (s *Server) classifyClip(sample store.VoiceSample, ev store.Event, wav []byte, f voice.Features) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	v, err := s.VoiceProvider.Analyse(ctx, wav, voice.Meta{From: ev.From, Customer: ev.Customer, Report: s.VoiceReport})
 	sample.Provider = providerName(s.VoiceProvider)

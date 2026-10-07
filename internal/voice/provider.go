@@ -208,9 +208,35 @@ type CallerAPI struct {
 func (c *CallerAPI) Name() string { return "callerapi" }
 
 func (c *CallerAPI) Analyse(ctx context.Context, wav []byte, meta Meta) (Verdict, error) {
-	if trimmed, err := TrimWAV(wav, ScanSeconds); err == nil {
-		wav = trimmed
+	chunks, err := SplitWAV(wav, ScanSeconds)
+	if err != nil || len(chunks) == 0 {
+		chunks = [][]byte{wav}
 	}
+	report := meta.Report
+	var texts []string
+	var best Verdict
+	var have bool
+	for i, chunk := range chunks {
+		piece := meta
+		piece.Report = report && i == len(chunks)-1
+		v, err := c.scanChunk(ctx, chunk, piece)
+		if err != nil {
+			return Verdict{}, err
+		}
+		if t := strings.TrimSpace(v.Transcript); t != "" {
+			texts = append(texts, t)
+		}
+		if !have || v.Score >= best.Score {
+			best = v
+			have = true
+		}
+	}
+	best.Transcript = strings.Join(texts, " ")
+	best.Provider = "callerapi"
+	return best, nil
+}
+
+func (c *CallerAPI) scanChunk(ctx context.Context, wav []byte, meta Meta) (Verdict, error) {
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	fw, _ := mw.CreateFormFile("audio", "clip.wav")

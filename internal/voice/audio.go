@@ -92,8 +92,8 @@ func DecodeWAV(b []byte) (Clip, error) {
 	return c, nil
 }
 
-// ScanSeconds is how much of a recording is sent for transcription.
-// A longer file is rejected by the speech service.
+// ScanSeconds is the longest piece sent in one transcription request.
+// A longer recording is split, and the pieces are joined back into one transcript.
 const ScanSeconds = 25
 
 // TrimWAV keeps the first seconds of a PCM WAV. A shorter file is returned unchanged.
@@ -113,6 +113,39 @@ func TrimWAV(b []byte, seconds int) ([]byte, error) {
 		c.Channels[i] = c.Channels[i][:keep]
 	}
 	return encodeWAV(c), nil
+}
+
+// SplitWAV cuts a PCM WAV into pieces of at most seconds each, in order.
+// A shorter file comes back as one piece, unchanged.
+func SplitWAV(b []byte, seconds int) ([][]byte, error) {
+	c, err := DecodeWAV(b)
+	if err != nil {
+		return nil, err
+	}
+	if seconds < 1 {
+		seconds = ScanSeconds
+	}
+	if len(c.Channels) == 0 || len(c.Channels[0]) == 0 {
+		return nil, errors.New("no audio data")
+	}
+	keep := c.Rate * seconds
+	total := len(c.Channels[0])
+	if total <= keep {
+		return [][]byte{b}, nil
+	}
+	var parts [][]byte
+	for start := 0; start < total; start += keep {
+		end := start + keep
+		if end > total {
+			end = total
+		}
+		part := Clip{Rate: c.Rate, Channels: make([][]int16, len(c.Channels))}
+		for i := range c.Channels {
+			part.Channels[i] = c.Channels[i][start:end]
+		}
+		parts = append(parts, encodeWAV(part))
+	}
+	return parts, nil
 }
 
 func encodeWAV(c Clip) []byte {
