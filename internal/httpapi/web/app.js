@@ -231,12 +231,22 @@
     lists: ["Lists", "Your allow and deny rules"],
     tuning: ["Tuning", "Where the thresholds sit against real traffic"],
     system: ["System", "Trust, feeds, storage, and configuration"],
-    plugins: ["Plugins", "Extensions"],
+    transcripts: ["Transcripts", "What was said on recorded calls"],
+    blocklist: ["Blocklist", "Numbers loaded from the spam feed, and the calls they hit"],
+    scoring: ["Live scoring", "INVITE checks against live reputation"],
+    ipintel: ["IP intel", "Addresses loaded into the fraud list"],
+    numbercheck: ["Number check", "Saved numbers and what they return"],
+    aivoice: ["AI voice", "Live transcript connection"],
   };
 
   function navigate() {
     const hash = (location.hash || "#overview").slice(1);
     const [view, param] = hash.split("?");
+    if (view === "plugins") {
+      const slug = new URLSearchParams(param || "").get("slug");
+      location.replace(slug === "number-check" ? "#numbercheck" : slug === "ai-voice" ? "#aivoice" : "#transcripts");
+      return;
+    }
     state.view = titles[view] ? view : "overview";
     $$("#nav a").forEach((a) => a.classList.toggle("on", a.dataset.view === state.view));
     $("#viewTitle").textContent = titles[state.view][0];
@@ -259,8 +269,8 @@
     state.timers = [];
     const v = $("#view");
     v.innerHTML = "";
-    $("#search").placeholder = state.view === "plugins" ? "Search a number" : "Search number, IP, Call-ID, signer  ( / )";
-    ({ overview: renderOverview, traffic: renderTraffic, numbers: renderNumbers, signers: renderSigners, providers: renderProviders, lists: renderLists, tuning: renderTuning, system: renderSystem, plugins: renderPlugins })[state.view](v);
+    $("#search").placeholder = state.view === "numbercheck" ? "Search a number" : "Search number, IP, Call-ID, signer  ( / )";
+    ({ overview: renderOverview, traffic: renderTraffic, numbers: renderNumbers, signers: renderSigners, providers: renderProviders, lists: renderLists, tuning: renderTuning, system: renderSystem, transcripts: renderTranscripts, blocklist: renderBlocklist, scoring: renderScoring, ipintel: renderIPIntel, numbercheck: renderNumberCheck, aivoice: renderAIVoice })[state.view](v);
   }
   function schedule(fn, ms) { state.timers.push(setTimeout(fn, ms)); }
 
@@ -1039,31 +1049,91 @@
     if (ready && !cfg.connected) schedule(() => renderBridge(v, item), 4000);
   }
 
-  async function renderPlugins(v) {
-    const params = new URLSearchParams((location.hash.split("?")[1] || ""));
-    const slug = params.get("slug") || "";
+  function addonSlug() {
+    if (state.view === "numbercheck") return "number-check";
+    if (state.view === "aivoice") return "ai-voice";
+    return "";
+  }
+
+  async function renderTranscripts(v) {
+    v.innerHTML = '<section class="grid kpis" id="trKpis"></section><article class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th>when</th><th>from</th><th>seconds</th><th>category</th><th>score</th><th>transcript</th></tr></thead><tbody id="trRows"><tr><td colspan="6" class="muted">Loading</td></tr></tbody></table></div></article>';
+    try {
+      const res = await get("/v1/voice/samples?limit=100");
+      let rows = res.data || [];
+      if (state.q) {
+        const q = state.q.toLowerCase();
+        rows = rows.filter((r) => [r.from, r.call_id, r.transcript, r.category, r.error].join(" ").toLowerCase().includes(q));
+      }
+      $("#trKpis").innerHTML = '<article class="card kpi"><label>clips</label><b>' + fmtN(rows.length) + '</b></article><article class="card kpi"><label>with text</label><b>' + fmtN(rows.filter((r) => r.transcript).length) + '</b></article><article class="card kpi"><label>failed</label><b>' + fmtN(rows.filter((r) => r.error && !r.transcript).length) + "</b></article>";
+      $("#trRows").innerHTML = rows.length ? rows.map((r) => {
+        const text = r.transcript || r.error || r.summary || "";
+        const link = r.event_id ? '<a class="mono" href="#traffic" data-ev="' + r.event_id + '">' + esc(r.call_id || String(r.event_id)) + "</a>" : '<span class="mono muted">' + esc(r.call_id || "no call") + "</span>";
+        return "<tr><td class=\"muted small\">" + esc(timeAgo(r.at)) + "</td><td class=\"mono\">" + esc(r.from || "") + "</td><td class=\"mono num\">" + (r.seconds ? Math.round(r.seconds) : "") + "</td><td>" + esc(r.category || "") + "</td><td class=\"mono num\">" + (r.score ? r.score.toFixed(2) : "") + '</td><td><div class="small">' + link + "</div><div>" + esc(text) + "</div></td></tr>";
+      }).join("") : '<tr><td colspan="6">' + empty("No transcripts yet.") + "</td></tr>";
+      $("#trRows").onclick = (e) => {
+        const a = e.target.closest("[data-ev]");
+        if (!a) return;
+        e.preventDefault();
+        openEvent(a.dataset.ev);
+      };
+    } catch (e) {
+      $("#trRows").innerHTML = '<tr><td colspan="6">' + empty(e.message) + "</td></tr>";
+    }
+  }
+
+  async function renderFeedPage(v, spec) {
+    v.innerHTML = '<section class="grid kpis" id="feedKpis"></section><article class="card" style="padding:0"><header style="padding:16px 18px 0"><h2>' + esc(spec.hits) + '</h2></header><div class="table-wrap"><table><thead><tr><th>time</th><th>decision</th><th>score</th><th>direction</th><th>from</th><th>to</th><th>source</th><th>signer</th><th>shaken</th><th>reasons</th></tr></thead><tbody id="feedRows"><tr><td colspan="10" class="muted">Loading</td></tr></tbody></table></div></article>';
+    try {
+      const [status, events] = await Promise.all([
+        get("/v1/status"),
+        get("/v1/events?" + new URLSearchParams({ range: state.range, limit: "50", q: spec.reason }).toString()),
+      ]);
+      const block = status[spec.key] || {};
+      const bits = spec.kpis(block);
+      $("#feedKpis").innerHTML = bits.map(([k, val]) => '<article class="card kpi"><label>' + esc(k) + "</label><b>" + esc(val) + "</b></article>").join("");
+      const rows = events.data || [];
+      $("#feedRows").innerHTML = rows.length ? rows.map((ev) => trafficRow(ev, false)).join("") : '<tr><td colspan="10">' + empty("No matching calls in " + rangeLabel(state.range) + ".") + "</td></tr>";
+      $("#feedRows").onclick = (e) => {
+        const tr = e.target.closest("tr[data-id]");
+        if (tr) openEvent(tr.dataset.id);
+      };
+    } catch (e) {
+      $("#feedRows").innerHTML = '<tr><td colspan="10">' + empty(e.message) + "</td></tr>";
+    }
+  }
+
+  function renderBlocklist(v) {
+    return renderFeedPage(v, {
+      key: "spam_feed", reason: "spam_feed_hit", hits: "Calls blocked from the feed",
+      kpis: (b) => [["numbers loaded", fmtN(b.count || 0)], ["loaded", b.loaded_at ? timeAgo(b.loaded_at) : "never"], ["status", b.configured ? (b.error || "on") : "off"]],
+    });
+  }
+  function renderScoring(v) {
+    return renderFeedPage(v, {
+      key: "voice_firewall", reason: "voice_firewall_spam", hits: "INVITEs the live check marked",
+      kpis: (b) => [["live check", b.configured ? "on" : "off"]],
+    });
+  }
+  function renderIPIntel(v) {
+    return renderFeedPage(v, {
+      key: "ip_intel", reason: "ip_intel", hits: "Calls from listed addresses",
+      kpis: (b) => [["addresses loaded", fmtN(b.count || 0)], ["loaded", b.loaded_at ? timeAgo(b.loaded_at) : "never"], ["status", b.configured ? (b.error || "on") : "off"]],
+    });
+  }
+  function renderNumberCheck(v) { return openAddon(v, "number-check"); }
+  function renderAIVoice(v) { return openAddon(v, "ai-voice"); }
+
+  async function openAddon(v, slug) {
     let catalog;
-    let status = {};
     try {
       catalog = await get("/v1/plugins");
     } catch (e) {
       v.innerHTML = '<div class="card">' + esc(e.message) + "</div>";
       return;
     }
-    try {
-      status = await get("/v1/status");
-    } catch (e) { /* the shelf still renders without install status */ }
     const items = (catalog && catalog.plugins) || [];
     const available = (catalog && catalog.available) || [];
     const views = items.filter((p) => p.surface === "native" || p.surface === "iframe");
-    if (!slug) {
-      const open = views.map((p) => pluginCard(p, "open")).join("") + items.filter((p) => p.kind === "bridge").map((p) => pluginCard(p, "open")).join("");
-      const running = items.filter((p) => p.kind === "feed" || p.kind === "live").map((p) => pluginCard(p, "on")).join("");
-      const shelf = available.map((p) => pluginCard(p, "available")).join("");
-      const products = productCards(status);
-      v.innerHTML = pluginSection("On this install", open + running) + pluginSection("Available", shelf) + pluginSection("CallerAPI", products);
-      return;
-    }
     const bridge = items.find((p) => p.slug === slug && p.kind === "bridge");
     if (bridge) {
       $("#viewTitle").textContent = bridge.title || bridge.slug;
@@ -1324,9 +1394,7 @@
   }
 
   async function refreshPlugin(slug) {
-    if (state.view !== "plugins") return;
-    const current = new URLSearchParams((location.hash.split("?")[1] || "")).get("slug") || "";
-    if (current !== slug) return;
+    if (addonSlug() !== slug) return;
     const editing = $("#pluginSchedule");
     if (editing && editing.dataset.dirty === "1") return;
     const importing = $("#pluginImport");
@@ -1355,10 +1423,8 @@
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       state.q = e.target.value.trim();
-      if (state.view === "plugins") {
-        const slug = new URLSearchParams((location.hash.split("?")[1] || "")).get("slug") || "";
-        location.hash = "#plugins?slug=" + encodeURIComponent(slug) + (state.q ? "&q=" + encodeURIComponent(state.q) : "");
-      } else if (state.view === "numbers") loadNumbers();
+      if (state.view === "numbercheck" || state.view === "transcripts" || state.view === "blocklist" || state.view === "scoring" || state.view === "ipintel") render();
+      else if (state.view === "numbers") loadNumbers();
       else if (state.view !== "traffic") location.hash = "#traffic?q=" + encodeURIComponent(state.q);
       else loadTraffic(true);
     }, 250);
