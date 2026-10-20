@@ -25,8 +25,8 @@ func TestReadTranscript(t *testing.T) {
 func TestTranscriptAttachesByCallID(t *testing.T) {
 	srv, _ := newTestServer(t)
 	screenJSON(t, srv, map[string]any{
-		"switch": "connexcs", "direction": "outbound", "method": "INVITE",
-		"request_uri": "sip:+14155550100@connexcs.invalid", "source_ip": "203.0.113.9",
+		"switch": "class4", "direction": "outbound", "method": "INVITE",
+		"request_uri": "sip:+14155550100@switch.invalid", "source_ip": "203.0.113.9",
 		"headers": map[string]string{
 			"From": "<sip:+13125550199@203.0.113.9>;tag=1", "To": "<sip:+14155550100@x>",
 			"Call-ID": "cx-call-9", "User-Agent": "dialer",

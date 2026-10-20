@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -28,9 +30,6 @@ type Config struct {
 	FleetURL          string
 	FleetToken        string
 	FleetInterval     time.Duration
-	Plugins           bool
-	PluginRefresh     time.Duration
-	PluginBudget      time.Duration
 	DashboardUser     string
 	DashboardPassword string
 	DBPath            string
@@ -147,6 +146,47 @@ type Config struct {
 	SIPPeers        string
 	SIPRedirectHost string
 	SIPTimeout      time.Duration
+	// SIPMode is redirect or bridge. Redirect answers 302 to continue and
+	// 603 to drop, and never sees audio. Bridge answers 503 before answer
+	// so the switch moves to the next vendor, and bridges the calls worth
+	// hearing back to the switch with the audio relayed and recorded.
+	SIPMode string
+
+	// Bridge media. Read only in bridge mode.
+	//
+	// MediaIP is the address Falcon puts in SDP. Empty uses the local
+	// address the switch reached. RTPPortMin and RTPPortMax bound the UDP
+	// ports for audio: each bridged call takes four.
+	MediaIP    string
+	RTPPortMin int
+	RTPPortMax int
+	// BridgeMaxCalls caps concurrent bridged calls. Past it, a call that
+	// would be bridged gets 503 and the switch moves on.
+	BridgeMaxCalls int
+	// BridgeMaxDuration ends a bridged call that is still up after it.
+	// RTPTimeout ends a bridged call when neither side sends audio.
+	BridgeMaxDuration time.Duration
+	RTPTimeout        time.Duration
+	// BridgeFanoutEvery bridges one in N calls that only flag for
+	// caller_fanout. BridgeCleanEvery bridges one in N clean calls so the
+	// FAS guard hears normal routes too. Zero turns either off.
+	BridgeFanoutEvery int
+	BridgeCleanEvery  int
+	// RecordingsDir holds the call recordings. Empty is a recordings
+	// folder next to the database. RecordMaxSeconds caps one recording.
+	// RecordingRetentionDays is the default window, editable at runtime.
+	RecordingsDir          string
+	RecordMaxSeconds       int
+	RecordingRetentionDays int
+
+	// FASMode is off, monitor, or enforce. Monitor records false answer
+	// supervision on bridged calls and alerts. Enforce also holds the
+	// answer until a person speaks. FASHold is how long a silent answer
+	// is held before Falcon passes it on. FASMaxRingback is how long fake
+	// ringback after an answer is tolerated before the call fails back.
+	FASMode        string
+	FASHold        time.Duration
+	FASMaxRingback time.Duration
 
 	UpsellFeedURL     string
 	UpsellFirewallURL string
@@ -174,6 +214,13 @@ const (
 
 	ModeEnforce = "enforce"
 	ModeMonitor = "monitor"
+
+	SIPRedirect = "redirect"
+	SIPBridge   = "bridge"
+
+	FASOff     = "off"
+	FASMonitor = "monitor"
+	FASEnforce = "enforce"
 )
 
 func Load() Config {
@@ -197,9 +244,6 @@ func Load() Config {
 		FleetURL:          strings.TrimRight(env("FALCON_FLEET_URL", ""), "/"),
 		FleetToken:        env("FALCON_FLEET_TOKEN", ""),
 		FleetInterval:     envDuration("FALCON_FLEET_INTERVAL", 30*time.Second),
-		Plugins:           envBool("FALCON_PLUGINS", true),
-		PluginRefresh:     envDuration("FALCON_PLUGIN_REFRESH", time.Minute),
-		PluginBudget:      envDuration("FALCON_PLUGIN_BUDGET", 400*time.Millisecond),
 		DashboardUser:     env("FALCON_DASHBOARD_USER", "admin"),
 		DashboardPassword: env("FALCON_DASHBOARD_PASSWORD", ""),
 		DBPath:            env("FALCON_DB_PATH", "./data/falcon.db"),
@@ -279,9 +323,26 @@ func Load() Config {
 		SIPPeers:        env("FALCON_SIP_PEERS", ""),
 		SIPRedirectHost: env("FALCON_SIP_REDIRECT_HOST", ""),
 		SIPTimeout:      envDuration("FALCON_SIP_TIMEOUT", 2*time.Second),
+		SIPMode:         strings.ToLower(env("FALCON_SIP_MODE", SIPRedirect)),
+
+		MediaIP:                env("FALCON_MEDIA_IP", ""),
+		RTPPortMin:             envInt("FALCON_RTP_PORT_MIN", 20000),
+		RTPPortMax:             envInt("FALCON_RTP_PORT_MAX", 29999),
+		BridgeMaxCalls:         envInt("FALCON_BRIDGE_MAX_CALLS", 1000),
+		BridgeMaxDuration:      envDuration("FALCON_BRIDGE_MAX_DURATION", 4*time.Hour),
+		RTPTimeout:             envDuration("FALCON_RTP_TIMEOUT", 30*time.Second),
+		BridgeFanoutEvery:      envInt("FALCON_BRIDGE_FANOUT_EVERY", 20),
+		BridgeCleanEvery:       envInt("FALCON_BRIDGE_CLEAN_EVERY", 0),
+		RecordingsDir:          env("FALCON_RECORDINGS_DIR", ""),
+		RecordMaxSeconds:       envInt("FALCON_RECORD_MAX_SECONDS", 1800),
+		RecordingRetentionDays: envInt("FALCON_RECORDING_RETENTION_DAYS", 7),
+
+		FASMode:        strings.ToLower(env("FALCON_FAS_MODE", FASMonitor)),
+		FASHold:        envDuration("FALCON_FAS_HOLD", 2*time.Second),
+		FASMaxRingback: envDuration("FALCON_FAS_MAX_RINGBACK", 60*time.Second),
 
 		UpsellFeedURL:     env("FALCON_UPSELL_FEED_URL", "https://callerapi.com"),
-		UpsellFirewallURL: env("FALCON_UPSELL_FIREWALL_URL", "https://callerapi.com/sip-firewall"),
+		UpsellFirewallURL: env("FALCON_UPSELL_FIREWALL_URL", "https://callerapi.com/voice-firewall"),
 
 		Demo:        envBool("FALCON_DEMO", false),
 		DemoDir:     env("FALCON_DEMO_DIR", ""),
@@ -338,6 +399,43 @@ func (c Config) SIPListensOnLoopback() bool {
 	return addrIsLoopback(c.SIPListen)
 }
 
+// BridgeEnabled reports whether the SIP listener bridges calls with media.
+func (c Config) BridgeEnabled() bool {
+	return c.SIPEnabled() && c.SIPMode == SIPBridge
+}
+
+// RecordingsPath is where call recordings are written.
+func (c Config) RecordingsPath() string {
+	if strings.TrimSpace(c.RecordingsDir) != "" {
+		return c.RecordingsDir
+	}
+	return filepath.Join(filepath.Dir(c.DBPath), "recordings")
+}
+
+// Validate reports the first setting that cannot work.
+func (c Config) Validate() error {
+	if c.Mode != ModeEnforce && c.Mode != ModeMonitor {
+		return fmt.Errorf("FALCON_MODE must be enforce or monitor, got %q", c.Mode)
+	}
+	if c.SIPMode != SIPRedirect && c.SIPMode != SIPBridge {
+		return fmt.Errorf("FALCON_SIP_MODE must be redirect or bridge, got %q", c.SIPMode)
+	}
+	switch c.FASMode {
+	case FASOff, FASMonitor, FASEnforce:
+	default:
+		return fmt.Errorf("FALCON_FAS_MODE must be off, monitor, or enforce, got %q", c.FASMode)
+	}
+	if c.BridgeEnabled() {
+		if c.RTPPortMin < 1024 || c.RTPPortMax > 65534 || c.RTPPortMax-c.RTPPortMin < 8 {
+			return fmt.Errorf("FALCON_RTP_PORT_MIN and FALCON_RTP_PORT_MAX must span at least 8 ports between 1024 and 65534")
+		}
+		if c.MediaIP != "" && net.ParseIP(c.MediaIP) == nil {
+			return fmt.Errorf("FALCON_MEDIA_IP must be an IP address, got %q", c.MediaIP)
+		}
+	}
+	return nil
+}
+
 func addrIsLoopback(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -367,7 +465,6 @@ func (c Config) Redacted() map[string]any {
 		"mode":               c.Mode,
 		"update_check":       c.UpdateCheck,
 		"fleet":              map[string]any{"hub": c.FleetHub, "url": c.FleetURL, "token": set(c.FleetToken), "interval": c.FleetInterval.String()},
-		"plugins":            map[string]any{"enabled": c.Plugins && c.CallerAPIKey != "", "refresh": c.PluginRefresh.String(), "budget": c.PluginBudget.String()},
 		"dashboard_user":     c.DashboardUser,
 		"dashboard_password": set(c.DashboardPassword),
 		"db_path":            c.DBPath,
@@ -386,7 +483,11 @@ func (c Config) Redacted() map[string]any {
 		"raw_sip":        map[string]any{"stored": c.StoreRawSIP, "retention_days": c.RawSIPRetentionDays},
 		"allow_open":     c.AllowOpen,
 		"max_body_bytes": c.MaxBody,
-		"sip":            map[string]any{"enabled": c.SIPEnabled(), "listen": c.SIPListen, "peers": c.SIPPeers, "redirect_host": c.SIPRedirectHost, "timeout": c.SIPTimeout.String()},
+		"sip":            map[string]any{"enabled": c.SIPEnabled(), "mode": c.SIPMode, "listen": c.SIPListen, "peers": c.SIPPeers, "redirect_host": c.SIPRedirectHost, "timeout": c.SIPTimeout.String()},
+		"bridge": map[string]any{"enabled": c.BridgeEnabled(), "media_ip": c.MediaIP, "rtp_ports": fmt.Sprintf("%d-%d", c.RTPPortMin, c.RTPPortMax),
+			"max_calls": c.BridgeMaxCalls, "max_duration": c.BridgeMaxDuration.String(), "rtp_timeout": c.RTPTimeout.String(),
+			"fanout_every": c.BridgeFanoutEvery, "clean_every": c.BridgeCleanEvery, "recordings": c.RecordingsPath(), "record_max_seconds": c.RecordMaxSeconds},
+		"fas": map[string]any{"mode": c.FASMode, "hold": c.FASHold.String(), "max_ringback": c.FASMaxRingback.String()},
 	}
 }
 

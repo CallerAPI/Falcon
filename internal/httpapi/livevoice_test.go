@@ -38,8 +38,8 @@ func TestLiveVerdictFlow(t *testing.T) {
 	// The INVITE Falcon screened for this call, an outbound call from a
 	// known customer.
 	res := screenJSON(t, srv, map[string]any{
-		"switch": "connexcs", "direction": "outbound", "customer": "acme", "method": "INVITE",
-		"request_uri": "sip:+14155550100@connexcs.invalid", "source_ip": "203.0.113.9",
+		"switch": "class4", "direction": "outbound", "customer": "acme", "method": "INVITE",
+		"request_uri": "sip:+14155550100@switch.invalid", "source_ip": "203.0.113.9",
 		"headers": map[string]string{"From": "<sip:+13125550199@203.0.113.9>;tag=1", "To": "<sip:+14155550100@x>", "Call-ID": "live-1", "User-Agent": "dialer"},
 	})
 	if res.Action != score.ActionAllow {
@@ -117,8 +117,8 @@ func TestLiveVerdictFlow(t *testing.T) {
 	}
 	// Same customer again within the hour: the page is deduplicated.
 	screenJSON(t, srv, map[string]any{
-		"switch": "connexcs", "direction": "outbound", "customer": "acme", "method": "INVITE",
-		"request_uri": "sip:+14155550101@connexcs.invalid", "source_ip": "203.0.113.9",
+		"switch": "class4", "direction": "outbound", "customer": "acme", "method": "INVITE",
+		"request_uri": "sip:+14155550101@switch.invalid", "source_ip": "203.0.113.9",
 		"headers": map[string]string{"From": "<sip:+13125550198@203.0.113.9>;tag=1", "To": "<sip:+14155550101@x>", "Call-ID": "live-2", "User-Agent": "dialer"},
 	})
 	w = signedPost(t, srv, "acct-key", map[string]any{"type": "verdict", "session_id": "s2", "call_id": "live-2", "from": "+13125550198",

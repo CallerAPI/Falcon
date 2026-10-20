@@ -4,6 +4,62 @@
 
 Added
 
+- Call bridge. `FALCON_SIP_MODE=bridge` makes the SIP listener a native
+  back-to-back user agent. Add Falcon to the switch as a carrier and as a
+  customer. A clean call gets 503 before any answer, so the switch routes
+  it to the next vendor. A challenge, or a reject in monitor mode, is
+  carried back to the switch with its audio. No Asterisk is needed.
+- The bridge does not create FAS. It never answers the caller before the
+  far end answers. A hangup on either side ends both legs. A cancel goes
+  through. Silent calls end after `FALCON_RTP_TIMEOUT`. Shutdown hangs up
+  every carried call.
+- Vendor routes. A tech prefix names a vendor. Falcon strips it and sends
+  the call back to the switch or to the vendor. Threats, Vendors shows the
+  answers and the false answers per vendor.
+- FAS guard. Falcon hears ringback, busy, intercept tones, and dead air
+  after a vendor answers a bridged call. `monitor` (default) records and
+  alerts. `enforce` holds the answer until a person speaks and fails a
+  false answer back to the switch with 480.
+- Recordings. Each bridged call is a stereo WAV, the caller on the left and
+  the callee on the right. The call view plays it with the transcript.
+- Transcripts split by speaker. Both voice providers transcribe each
+  channel and put the turns on one timeline.
+- A new dashboard with five pages: Overview, Calls, Threats, Rules, and
+  Settings. The Overview shows the protection state, calls screened,
+  blocked, flagged, the latency Falcon adds, and the items that need a
+  decision, each with the one action that settles it.
+- `GET /v1/overview`, `POST /v1/insights/dismiss`, `GET /v1/recordings/{id}.wav`,
+  `GET /v1/vendors`, `/v1/routes`, `GET /v1/modules`, and `/v1/numbercheck/*`.
+- Event filters `verdict`, `recorded`, `fas`, and `bridged`. Events carry
+  `latency_us` and `held`.
+- Protection mode and the FAS mode are runtime settings. No restart.
+- The adapter e2e runs the bridge binary: 603 for a denied caller, 503 for
+  a clean one.
+
+Changed
+
+- Telemetry follows `FALCON_SHARE` only. The dashboard shows the state and
+  cannot change it. Demo mode never shares.
+- Add-ons are built in. Number check, live reputation, the spam list, the
+  IP fraud list, Business Caller ID, the bridge, the FAS guard, and AI voice
+  are listed in Settings with the variable that turns each on.
+- Suspects rank numbers with the most flagged calls first. A number Falcon
+  already rejects on every call is no longer suggested for a block.
+- The demo inserts its calls in time order and uses only the reason codes
+  the engine emits.
+
+Removed
+
+- The plugin catalog, the plugin SDK, and `FALCON_PLUGINS`,
+  `FALCON_PLUGIN_REFRESH`, and `FALCON_PLUGIN_BUDGET`. Falcon does not load
+  or run code from a catalog.
+- The ConnexCS adapters, their harness, and their docs.
+- The telemetry checkbox in the dashboard.
+
+## 0.9.x patches
+
+Added
+
 - A bridge plugin is catalog data that names a core API. Falcon does not
   run plugin code. Secrets stay on the host. A new plugin that uses an
   existing core API does not need a Falcon release.

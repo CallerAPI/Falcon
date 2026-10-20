@@ -31,13 +31,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends lua5.4 curl python3
-      # SIP redirect listener, Asterisk AGI, FreeSWITCH Lua (real mod_curl
-      # argument rules), and the ConnexCS ScriptForge app against a live
-      # Falcon with a token.
+      # SIP redirect listener, SIP bridge, Asterisk AGI, and FreeSWITCH Lua
+      # (real mod_curl argument rules) against a live Falcon with a token.
       - run: bash adapters/e2e/run.sh
 
   kamailio:

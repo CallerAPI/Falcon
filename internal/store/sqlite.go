@@ -96,7 +96,8 @@ func (s *SQLite) ReplaceFile(src, dest string) error {
 const eventColumns = `id, received_at, action, risk_score, source_ip, from_num, to_num, call_id, user_agent, attest,
   reasons, %s, switch, exported, COALESCE(provider, ''), COALESCE(verstat, ''), COALESCE(signer_spc, ''),
   COALESCE(signer_name, ''), COALESCE(shaken, ''), COALESCE(fingerprint, ''), COALESCE(direction, ''), COALESCE(customer, ''),
-  answered, duration_s, COALESCE(hangup_cause, ''), COALESCE(honeypot, 0), COALESCE(sampled, 0), COALESCE(peer, '')`
+  answered, duration_s, COALESCE(hangup_cause, ''), COALESCE(honeypot, 0), COALESCE(sampled, 0), COALESCE(peer, ''),
+  COALESCE(latency_us, 0), COALESCE(held, 0)`
 
 func selectEvents(withRaw bool) string {
 	raw := "''"
@@ -212,10 +213,23 @@ CREATE INDEX IF NOT EXISTS voice_samples_event ON voice_samples(event_id);
 		{"sampled", "INTEGER NOT NULL DEFAULT 0"},
 		{"peer", "TEXT"},
 		{"fleet_sent", "INTEGER NOT NULL DEFAULT 0"},
+		{"latency_us", "INTEGER NOT NULL DEFAULT 0"},
+		{"held", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.addColumnIfMissing("events", col.name, col.typ); err != nil {
 			return err
 		}
+	}
+	for _, col := range []struct{ name, typ string }{
+		{"audio_path", "TEXT"},
+		{"turns", "TEXT"},
+	} {
+		if err := s.addColumnIfMissing("voice_samples", col.name, col.typ); err != nil {
+			return err
+		}
+	}
+	if err := s.migrateMedia(); err != nil {
+		return err
 	}
 	// Older rows get a unix time from the ISO text once.
 	if _, err := s.db.Exec(`UPDATE events SET received_unix = CAST(strftime('%s', substr(received_at, 1, 19)) AS INTEGER) WHERE received_unix IS NULL`); err != nil {
@@ -270,8 +284,9 @@ func (s *SQLite) Insert(ctx context.Context, ev Event) (int64, error) {
 	}
 	res, err := s.db.ExecContext(ctx, `
 INSERT INTO events (received_at, received_unix, action, risk_score, source_ip, from_num, to_num, call_id, user_agent, attest,
-  reasons, raw_sip, switch, exported, provider, verstat, signer_spc, signer_name, shaken, fingerprint, direction, customer, honeypot, sampled)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  reasons, raw_sip, switch, exported, provider, verstat, signer_spc, signer_name, shaken, fingerprint, direction, customer, honeypot, sampled,
+  latency_us, held)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ev.ReceivedAt.UTC().Format(time.RFC3339Nano),
 		ev.ReceivedAt.UTC().Unix(),
 		string(ev.Action),
@@ -295,6 +310,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		ev.Customer,
 		boolInt(ev.Honeypot),
 		boolInt(ev.Sampled),
+		ev.LatencyUS,
+		boolInt(ev.Held),
 	)
 	if err != nil {
 		return 0, err
@@ -343,6 +360,25 @@ func whereFor(f Filter) ([]string, []any) {
 	if f.Action != "" {
 		where = append(where, "action = ?")
 		args = append(args, f.Action)
+	}
+	switch f.Verdict {
+	case VerdictBlocked:
+		where = append(where, "action = 'reject'")
+	case VerdictFlagged:
+		where = append(where, "action IN ('flag', 'challenge')")
+	case VerdictAllowed:
+		where = append(where, "action = 'allow'")
+	case VerdictStopped:
+		where = append(where, "action <> 'allow'")
+	}
+	if f.Recorded {
+		where = append(where, "EXISTS (SELECT 1 FROM voice_samples vs WHERE (vs.event_id = events.id OR (vs.call_id != '' AND vs.call_id = events.call_id)) AND (COALESCE(vs.audio_path, '') != '' OR COALESCE(vs.transcript, '') != ''))")
+	}
+	if f.FAS {
+		where = append(where, "EXISTS (SELECT 1 FROM media_calls mc WHERE mc.call_id = events.call_id AND COALESCE(mc.fas, '') != '')")
+	}
+	if f.Bridged {
+		where = append(where, "EXISTS (SELECT 1 FROM media_calls mc WHERE mc.call_id = events.call_id)")
 	}
 	if f.Verstat != "" {
 		where = append(where, "verstat = ?")
@@ -671,7 +707,7 @@ GROUP BY from_num
 HAVING SUM(CASE WHEN action IN ('flag', 'challenge', 'reject') THEN 1 ELSE 0 END) > 0
   OR MAX(risk_score) >= 40
   OR COUNT(DISTINCT to_num) >= 8
-ORDER BY MAX(risk_score) DESC, COUNT(DISTINCT to_num) DESC
+ORDER BY SUM(CASE WHEN action = 'flag' OR action = 'challenge' THEN 1 ELSE 0 END) DESC, MAX(risk_score) DESC, COUNT(DISTINCT to_num) DESC
 LIMIT ?`
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -697,6 +733,9 @@ LIMIT ?`
 		return nil, err
 	}
 	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Held != out[j].Held {
+			return out[i].Held > out[j].Held
+		}
 		if out[i].MaxScore != out[j].MaxScore {
 			return out[i].MaxScore > out[j].MaxScore
 		}
@@ -798,7 +837,14 @@ func (s *SQLite) Unexported(ctx context.Context, limit int) ([]Event, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, selectEvents(true)+` WHERE exported = 0 ORDER BY id ASC LIMIT ?`, limit)
+	// A call the bridge still carries waits, so its row leaves with the
+	// outcome, the FAS verdict, and, three minutes after a recorded call
+	// ends, the voice verdict.
+	nowMS := time.Now().UnixMilli()
+	rows, err := s.db.QueryContext(ctx, selectEvents(true)+` WHERE exported = 0
+ AND NOT EXISTS (SELECT 1 FROM media_calls mc WHERE mc.call_id = events.call_id AND events.call_id != ''
+  AND ((mc.end_ms = 0 AND mc.started_unix > ?) OR (COALESCE(mc.recording, '') != '' AND mc.started_unix + mc.end_ms > ?)))
+ ORDER BY id ASC LIMIT ?`, nowMS-int64(4*time.Hour/time.Millisecond), nowMS-180000, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1117,17 +1163,19 @@ type rowScanner interface {
 func scanEvent(row rowScanner) (Event, error) {
 	var ev Event
 	var received, action, reasons, raw, shaken string
-	var exported, honeypot, sampled int
+	var exported, honeypot, sampled, held int
 	var answered, duration sql.NullInt64
 	err := row.Scan(
 		&ev.ID, &received, &action, &ev.RiskScore, &ev.SourceIP, &ev.From, &ev.To,
 		&ev.CallID, &ev.UserAgent, &ev.Attest, &reasons, &raw, &ev.Switch, &exported,
 		&ev.Provider, &ev.Verstat, &ev.SignerSPC, &ev.SignerName, &shaken, &ev.Fingerprint, &ev.Direction, &ev.Customer,
 		&answered, &duration, &ev.HangupCause, &honeypot, &sampled, &ev.Peer,
+		&ev.LatencyUS, &held,
 	)
 	if err != nil {
 		return ev, err
 	}
+	ev.Held = held == 1
 	if answered.Valid {
 		b := answered.Int64 == 1
 		ev.Answered = &b

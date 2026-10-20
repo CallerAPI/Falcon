@@ -8,3 +8,5 @@
 monitoring/.env
 monitoring/prometheus/token
 .DS_Store
+examples/demo/recordings/
+recordings/

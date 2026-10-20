@@ -38,7 +38,7 @@ func newTestServer(t *testing.T) (*Server, *store.SQLite) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	srv := &Server{
-		Cfg:       config.Config{FailOpen: true, Token: "secret", RetentionDays: 30, StoreRawSIP: true},
+		Cfg:       config.Config{FailOpen: true, Token: "secret", RetentionDays: 30, StoreRawSIP: true, RecordingsDir: t.TempDir()},
 		Engine:    score.NewEngine(score.Thresholds{Flag: 40, Challenge: 60, Reject: 80}, score.Limits{Window: time.Minute, IP: 30, From: 20, Scan: 15}),
 		Store:     db,
 		InstallID: "test",
@@ -450,10 +450,10 @@ func TestScreenRecordsSwitchSigning(t *testing.T) {
 	srv.Verifier = testVerifier(trust)
 
 	w := do(t, srv, http.MethodPost, "/v1/screen", map[string]any{
-		"switch": "connexcs", "direction": "outbound", "customer": "4242", "method": "INVITE",
-		"request_uri": "sip:14155550100@connexcs.invalid", "source_ip": "203.0.113.9", "source_port": 5070,
+		"switch": "class4", "direction": "outbound", "customer": "4242", "method": "INVITE",
+		"request_uri": "sip:14155550100@switch.invalid", "source_ip": "203.0.113.9", "source_port": 5070,
 		"headers": map[string]string{
-			"From": "<sip:13125550188@203.0.113.9>;tag=cx", "To": "<sip:14155550100@connexcs.invalid>",
+			"From": "<sip:13125550188@203.0.113.9>;tag=cx", "To": "<sip:14155550100@switch.invalid>",
 			"Call-ID": "cx-sign-1", "User-Agent": "Acme SBC/3.6",
 		},
 		"signing": map[string]string{"attest": "a", "origid": "00000000-0000-4000-8000-000000000001", "x5u": x5u},

@@ -1,115 +1,185 @@
-/* Falcon dashboard. Vanilla JS, no build step, one file. */
+/* Falcon dashboard. Vanilla JS, no build step, no network beyond this host.
+   Each view builds its frame once and then patches only the regions whose
+   content changed, so a refresh never blanks the page. The last answers
+   are kept for the session, so a reload paints at once. */
 (function () {
   "use strict";
 
-  // ---------- state ----------
-  const qsToken = new URLSearchParams(location.search).get("token");
-  if (qsToken) localStorage.setItem("falcon_token", qsToken);
+  // ---------- auth and API ----------
+  const boot = new URLSearchParams(location.search);
+  if (boot.get("token")) {
+    localStorage.setItem("falcon_token", boot.get("token"));
+    boot.delete("token");
+    const rest = boot.toString();
+    history.replaceState(null, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
+  }
   const token = localStorage.getItem("falcon_token") || "";
-
-  const state = {
-    view: "overview",
-    range: localStorage.getItem("falcon_range") || "24h",
-    live: false,
-    q: "",
-    traffic: { action: "", verstat: "", direction: "", rows: [], next: 0, loading: false },
-    numbers: { direction: "" },
-    drawer: { ev: null, tab: "summary" },
-    status: null,
-    sse: null,
-    timers: [],
-  };
-
-  // ---------- helpers ----------
-  const $ = (sel, root) => (root || document).querySelector(sel);
-  const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
-  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  const fmtN = (n) => (n == null ? "0" : Number(n).toLocaleString());
-  const pct = (a, b) => (b ? Math.round((a / b) * 1000) / 10 : 0);
-  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  const withToken = (url) => (token ? url + (url.indexOf("?") >= 0 ? "&" : "?") + "token=" + encodeURIComponent(token) : url);
 
   function headers(extra) {
-    const h = Object.assign({ Accept: "application/json" }, extra || {});
+    const h = Object.assign({ Accept: "application/json", "X-Falcon-Request": "1" }, extra || {});
     if (token) h["X-Falcon-Token"] = token;
     return h;
   }
   async function api(path, opts) {
-    const res = await fetch(path, Object.assign({ headers: headers(opts && opts.body ? { "Content-Type": "application/json" } : {}) }, opts || {}));
-    if (!res.ok) {
-      let msg = res.status + " " + res.statusText;
-      try { const j = await res.json(); if (j.error) msg = j.error; } catch (e) { /* ignore */ }
-      throw new Error(msg);
-    }
-    return res.json();
+    opts = opts || {};
+    const init = { method: opts.method || "GET", headers: headers(opts.body !== undefined ? { "Content-Type": "application/json" } : {}) };
+    if (opts.body !== undefined) init.body = typeof opts.body === "string" ? opts.body : JSON.stringify(opts.body);
+    const res = await fetch(path, init);
+    const raw = await res.text();
+    let data = null;
+    if (raw) { try { data = JSON.parse(raw); } catch (e) { data = raw; } }
+    if (!res.ok) throw new Error((data && data.error) || res.status + " " + res.statusText);
+    return data;
   }
   const get = (p) => api(p);
-  const post = (p, body) => api(p, { method: "POST", body: JSON.stringify(body) });
-  const put = (p, body) => api(p, { method: "PUT", body: JSON.stringify(body) });
+  const post = (p, b) => api(p, { method: "POST", body: b || {} });
+  const put = (p, b) => api(p, { method: "PUT", body: b || {} });
   const del = (p) => api(p, { method: "DELETE" });
+
+  // ---------- session cache ----------
+  const CACHE = "falcon_cache_v2";
+  const cache = (function () { try { return JSON.parse(sessionStorage.getItem(CACHE) || "{}"); } catch (e) { return {}; } })();
+  let persistTimer = 0;
+  function remember(key, data) {
+    cache[key] = data;
+    clearTimeout(persistTimer);
+    persistTimer = setTimeout(function () {
+      try { sessionStorage.setItem(CACHE, JSON.stringify(cache)); } catch (e) { /* storage full: keep memory only */ }
+    }, 300);
+  }
+
+  // ---------- DOM helpers ----------
+  const $ = (s, r) => (r || document).querySelector(s);
+  const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  function patch(el, html) { if (el && el.__html !== html) { el.innerHTML = html; el.__html = html; } }
+  function setText(el, t) { if (el && el.textContent !== t) el.textContent = t; }
+
+  const nf = new Intl.NumberFormat();
+  const fmtN = (n) => nf.format(Math.round(n || 0));
+  function fmtMs(ms) {
+    if (!ms) return "0";
+    if (ms < 10) return ms.toFixed(1);
+    return String(Math.round(ms));
+  }
+  function ago(iso) {
+    if (!iso) return "never";
+    const d = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (d < 5) return "just now";
+    if (d < 60) return Math.round(d) + "s ago";
+    if (d < 3600) return Math.round(d / 60) + " min ago";
+    if (d < 86400) return Math.round(d / 3600) + " h ago";
+    return Math.round(d / 86400) + " days ago";
+  }
+  const pad = (n) => String(n).padStart(2, "0");
+  function clock(iso) { const d = new Date(iso); return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+  function dayClock(iso) {
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+  }
+  function when(iso) {
+    const d = new Date(iso);
+    const today = new Date();
+    if (d.toDateString() === today.toDateString()) return clock(iso);
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+  function mmss(s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ":" + pad(s % 60); }
+  function seconds(s) {
+    if (s >= 3600) return (s / 3600).toFixed(1) + " h";
+    if (s >= 120) return Math.round(s / 60) + " min";
+    return Math.round(s) + " s";
+  }
+  function rangeWords(r) { return { "1h": "the last hour", "24h": "the last 24 hours", "7d": "the last 7 days", "30d": "the last 30 days" }[r] || r; }
+
+  const PLAIN = {
+    spam_feed_hit: "On the CallerAPI spam list", voice_firewall_spam: "Live reputation says spam", bcid_spoofed: "Spoofed business number",
+    caller_id_not_owned: "Caller ID the customer does not own", ip_intel_block: "Telecom fraud network", ip_intel_hostile: "Hostile network",
+    ip_intel_suspicious: "Often abused network", caller_fanout: "Calls many different people", sequential_dialing: "Dials numbers in sequence",
+    caller_low_asr: "Few calls answered", caller_short_calls: "Very short calls", caller_hits_honeypots: "Calls your unassigned numbers",
+    honeypot_target: "Called an unassigned number", scanner_user_agent: "SIP scanner software", source_invite_flood: "Burst of calls from one source",
+    from_invite_flood: "Burst of calls from one number", source_dest_scan: "Scans many destinations", missing_identity: "No STIR/SHAKEN signature",
+    shaken_attest_c: "Attestation C", shaken_attest_b: "Attestation B", shaken_verify_failed: "Signature failed", shaken_invalid: "Malformed signature",
+    shaken_cert_revoked: "Revoked certificate", shaken_orig_mismatch: "Signed caller ID differs", shaken_unverifiable: "Signature not checkable",
+    network_signer: "Bad signer on the network", network_fingerprint: "Bad dialer on the network", premium_rate_dest: "Premium-rate destination",
+    invalid_from_number: "Invalid caller ID", synthetic_from: "Made-up caller ID", from_equals_to: "Caller ID equals the called number",
+    privacy_id_spoof: "Hidden caller ID", anonymous_from_no_pai: "Anonymous, no network identity", invite_no_sdp: "No audio offer",
+    from_pai_mismatch: "Caller ID differs from network identity", from_rpid_mismatch: "Caller ID differs from party ID",
+    contact_private_src_public: "Private address on a public call", sdp_zero_connection: "Audio offer has no address",
+    max_forwards_low: "Passed through many hops", via_hop_flood: "Unusual number of hops", missing_user_agent: "No software named",
+    missing_call_id: "No Call-ID", missing_from: "No caller", shaken_iat_stale: "Signature too old", shaken_iat_future: "Signature dated in the future",
+    voice_scam: "Recording sounds like a scam", fas_ringback: "False answer: ringback", fas_busy: "False answer: busy",
+    fas_sit: "False answer: intercept", fas_dead_air: "False answer: silence", fail_open: "Let through: unreadable",
+  };
+  function plain(code) {
+    if (PLAIN[code]) return PLAIN[code];
+    if (code.indexOf("denylist_") === 0) return "You blocked this " + code.slice(9).replace("spc", "signer").replace("ip", "address");
+    if (code.indexOf("allowlist_") === 0) return "You allowed this " + code.slice(10).replace("spc", "signer").replace("ip", "address");
+    if (code.indexOf("plugin_") === 0) return "A check you turned on";
+    return code.replace(/_/g, " ");
+  }
+  function headlineCode(reasons) {
+    const rs = (reasons || []).slice();
+    const ev = rs.find((r) => r.code === "voice_scam" || r.code.indexOf("fas_") === 0);
+    if (ev) return ev.code;
+    rs.sort((a, b) => (b.weight || 0) - (a.weight || 0));
+    return rs.length && (rs[0].weight > 0 || rs.length === 1) ? rs[0].code : "";
+  }
+  function headline(reasons) {
+    const code = headlineCode(reasons);
+    return code ? plain(code) : "";
+  }
+  function verdict(action, held) {
+    if (held && action === "reject") return { cls: "would", text: "Would block" };
+    if (action === "reject") return { cls: "blocked", text: "Blocked" };
+    if (action === "flag" || action === "challenge") return { cls: "flagged", text: "Flagged" };
+    return { cls: "allowed", text: "Allowed" };
+  }
+  const pill = (v) => '<span class="pill ' + v.cls + '">' + esc(v.text) + "</span>";
+  const sk = (w, h) => '<span class="sk" style="width:' + w + ";height:" + (h || 14) + 'px"></span>';
+  const skRows = (n) => Array.from({ length: n }, () => '<div class="row-item" style="cursor:default">' + sk("100%", 16) + "</div>").join("");
 
   function toast(msg, kind) {
     const el = document.createElement("div");
     el.className = "toast " + (kind || "");
     el.textContent = msg;
     $("#toasts").appendChild(el);
-    setTimeout(() => el.remove(), 3800);
+    setTimeout(() => el.remove(), 3600);
   }
 
-  function timeAgo(iso) {
-    if (!iso) return "";
-    const d = (Date.now() - new Date(iso).getTime()) / 1000;
-    if (d < 60) return Math.max(0, Math.round(d)) + "s ago";
-    if (d < 3600) return Math.round(d / 60) + "m ago";
-    if (d < 86400) return Math.round(d / 3600) + "h ago";
-    return Math.round(d / 86400) + "d ago";
-  }
-  function fmtTime(iso) {
-    if (!iso) return "";
-    const d = new Date(iso);
-    const pad = (n) => String(n).padStart(2, "0");
-    return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
-  }
-  function fmtDate(iso) {
-    if (!iso) return "";
-    const d = new Date(iso);
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + fmtTime(iso);
-  }
-  function rangeLabel(r) {
-    return { "15m": "last 15 minutes", "1h": "last hour", "6h": "last 6 hours", "24h": "last 24 hours", "7d": "last 7 days", "30d": "last 30 days" }[r] || r;
+  // ---------- shared state ----------
+  const state = {
+    range: ["1h", "24h", "7d", "30d"].indexOf(localStorage.getItem("falcon_range")) >= 0 ? localStorage.getItem("falcon_range") : "24h",
+    q: "",
+    status: cache.status || null,
+    view: null,
+    viewName: "",
+  };
+
+  async function loadStatus() {
+    try {
+      state.status = await get("/v1/status");
+      remember("status", state.status);
+      const a = state.status.assistant || {};
+      $("#askBtn").hidden = !a.provider || a.provider === "off";
+      setText($("#versionText"), "Falcon " + (state.status.version || ""));
+    } catch (e) { /* the health check reports it */ }
+    return state.status;
   }
 
-  const pill = (a) => '<span class="pill ' + esc(a) + '">' + esc(a) + "</span>";
-  function scoreCell(score, action) {
-    return '<span class="score ' + esc(action) + '"><span class="bar"><i style="width:' + clamp(score, 0, 100) + '%"></i></span><span class="mono num">' + esc(score) + "</span></span>";
-  }
-  function certDate(iso) {
-    return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
-  }
-  function errorsCard(sh) {
-    return sh.errors && sh.errors.length ? '<div class="card" style="border-color:rgba(239,68,68,0.35)"><h2 style="margin-bottom:6px">Errors</h2>' + sh.errors.map((e) => '<div class="small mono">' + esc(e) + "</div>").join("") + "</div>" : "";
-  }
-  function signerCard(sh) {
-    const s = sh.signer || {};
-    return '<div class="card"><h2 style="margin-bottom:8px">Signer</h2><dl class="kv"><dt>SPC</dt><dd>' + esc(s.spc || "—") + "</dd><dt>organization</dt><dd>" + esc(s.org || "—") + "</dd><dt>common name</dt><dd>" + esc(s.cn || "—") + "</dd><dt>issuer</dt><dd>" + esc(s.issuer || "—") + "</dd><dt>serial</dt><dd>" + esc(s.serial || "—") + "</dd><dt>valid</dt><dd>" + esc(s.not_before ? certDate(s.not_before) + " → " + certDate(s.not_after) : "—") + "</dd><dt>x5u</dt><dd>" + esc(sh.x5u || "—") + "</dd></dl></div>";
-  }
-  function verstatChip(v, attest, source) {
-    if (source === "switch") return '<span class="chip" title="The switch signs this call after Falcon screens it">switch signs' + (attest ? " · " + esc(attest) : "") + "</span>";
-    if (!v && !attest) return '<span class="chip dim">no shaken</span>';
-    let cls = "dim";
-    let label = v || "unverified";
-    if (v === "TN-Validation-Passed") { cls = "ok"; label = "verified"; }
-    else if (v === "TN-Validation-Failed") { cls = "bad"; label = "failed"; }
-    else if (v === "No-TN-Validation") { cls = "warn"; label = "no validation"; }
-    return '<span class="chip ' + cls + '">' + esc(label) + (attest ? " · " + esc(attest) : "") + "</span>";
-  }
-  function reasonChips(reasons, max) {
-    const rs = (reasons || []).filter((r) => r.weight > 0 || r.code === "voice_scam" || (reasons || []).length === 1);
-    const shown = rs.slice(0, max || 3).map((r) => '<span class="chip">' + esc(r.code) + "</span>").join("");
-    const more = rs.length > (max || 3) ? '<span class="chip dim">+' + (rs.length - (max || 3)) + "</span>" : "";
-    return shown + more;
-  }
-  function empty(text, cmd) {
-    return '<div class="empty">' + esc(text) + (cmd ? "<code>" + esc(cmd) + "</code>" : "") + "</div>";
+  // ---------- live stream ----------
+  const live = { subs: new Set(), es: null };
+  function liveOn(fn) { live.subs.add(fn); }
+  function liveOff(fn) { live.subs.delete(fn); }
+  function startLive() {
+    if (live.es) return;
+    const es = new EventSource(withToken("/v1/stream"));
+    es.addEventListener("screen", (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch (err) { return; }
+      live.subs.forEach((fn) => { try { fn(msg); } catch (err) { /* one bad view must not stop the others */ } });
+    });
+    live.es = es;
   }
 
   // ---------- charts ----------
@@ -117,1324 +187,989 @@
   tip.className = "tip";
   tip.hidden = true;
   document.body.appendChild(tip);
+  const COLORS = { blocked: "#ef4444", flagged: "#f59e0b", allowed: "#3b4256", grid: "#1f2330", text: "#5d6377" };
 
-  function setupCanvas(c) {
+  function drawBars(canvas, series, step) {
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width) return;
     const dpr = window.devicePixelRatio || 1;
-    const rect = c.getBoundingClientRect();
-    c.width = Math.max(1, Math.round(rect.width * dpr));
-    c.height = Math.max(1, Math.round(rect.height * dpr));
-    const ctx = c.getContext("2d");
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    const ctx = canvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    return { ctx, w: rect.width, h: rect.height };
-  }
-  const colors = { allow: "#34c26b", flag: "#e0a326", challenge: "#d97706", reject: "#ef4444", accent: "#6366f1", line: "#222836", muted: "#8a92a6" };
-
-  function drawStacked(c, series, stepSeconds) {
-    if (!c) return;
-    const { ctx, w, h } = setupCanvas(c);
+    const w = rect.width, h = rect.height, padB = 20, padT = 6;
     ctx.clearRect(0, 0, w, h);
-    const padL = 36, padR = 8, padT = 10, padB = 26;
     const n = series.length;
     if (!n) return;
     const max = Math.max(1, ...series.map((b) => b.count));
-    const innerW = w - padL - padR, innerH = h - padT - padB;
-    const bw = innerW / n;
-    ctx.strokeStyle = colors.line;
+    const innerH = h - padB - padT, bw = w / n;
+    ctx.strokeStyle = COLORS.grid;
     ctx.lineWidth = 1;
-    ctx.fillStyle = colors.muted;
-    ctx.font = "11px ui-monospace, Menlo, monospace";
-    ctx.textAlign = "right";
-    for (let g = 0; g <= 3; g++) {
-      const y = padT + innerH - (innerH * g) / 3;
-      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
-      ctx.fillText(fmtN(Math.round((max * g) / 3)), padL - 6, y + 4);
+    for (let g = 1; g <= 2; g++) {
+      const y = Math.round(padT + innerH - (innerH * g) / 2) + 0.5;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
     }
     const bars = [];
     series.forEach((b, i) => {
-      const x = padL + i * bw;
+      const x = i * bw + Math.max(1, bw * 0.14), bwi = Math.max(1, bw * 0.72);
       let y = padT + innerH;
-      const parts = [["allow", b.allow], ["flag", b.flag], ["challenge", b.challenge], ["reject", b.reject]];
-      parts.forEach(([k, v]) => {
+      [["allowed", b.allow], ["flagged", b.flag + b.challenge], ["blocked", b.reject]].forEach(([k, v]) => {
         if (!v) return;
-        const hh = (v / max) * innerH;
-        ctx.fillStyle = colors[k];
-        ctx.fillRect(x + Math.max(1, bw * 0.12), y - hh, Math.max(1, bw * 0.76), hh);
+        const hh = Math.max(1, (v / max) * innerH);
+        ctx.fillStyle = COLORS[k];
+        ctx.fillRect(x, y - hh, bwi, hh);
         y -= hh;
       });
-      bars.push({ x, x2: x + bw, b });
+      bars.push({ x0: i * bw, x1: (i + 1) * bw, b });
     });
-    ctx.fillStyle = colors.muted;
+    ctx.fillStyle = COLORS.text;
+    ctx.font = "11px ui-sans-serif, system-ui";
     ctx.textAlign = "center";
-    const labels = Math.min(8, n);
+    const labels = Math.min(6, n);
     for (let i = 0; i < labels; i++) {
       const idx = Math.round((i * (n - 1)) / Math.max(1, labels - 1));
-      const b = series[idx];
-      if (!b) continue;
-      const d = new Date(b.ts);
-      const label = stepSeconds >= 86400 ? d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : (stepSeconds >= 3600 ? d.toLocaleDateString(undefined, { weekday: "short" }) + " " + fmtTime(b.ts).slice(0, 5) : fmtTime(b.ts).slice(0, 5));
-      ctx.fillText(label, padL + idx * bw + bw / 2, h - 8);
+      const d = new Date(series[idx].ts);
+      const label = step >= 86400 ? d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : step >= 3 * 3600 ? d.toLocaleDateString(undefined, { weekday: "short" }) + " " + pad(d.getHours()) + "h" : pad(d.getHours()) + ":" + pad(d.getMinutes());
+      ctx.fillText(label, Math.min(w - 24, Math.max(24, idx * bw + bw / 2)), h - 5);
     }
-    c.onmousemove = (e) => {
-      const r = c.getBoundingClientRect();
-      const x = e.clientX - r.left;
-      const hit = bars.find((bb) => x >= bb.x && x < bb.x2);
+    canvas.onmousemove = (e) => {
+      const x = e.clientX - canvas.getBoundingClientRect().left;
+      const hit = bars.find((bb) => x >= bb.x0 && x < bb.x1);
       if (!hit) { tip.hidden = true; return; }
       const b = hit.b;
-      tip.innerHTML = "<div class='muted'>" + esc(fmtDate(b.ts)) + "</div><div><b>" + fmtN(b.count) + "</b> requests · avg " + Math.round(b.avg_score || 0) + "</div>" +
-        "<div style='color:" + colors.reject + "'>reject " + fmtN(b.reject) + "</div><div style='color:" + colors.flag + "'>flag " + fmtN(b.flag) + " · challenge " + fmtN(b.challenge) + "</div><div style='color:" + colors.allow + "'>allow " + fmtN(b.allow) + "</div>";
+      tip.innerHTML = '<div class="muted">' + esc(dayClock(b.ts)) + "</div><div><b>" + fmtN(b.count) + '</b> calls</div><div style="color:#fca5a5">' + fmtN(b.reject) + ' blocked</div><div style="color:#fcd34d">' + fmtN(b.flag + b.challenge) + " flagged</div>";
       tip.hidden = false;
-      tip.style.left = Math.min(window.innerWidth - 220, e.clientX + 14) + "px";
+      tip.style.left = Math.min(window.innerWidth - 180, e.clientX + 14) + "px";
       tip.style.top = e.clientY + 14 + "px";
     };
-    c.onmouseleave = () => { tip.hidden = true; };
+    canvas.onmouseleave = () => { tip.hidden = true; };
   }
 
-  function drawHistogram(c, buckets, thresholds) {
-    if (!c) return;
-    const { ctx, w, h } = setupCanvas(c);
-    ctx.clearRect(0, 0, w, h);
-    const padL = 36, padR = 8, padT = 22, padB = 26;
-    const max = Math.max(1, ...buckets);
-    const innerW = w - padL - padR, innerH = h - padT - padB;
-    const bw = innerW / 10;
-    ctx.font = "11px ui-monospace, Menlo, monospace";
-    buckets.forEach((v, i) => {
-      const lo = i * 10;
-      let color = colors.allow;
-      if (lo >= thresholds.reject) color = colors.reject;
-      else if (lo >= thresholds.challenge) color = colors.challenge;
-      else if (lo >= thresholds.flag) color = colors.flag;
-      const hh = (v / max) * innerH;
-      ctx.fillStyle = color;
-      ctx.fillRect(padL + i * bw + 4, padT + innerH - hh, bw - 8, hh);
-      ctx.fillStyle = colors.muted;
-      ctx.textAlign = "center";
-      ctx.fillText(lo + "", padL + i * bw + bw / 2, h - 8);
-      if (v) ctx.fillText(fmtN(v), padL + i * bw + bw / 2, padT + innerH - hh - 4);
-    });
-    [["flag", thresholds.flag], ["challenge", thresholds.challenge], ["reject", thresholds.reject]].forEach(([k, t]) => {
-      const x = padL + (t / 100) * innerW;
-      ctx.strokeStyle = colors[k];
-      ctx.setLineDash([4, 4]);
-      ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + innerH); ctx.stroke();
-      ctx.setLineDash([]);
-    });
-  }
-
-  // ---------- router ----------
-  const titles = {
-    overview: ["Overview", "What the switch saw"],
-    traffic: ["Traffic", "Every screened request"],
-    numbers: ["Numbers", "Calling numbers ranked by score"],
-    signers: ["Signers", "Who attested the calls (STIR/SHAKEN SPC)"],
-    providers: ["Providers", "Where the SIP came from"],
-    lists: ["Lists", "Your allow and deny rules"],
-    tuning: ["Tuning", "Where the thresholds sit against real traffic"],
-    system: ["System", "Trust, feeds, storage, and configuration"],
-    transcripts: ["Transcripts", "What was said on recorded calls"],
-    blocklist: ["Blocklist", "Numbers loaded from the spam feed, and the calls they hit"],
-    scoring: ["Live scoring", "INVITE checks against live reputation"],
-    ipintel: ["IP intel", "Addresses loaded into the fraud list"],
-    numbercheck: ["Number check", "Saved numbers and what they return"],
-    aivoice: ["AI voice", "Live transcript connection"],
-  };
-
-  function navigate() {
-    const hash = (location.hash || "#overview").slice(1);
-    const [view, param] = hash.split("?");
-    if (view === "plugins") {
-      const slug = new URLSearchParams(param || "").get("slug");
-      location.replace(slug === "number-check" ? "#numbercheck" : slug === "ai-voice" ? "#aivoice" : "#transcripts");
-      return;
-    }
-    state.view = titles[view] ? view : "overview";
-    $$("#nav a").forEach((a) => a.classList.toggle("on", a.dataset.view === state.view));
-    $("#viewTitle").textContent = titles[state.view][0];
-    $("#viewHint").textContent = titles[state.view][1] + " · " + rangeLabel(state.range);
-    if (param) {
-      const p = new URLSearchParams(param);
-      state.q = p.get("q") || "";
-      $("#search").value = state.q;
-      state.traffic.action = p.get("action") || "";
-      state.traffic.verstat = p.get("verstat") || "";
-      state.traffic.direction = p.get("direction") || "";
-      if (state.view === "numbers") state.numbers.direction = p.get("direction") || "";
-    }
-    render();
-  }
-  window.addEventListener("hashchange", navigate);
-
-  function render() {
-    state.timers.forEach(clearTimeout);
-    state.timers = [];
-    const v = $("#view");
-    v.innerHTML = "";
-    $("#search").placeholder = state.view === "numbercheck" ? "Search a number" : "Search number, IP, Call-ID, signer  ( / )";
-    ({ overview: renderOverview, traffic: renderTraffic, numbers: renderNumbers, signers: renderSigners, providers: renderProviders, lists: renderLists, tuning: renderTuning, system: renderSystem, transcripts: renderTranscripts, blocklist: renderBlocklist, scoring: renderScoring, ipintel: renderIPIntel, numbercheck: renderNumberCheck, aivoice: renderAIVoice })[state.view](v);
-  }
-  function schedule(fn, ms) { state.timers.push(setTimeout(fn, ms)); }
-
-  // ---------- overview ----------
-  async function renderOverview(v) {
-    v.innerHTML = '<article class="card" id="valueCard" style="margin-bottom:14px"><div class="valuecard"><div class="lead muted">Loading what Falcon did…</div></div></article>' +
-      '<section class="grid kpis" id="kpis"></section>' +
-      '<section class="grid wide-narrow"><article class="card fill"><header><h2>Volume by decision</h2><span class="hint" id="chartHint"></span></header><canvas class="chart" id="chart"></canvas>' +
-      '<div class="legend"><span><i style="background:' + colors.allow + '"></i>allow</span><span><i style="background:' + colors.flag + '"></i>flag</span><span><i style="background:' + colors.challenge + '"></i>challenge</span><span><i style="background:' + colors.reject + '"></i>reject</span></div></article>' +
-      '<article class="card"><header><h2>Why calls were held</h2><span class="hint">top reasons</span></header><div class="rank" id="topReasons"></div></article></section>' +
-      '<section class="grid three"><article class="card"><header><h2>Signers</h2><a class="hint" href="#signers">all →</a></header><div class="rank" id="topSigners"></div></article>' +
-      '<article class="card"><header><h2>Providers</h2><a class="hint" href="#providers">all →</a></header><div class="rank" id="topProviders"></div></article>' +
-      '<article class="card"><header><h2>Source IPs</h2><a class="hint" href="#providers">all →</a></header><div class="rank" id="topIps"></div></article></section>' +
-      '<section class="grid three" id="addons"></section>';
+  // ---------- actions shared by views ----------
+  async function addRule(rule, label) {
     try {
-      const [stats, status, value] = await Promise.all([get("/v1/stats?range=" + state.range), get("/v1/status"), get("/v1/value?range=" + state.range)]);
-      renderValueCard($("#valueCard"), value);
-      state.status = status;
-      const total = stats.total || 0;
-      const rej = (stats.by_action && stats.by_action.reject) || 0;
-      const flag = ((stats.by_action && stats.by_action.flag) || 0) + ((stats.by_action && stats.by_action.challenge) || 0);
-      const passed = (stats.by_verstat && stats.by_verstat["TN-Validation-Passed"]) || 0;
-      const failed = (stats.by_verstat && stats.by_verstat["TN-Validation-Failed"]) || 0;
-      const attC = (stats.by_attest && stats.by_attest.C) || 0;
-      const signed = Object.keys(stats.by_attest || {}).filter((k) => k !== "none").reduce((a, k) => a + stats.by_attest[k], 0);
-      $("#kpis").innerHTML = [
-        ["Requests", fmtN(total), rangeLabel(state.range), ""],
-        ["Rejected", fmtN(rej), pct(rej, total) + "% of requests", "hot"],
-        ["Held", fmtN(flag), "flag + challenge", ""],
-        ["Avg score", (stats.avg_score || 0).toFixed(1), "0 to 100", ""],
-        ["Verified", fmtN(passed), failed ? fmtN(failed) + " failed" : "PASSporT passed", passed ? "ok" : ""],
-        ["Attestation C", signed ? pct(attC, signed) + "%" : "—", signed ? fmtN(attC) + " of " + fmtN(signed) + " signed" : "no signed calls", attC ? "accent" : ""],
-      ].map(([l, b, s, cls]) => '<article class="card kpi ' + cls + '"><label>' + l + "</label><b>" + b + '</b><div class="sub">' + esc(s) + "</div></article>").join("");
-      $("#chartHint").textContent = fmtN(stats.timeseries.length) + " buckets · " + (stats.step_seconds >= 3600 ? stats.step_seconds / 3600 + "h" : stats.step_seconds / 60 + "m") + " each";
-      drawStacked($("#chart"), stats.timeseries || [], stats.step_seconds);
-      renderRank($("#topReasons"), stats.top_reasons, (r) => "#traffic?q=" + encodeURIComponent(r.name));
-      renderRank($("#topSigners"), stats.top_signers, (r) => "#traffic?q=" + encodeURIComponent(r.name));
-      renderRank($("#topProviders"), stats.top_providers, (r) => "#traffic?q=" + encodeURIComponent(r.name));
-      renderRank($("#topIps"), stats.top_ips, (r) => "#traffic?q=" + encodeURIComponent(r.name));
-      renderAddons($("#addons"), status);
-      if (total === 0) {
-        $("#chart").parentElement.insertAdjacentHTML("beforeend", empty("No SIP yet. Point a switch at the screen endpoint.", "curl -X POST " + location.origin + "/v1/screen -H 'X-Falcon-Token: …' -d @invite.json"));
+      await post("/v1/rules", rule);
+      toast((label || "Rule saved") + ". It applies to the next call.", "ok");
+      return true;
+    } catch (e) { toast(e.message, "bad"); return false; }
+  }
+  async function saveSettings(patchBody, okText) {
+    try {
+      const r = await put("/v1/settings", patchBody);
+      toast(okText || "Saved", "ok");
+      return r.effective;
+    } catch (e) { toast(e.message, "bad"); return null; }
+  }
+
+  // ================= OVERVIEW =================
+  function kpiCard(label, key, cls) {
+    return '<article class="card kpi ' + (cls || "") + '" data-k="' + key + '"><div class="kpi-label">' + esc(label) + '</div><div class="kpi-value num" data-v>' + sk("60%", 33) + '</div><div class="kpi-sub" data-s></div></article>';
+  }
+
+  const Overview = {
+    title: "Overview",
+    mount(root) {
+      root.innerHTML =
+        '<section class="card status" id="ovStatus"><div class="status-main"><span class="ring idle"></span><div>' + sk("220px", 16) + "</div></div></section>" +
+        '<section class="grid kpis" id="ovKpis">' + kpiCard("Calls screened", "screened") + kpiCard("Blocked", "blocked", "blocked") + kpiCard("Flagged", "flagged", "flagged") +
+        kpiCard("Latency Falcon adds", "latency") + '<article class="card kpi fas" data-k="fas" hidden><div class="kpi-label">False answers</div><div class="kpi-value num" data-v>0</div><div class="kpi-sub" data-s></div></article></section>' +
+        '<section class="grid main-split">' +
+        '<div class="stack"><div class="card"><div class="card-head"><h2>Needs attention</h2><span class="hint" id="ovHint"></span></div><div class="insights" id="ovInsights">' + skRows(3) + "</div></div>" +
+        '<div class="card"><div class="card-head"><h2>Calls over time</h2><div class="legend"><span><i style="background:#ef4444"></i>Blocked</span><span><i style="background:#f59e0b"></i>Flagged</span><span><i style="background:#3b4256"></i>Allowed</span></div></div><div class="chart-wrap"><canvas class="chart" id="ovChart"></canvas></div></div></div>' +
+        '<div class="card flush recent"><div class="card-head"><h2>Latest stopped calls</h2><a class="link" href="#calls?verdict=stopped">See all</a></div><div class="rows" id="ovRecent">' + skRows(5) + "</div></div>" +
+        "</section>";
+      if (localStorage.getItem("falcon_kpi5") === "1") {
+        $('#ovKpis [data-k="fas"]').hidden = false;
+        $("#ovKpis").classList.add("five");
       }
-    } catch (e) {
-      v.insertAdjacentHTML("afterbegin", '<div class="card">' + esc(e.message) + "</div>");
-    }
-    schedule(() => state.view === "overview" && renderOverview(v), 15000);
-  }
-
-  function renderRank(el, rows, href) {
-    if (!el) return;
-    if (!rows || !rows.length) { el.innerHTML = '<div class="muted small">none yet</div>'; return; }
-    const max = Math.max(...rows.map((r) => r.count));
-    el.innerHTML = rows.map((r) => '<a class="r clickable" href="' + esc(href(r)) + '"><span class="name" title="' + esc(r.name) + '">' + esc(r.name) + '</span><span class="mono num">' + fmtN(r.count) + '</span><span class="bar"><i style="width:' + Math.round((r.count / max) * 100) + '%"></i></span></a>').join("");
-  }
-
-  function renderAddons(el, status) {
-    const feed = status.spam_feed || {}, fw = status.voice_firewall || {}, ip = status.ip_intel || {}, sh = status.shaken || {}, tr = (sh.trust || {});
-    const cards = [
-      { title: "STIR/SHAKEN trust", on: !!sh.enabled && tr.roots > 0, bad: !!sh.enabled && !(tr.roots > 0), body: sh.enabled ? (tr.roots ? tr.roots + " STI-CA roots · " + fmtN(tr.revoked) + " revoked · " + fmtN(sh.cached_chains) + " chains cached" : "roots not loaded" + (tr.roots_error ? ": " + tr.roots_error : "")) : "Verification is off (FALCON_SHAKEN=false).", href: "#system" },
-      { title: "Telecom IP intel", on: !!ip.configured && ip.count > 0, bad: !!ip.configured && !!ip.error, body: ip.configured ? fmtN(ip.count) + " CIDR blocks" + (ip.error ? " · " + ip.error : "") : "Name the provider behind every source IP. Set FALCON_IP_INTEL_FILE or connect the hosted table.", href: ip.configured ? "#providers" : (feed.upsell_url || "#") },
-      { title: "Spam database feed", on: !!feed.configured && feed.count > 0, bad: !!feed.configured && !!feed.error, body: feed.configured ? fmtN(feed.count) + " numbers loaded" + (feed.error ? " · " + feed.error : "") : "Drop listed spam DIDs at the switch with a CallerAPI key.", href: feed.upsell_url || "#" },
-    ];
-    el.innerHTML = cards.map((c) => '<a class="card status-card" href="' + esc(c.href) + '"' + (c.href.startsWith("http") ? ' target="_blank" rel="noreferrer"' : "") + '><div class="title"><h2>' + esc(c.title) + '</h2><span class="state ' + (c.bad ? "bad" : c.on ? "on" : "off") + '">' + (c.bad ? "attention" : c.on ? "active" : "off") + '</span></div><div class="muted small">' + esc(c.body) + "</div></a>").join("");
-  }
-
-  // ---------- traffic ----------
-  function directionChip(ev) {
-    const outbound = ev.direction === "outbound";
-    return '<span class="chip ' + (outbound ? "warn" : "ok") + '">' + (outbound ? "outbound" : "inbound") + "</span>";
-  }
-
-  function trafficRow(ev, isNew) {
-    return '<tr class="row' + (isNew ? " new" : "") + '" data-id="' + ev.id + '">' +
-      '<td class="mono muted" title="' + esc(ev.received_at) + '">' + esc(fmtTime(ev.received_at)) + "</td>" +
-      "<td>" + pill(ev.action) + "</td>" +
-      "<td>" + scoreCell(ev.risk_score, ev.action) + "</td>" +
-      "<td>" + directionChip(ev) + "</td>" +
-      '<td class="mono">' + esc(ev.from) + "</td>" +
-      '<td class="mono">' + esc(ev.to) + "</td>" +
-      '<td class="mono nowrap">' + esc(ev.source_ip) + (ev.provider ? '<span class="sub" title="' + esc(ev.provider) + '">' + esc(ev.provider) + "</span>" : "") + "</td>" +
-      '<td class="nowrap">' + (ev.signer_spc ? '<span class="chip">' + esc(ev.signer_spc) + "</span>" + (ev.signer_name ? '<span class="sub" title="' + esc(ev.signer_name) + '">' + esc(ev.signer_name) + "</span>" : "") : '<span class="muted">—</span>') + "</td>" +
-      "<td>" + verstatChip(ev.verstat, ev.shaken_attest, ev.shaken && ev.shaken.source) + "</td>" +
-      "<td>" + reasonChips(ev.reasons, 3) + "</td></tr>";
-  }
-
-  async function renderTraffic(v) {
-    const t = state.traffic;
-    v.innerHTML = '<div class="toolbar">' +
-      '<select id="fAction"><option value="">all decisions</option><option>allow</option><option>flag</option><option>challenge</option><option>reject</option></select>' +
-      '<select id="fVerstat"><option value="">any verification</option><option value="TN-Validation-Passed">verified</option><option value="TN-Validation-Failed">failed</option><option value="No-TN-Validation">no validation</option></select>' +
-      '<select id="fDirection"><option value="">inbound and outbound</option><option value="inbound">inbound</option><option value="outbound">outbound</option></select>' +
-      '<span class="spacer"></span><span class="muted small" id="tCount"></span>' +
-      '<a class="btn sm" id="csvBtn" href="#">Export CSV</a></div>' +
-      '<article class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th>time</th><th>decision</th><th>score</th><th>direction</th><th>from</th><th>to</th><th>source</th><th>signer</th><th>shaken</th><th>reasons</th></tr></thead><tbody id="rows"></tbody></table></div>' +
-      '<div style="padding:12px;text-align:center"><button class="btn" id="moreBtn">Load more</button></div></article>';
-    $("#fAction").value = t.action;
-    $("#fVerstat").value = t.verstat;
-    $("#fDirection").value = t.direction;
-    const csvHref = () => "/v1/events.csv?range=" + state.range + (t.action ? "&action=" + t.action : "") + (t.verstat ? "&verstat=" + t.verstat : "") + (t.direction ? "&direction=" + t.direction : "") + (state.q ? "&q=" + encodeURIComponent(state.q) : "") + (token ? "&token=" + encodeURIComponent(token) : "");
-    $("#csvBtn").href = csvHref();
-    const onFilter = (key, value) => { t[key] = value; loadTraffic(true); $("#csvBtn").href = csvHref(); };
-    $("#fAction").onchange = (e) => onFilter("action", e.target.value);
-    $("#fVerstat").onchange = (e) => onFilter("verstat", e.target.value);
-    $("#fDirection").onchange = (e) => onFilter("direction", e.target.value);
-    $("#moreBtn").onclick = () => loadTraffic(false);
-    $("#rows").onclick = (e) => { const tr = e.target.closest("tr.row"); if (tr) openEvent(tr.dataset.id); };
-    await loadTraffic(true);
-  }
-
-  async function renderNumbers(v) {
-    v.innerHTML = '<div class="toolbar">' +
-      '<select id="nDirection"><option value="">inbound and outbound</option><option value="inbound">inbound</option><option value="outbound">outbound</option></select>' +
-      '<span class="spacer"></span><span class="muted small" id="nCount"></span></div>' +
-      '<article class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th class="right">score</th><th>number</th><th>direction</th><th>reasons</th><th class="right">calls</th><th class="right">reached</th><th>last</th><th></th></tr></thead><tbody id="numbers"></tbody></table></div></article>';
-    $("#nDirection").value = state.numbers.direction;
-    $("#nDirection").onchange = (e) => { state.numbers.direction = e.target.value; loadNumbers(); };
-    $("#numbers").onclick = async (e) => {
-      const b = e.target.closest("button[data-deny]");
-      if (!b) return;
-      b.disabled = true;
-      await addRule("deny", "number", b.dataset.deny, "from numbers");
-      b.disabled = false;
-    };
-    await loadNumbers();
-  }
-
-  function suspectDirection(row) {
-    if (row.outbound && !row.inbound) return directionChip({ direction: "outbound" });
-    if (row.inbound && !row.outbound) return directionChip({ direction: "inbound" });
-    return directionChip({ direction: "inbound" }) + directionChip({ direction: "outbound" });
-  }
-
-  async function loadNumbers() {
-    const body = $("#numbers");
-    if (!body) return;
-    const direction = state.numbers.direction;
-    try {
-      const params = new URLSearchParams({ range: state.range, limit: "50" });
-      if (direction) params.set("direction", direction);
-      const res = await get("/v1/suspects?" + params.toString());
-      let rows = res.data || [];
-      if (state.q) {
-        const q = state.q.toLowerCase();
-        rows = rows.filter((row) => String(row.number || "").toLowerCase().includes(q) || (row.reasons || []).some((r) => String(r.code || "").toLowerCase().includes(q)));
+      $("#ovInsights").onclick = (e) => this.onInsight(e);
+      $("#ovRecent").onclick = (e) => { const r = e.target.closest("[data-id]"); if (r) Drawer.open(r.dataset.id); };
+      this.ro = new ResizeObserver(() => this.drawChart());
+      this.ro.observe($("#ovChart"));
+      const cached = cache["overview:" + state.range];
+      if (cached) this.render(cached);
+      this.refresh();
+      this.timer = setInterval(() => { if (!document.hidden) this.refresh(); }, 30000);
+      this.onLive = (msg) => this.live(msg);
+      liveOn(this.onLive);
+    },
+    unmount() { clearInterval(this.timer); liveOff(this.onLive); if (this.ro) this.ro.disconnect(); },
+    rangeChanged() {
+      const cached = cache["overview:" + state.range];
+      if (cached) this.render(cached);
+      this.refresh();
+    },
+    async refresh() {
+      try {
+        const d = await get("/v1/overview?range=" + state.range);
+        remember("overview:" + state.range, d);
+        if (state.view === this) this.render(d);
+      } catch (e) {
+        patch($("#ovStatus"), '<div class="status-main"><span class="ring warn"></span><div><strong>Falcon did not answer</strong><div class="muted">' + esc(e.message) + "</div></div></div>");
       }
-      const count = $("#nCount");
-      if (count) count.textContent = fmtN(rows.length) + " numbers";
-      body.innerHTML = rows.length ? rows.map((row) => {
-        const q = "#traffic?q=" + encodeURIComponent(row.number) + (direction ? "&direction=" + encodeURIComponent(direction) : "");
-        const reasons = (row.reasons || []).map((r) => '<span class="chip" title="' + esc(r.calls) + ' calls">' + esc(r.code) + " +" + esc(r.weight) + "</span>").join("");
-        return '<tr><td class="right mono num">' + Math.round(row.max_score) + '</td><td class="mono">' + esc(row.number) + "</td><td>" + suspectDirection(row) + "</td><td>" + (reasons || '<span class="muted">—</span>') + '</td><td class="right mono num">' + fmtN(row.calls) + '</td><td class="right mono num">' + fmtN(row.destinations) + '</td><td class="muted small">' + esc(timeAgo(row.last_seen)) + '</td><td><a class="btn sm" href="' + q + '">Calls</a> <button class="btn sm danger" data-deny="' + esc(row.number) + '">Deny</button></td></tr>';
-      }).join("") : '<tr><td colspan="8">' + empty("No number stands out in " + rangeLabel(state.range) + ".") + "</td></tr>";
-    } catch (e) {
-      body.innerHTML = '<tr><td colspan="8">' + empty(e.message) + "</td></tr>";
-    }
-  }
-
-  async function loadTraffic(reset) {
-    const t = state.traffic;
-    if (t.loading) return;
-    t.loading = true;
-    try {
-      const params = new URLSearchParams({ range: state.range, limit: "100" });
-      if (t.action) params.set("action", t.action);
-      if (t.verstat) params.set("verstat", t.verstat);
-      if (t.direction) params.set("direction", t.direction);
-      if (state.q) params.set("q", state.q);
-      if (!reset && t.next) params.set("before", String(t.next));
-      const res = await get("/v1/events?" + params.toString());
-      const rows = res.data || [];
-      t.rows = reset ? rows : t.rows.concat(rows);
-      t.next = res.next_before || 0;
-      const body = $("#rows");
-      if (!body) return;
-      if (!t.rows.length) {
-        body.innerHTML = '<tr><td colspan="10">' + empty(state.q || t.action || t.verstat || t.direction ? "Nothing matches these filters in " + rangeLabel(state.range) + "." : "No SIP yet in " + rangeLabel(state.range) + ". Point a switch at POST /v1/screen.") + "</td></tr>";
-      } else if (reset) {
-        body.innerHTML = t.rows.map((ev) => trafficRow(ev, false)).join("");
+    },
+    render(d) {
+      this.data = d;
+      this.renderStatus(d);
+      this.renderKpis(d);
+      this.renderInsights(d);
+      this.renderRecent(d);
+      this.drawChart();
+    },
+    renderStatus(d) {
+      const st = d.status || {};
+      const sip = st.sip || {};
+      let ring = "", head = "Protecting your switch", sub = "";
+      if (!st.last_call_at) {
+        ring = "idle"; head = "Waiting for the first call"; sub = "Connect a switch and Falcon starts at once.";
+      } else if (st.mode === "monitor") {
+        ring = "warn"; head = "Monitor mode: Falcon watches and blocks nothing"; sub = "Last call " + ago(st.last_call_at) + ".";
       } else {
-        body.insertAdjacentHTML("beforeend", rows.map((ev) => trafficRow(ev, false)).join(""));
+        sub = "Last call " + ago(st.last_call_at) + ". Falcon blocks hard fraud and flags the rest.";
       }
-      $("#tCount").textContent = fmtN(t.rows.length) + " shown";
-      $("#moreBtn").disabled = rows.length < 100;
-    } catch (e) {
-      toast(e.message, "bad");
-    } finally {
-      t.loading = false;
-    }
-  }
-
-  // ---------- signers and providers ----------
-  function attestMini(p) {
-    const tot = (p.attest_a + p.attest_b + p.attest_c) || 1;
-    return '<span class="mini" title="A ' + p.attest_a + " · B " + p.attest_b + " · C " + p.attest_c + '"><i class="a" style="width:' + pct(p.attest_a, tot) + '%"></i><i class="b" style="width:' + pct(p.attest_b, tot) + '%"></i><i class="c" style="width:' + pct(p.attest_c, tot) + '%"></i></span>';
-  }
-  function networkCell(p) {
-    if (!p.network_score) return '<span class="muted">—</span>';
-    const c = p.network_score >= 80 ? colors.reject : p.network_score >= 50 ? colors.flag : "inherit";
-    return '<span style="color:' + c + '" title="' + esc(p.network_installs) + ' installs">' + esc(p.network_score) + "</span>";
-  }
-  function partyActions(subject, value) {
-    return '<button class="btn sm danger" data-act="deny" data-subject="' + esc(subject) + '" data-value="' + esc(value) + '">Deny</button> ' +
-      '<button class="btn sm" data-act="allow" data-subject="' + esc(subject) + '" data-value="' + esc(value) + '">Allow</button>';
-  }
-  function bindPartyActions(root) {
-    root.onclick = async (e) => {
-      const b = e.target.closest("button[data-act]");
-      if (b) {
-        e.stopPropagation();
-        await addRule(b.dataset.act, b.dataset.subject, b.dataset.value, "from dashboard");
+      const tags = ['<span class="tag ' + (st.mode === "monitor" ? "warn" : "good") + '">' + (st.mode === "monitor" ? "Monitor" : "Enforce") + "</span>"];
+      if (sip.mode === "bridge" && sip.enabled) {
+        tags.push('<span class="tag">Bridge <b>' + fmtN(sip.active_calls || 0) + "</b> up</span>");
+        const fm = { off: "FAS guard off", monitor: "FAS guard watching", enforce: "FAS guard holding" }[st.fas_mode] || "FAS guard";
+        tags.push('<span class="tag ' + (st.fas_mode === "enforce" ? "good" : "") + '">' + fm + "</span>");
+      }
+      if (st.voice && st.voice !== "off") tags.push('<span class="tag">AI voice on</span>');
+      if (st.update) tags.push('<a class="tag warn" href="https://github.com/CallerAPI/Falcon/releases" target="_blank" rel="noreferrer">Update ' + esc(st.update) + "</a>");
+      patch($("#ovStatus"), '<div class="status-main"><span class="ring ' + ring + '"></span><div><strong>' + esc(head) + '</strong><div class="muted">' + esc(sub) + '</div></div></div><div class="status-tags">' + tags.join("") + "</div>");
+    },
+    renderKpis(d) {
+      const t = d.totals || {}, lat = d.latency || {}, words = rangeWords(d.range || state.range);
+      const set = (k, v, sub) => {
+        const card = $('#ovKpis [data-k="' + k + '"]');
+        if (!card) return;
+        patch($("[data-v]", card), v);
+        setText($("[data-s]", card), sub);
+      };
+      set("screened", fmtN(t.screened), "In " + words);
+      set("blocked", fmtN(t.blocked), t.screened ? pctText(t.blocked, t.screened) + " of calls" + (t.held ? ", plus " + fmtN(t.held) + " held by monitor mode" : "") : "Nothing to stop yet");
+      set("flagged", fmtN(t.flagged), t.recorded ? fmtN(t.recorded) + " recorded for review" : "Watched, not blocked");
+      set("latency", lat.count ? fmtMs(lat.avg_ms) + "<small>ms</small>" : "0<small>ms</small>", lat.count ? "Average. 95% of calls under " + fmtMs(lat.p95_ms) + " ms" : "No calls measured yet");
+      const fasCard = $('#ovKpis [data-k="fas"]');
+      const showFas = (t.bridged || 0) > 0 || (t.fas || 0) > 0;
+      fasCard.hidden = !showFas;
+      $("#ovKpis").classList.toggle("five", showFas);
+      localStorage.setItem("falcon_kpi5", showFas ? "1" : "0");
+      if (showFas) set("fas", fmtN(t.fas), t.fas ? seconds(t.fas_seconds || 0) + " billed falsely, " + fmtN(t.bridged) + " calls bridged" : fmtN(t.bridged) + " calls bridged, all clean");
+    },
+    renderInsights(d) {
+      const list = d.insights || [];
+      this.insights = list;
+      setText($("#ovHint"), list.length ? list.length + (list.length === 1 ? " item" : " items") : "");
+      if (!list.length) {
+        patch($("#ovInsights"), '<div class="clear"><span class="dot ok"></span><div><strong>All clear</strong><span class="muted">Falcon works in the background. Anything that needs you shows up here.</span></div></div>');
         return;
       }
-      const tr = e.target.closest("tr.row");
-      if (tr && tr.dataset.q) location.hash = "#traffic?q=" + encodeURIComponent(tr.dataset.q);
-    };
-  }
+      patch($("#ovInsights"), list.map((it, i) => {
+        const external = it.link && it.link.indexOf("http") === 0;
+        return '<div class="insight ' + esc(it.severity) + '"><div><h3>' + esc(it.title) + "</h3><p>" + esc(it.detail) + '</p></div><div class="acts">' +
+          (it.action ? '<button type="button" class="btn primary sm" data-act="' + i + '">' + esc(it.action.label) + "</button>" : "") +
+          (it.link ? '<a class="btn sm" href="' + esc(it.link) + '"' + (external ? ' target="_blank" rel="noreferrer"' : "") + ">" + esc(it.link_text || "Open") + "</a>" : "") +
+          '<button type="button" class="icon-btn" data-dismiss="' + i + '" aria-label="Dismiss for a day" title="Dismiss for a day">×</button></div></div>';
+      }).join(""));
+    },
+    async onInsight(e) {
+      const act = e.target.closest("[data-act]"), dis = e.target.closest("[data-dismiss]");
+      if (!act && !dis) return;
+      const it = this.insights[Number((act || dis).dataset.act || (act || dis).dataset.dismiss)];
+      if (!it) return;
+      const card = (act || dis).closest(".insight");
+      (act || dis).disabled = true;
+      if (dis) {
+        try { await post("/v1/insights/dismiss", { key: it.key, hours: 24 }); card.remove(); toast("Hidden for a day", "ok"); } catch (err) { toast(err.message, "bad"); dis.disabled = false; }
+        return;
+      }
+      let done = false;
+      if (it.action.rule) done = await addRule(it.action.rule, it.action.label);
+      else if (it.action.setting) done = !!(await saveSettings(it.action.setting, "Done. " + it.action.label + " is on."));
+      if (done) { card.remove(); this.refresh(); loadStatus(); } else act.disabled = false;
+    },
+    renderRecent(d) {
+      const rows = d.recent || [];
+      if (!rows.length) {
+        patch($("#ovRecent"), '<div class="empty"><strong>Nothing stopped</strong>No blocked or flagged calls in ' + esc(rangeWords(d.range || state.range)) + ".</div>");
+        return;
+      }
+      patch($("#ovRecent"), rows.map((r) => this.recentRow(r)).join(""));
+    },
+    recentRow(r) {
+      const why = r.code ? plain(r.code) : r.why;
+      const count = r.calls > 1 ? '<span class="badge">' + fmtN(r.calls) + " calls</span>" : "";
+      return '<div class="row-item" data-id="' + r.id + '"><span class="muted small num">' + esc(when(r.at)) + "</span><span>" + pill(verdict(r.action, r.held)) +
+        '</span><div class="cell-main"><div class="line1">' + esc(r.from || "unknown") + count + '</div><div class="line2">' + esc(why || "No single reason") + "</div></div></div>";
+    },
+    drawChart() {
+      if (!this.data) return;
+      requestAnimationFrame(() => drawBars($("#ovChart"), this.data.series || [], this.data.step_seconds));
+    },
+    live(msg) {
+      if (!this.data || msg.type || !msg.id) return;
+      const t = this.data.totals;
+      t.screened++;
+      if (msg.action === "reject") t.blocked++;
+      else if (msg.action === "flag" || msg.action === "challenge") t.flagged++;
+      else t.allowed++;
+      if (msg.held) t.held++;
+      this.renderKpis(this.data);
+      if (msg.action !== "allow") {
+        const list = (this.data.recent || []).slice();
+        const i = msg.from ? list.findIndex((x) => x.from === msg.from) : -1;
+        const calls = i >= 0 ? (list[i].calls || 1) + 1 : 1;
+        if (i >= 0) list.splice(i, 1);
+        const top = headlineCode(msg.reasons);
+        list.unshift({ id: msg.id, at: msg.received_at, action: msg.action, held: msg.held, from: msg.from, to: msg.to, code: top, why: "", calls: calls });
+        this.data.recent = list.slice(0, 8);
+        this.renderRecent(this.data);
+        const first = $("#ovRecent .row-item");
+        if (first) first.classList.add("new");
+      }
+    },
+  };
+  function pctText(a, b) { if (!b) return "0%"; const p = (a * 100) / b; return (p < 1 && p > 0 ? p.toFixed(1) : Math.round(p)) + "%"; }
 
-  async function renderSigners(v) {
-    v.innerHTML = '<article class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th>SPC</th><th>signer</th><th class="right">calls</th><th class="right">reject %</th><th class="right">avg</th><th>attestation</th><th class="right">verified</th><th class="right">failed</th><th class="right">callers</th><th class="right" title="score across every sharing install on the CallerAPI network">network</th><th>last seen</th><th></th></tr></thead><tbody id="rows"></tbody></table></div></article>' +
-      '<p class="muted small">The SPC is the Service Provider Code in the signing certificate. It names the provider that attested the call. A deny on an SPC rejects every call that provider signs, whatever number it shows. The network column is what every sharing install has seen of that signer in the last 7 days; a dash means no feed or no row.</p>';
-    try {
-      const res = await get("/v1/parties?by=signer&range=" + state.range + "&limit=200");
-      const rows = res.data || [];
-      $("#rows").innerHTML = rows.length ? rows.map((p) => '<tr class="row" data-q="' + esc(p.name) + '"><td class="mono">' + esc(p.name) + "</td><td>" + esc(p.label || "—") + '</td><td class="right mono num">' + fmtN(p.total) + '</td><td class="right mono num" style="color:' + (pct(p.reject, p.total) > 20 ? colors.reject : "inherit") + '">' + pct(p.reject, p.total) + '%</td><td class="right mono num">' + Math.round(p.avg_score) + "</td><td>" + attestMini(p) + '</td><td class="right mono num">' + fmtN(p.verstat_passed) + '</td><td class="right mono num">' + fmtN(p.verstat_failed) + '</td><td class="right mono num">' + fmtN(p.distinct_from) + '</td><td class="right mono num">' + networkCell(p) + '</td><td class="muted small">' + esc(timeAgo(p.last_seen)) + "</td><td>" + partyActions("spc", p.name) + ' <a class="btn sm" title="traceback pack: events, raw INVITEs, signer certificates" href="/v1/traceback.zip?spc=' + encodeURIComponent(p.name) + '&range=' + state.range + (token ? "&token=" + encodeURIComponent(token) : "") + '">Pack</a></td></tr>').join("") :
-        '<tr><td colspan="12">' + empty("No signed calls in " + rangeLabel(state.range) + ". Signers appear once an INVITE carries an Identity header.") + "</td></tr>";
-      bindPartyActions($("#rows"));
-    } catch (e) { toast(e.message, "bad"); }
-  }
-
-  async function renderProviders(v) {
-    v.innerHTML = '<section class="grid two">' +
-      '<article class="card" style="padding:0"><header style="padding:14px 18px 0"><h2>Providers from IP intel</h2></header><div class="table-wrap"><table><thead><tr><th>provider</th><th class="right">calls</th><th class="right">reject %</th><th class="right">avg</th><th class="right">callers</th><th>last seen</th></tr></thead><tbody id="provRows"></tbody></table></div></article>' +
-      '<article class="card" style="padding:0"><header style="padding:14px 18px 0"><h2>Source IPs</h2></header><div class="table-wrap"><table><thead><tr><th>ip</th><th>provider</th><th class="right">calls</th><th class="right">reject %</th><th class="right">callers</th><th>last seen</th><th></th></tr></thead><tbody id="ipRows"></tbody></table></div></article></section>';
-    try {
-      const [prov, ips] = await Promise.all([get("/v1/parties?by=provider&range=" + state.range + "&limit=200"), get("/v1/parties?by=ip&range=" + state.range + "&limit=200")]);
-      const pr = prov.data || [], ir = ips.data || [];
-      $("#provRows").innerHTML = pr.length ? pr.map((p) => '<tr class="row" data-q="' + esc(p.name) + '"><td>' + esc(p.name) + '</td><td class="right mono num">' + fmtN(p.total) + '</td><td class="right mono num">' + pct(p.reject, p.total) + '%</td><td class="right mono num">' + Math.round(p.avg_score) + '</td><td class="right mono num">' + fmtN(p.distinct_from) + '</td><td class="muted small">' + esc(timeAgo(p.last_seen)) + "</td></tr>").join("") :
-        '<tr><td colspan="6">' + empty((state.status && state.status.ip_intel && state.status.ip_intel.configured) ? "No source IP matched the table in " + rangeLabel(state.range) + "." : "No IP intel table loaded. Set FALCON_IP_INTEL_FILE to a CSV of cidr,provider,risk.") + "</td></tr>";
-      $("#ipRows").innerHTML = ir.length ? ir.map((p) => '<tr class="row" data-q="' + esc(p.name) + '"><td class="mono">' + esc(p.name) + "</td><td>" + esc(p.label || "—") + '</td><td class="right mono num">' + fmtN(p.total) + '</td><td class="right mono num" style="color:' + (pct(p.reject, p.total) > 20 ? colors.reject : "inherit") + '">' + pct(p.reject, p.total) + '%</td><td class="right mono num">' + fmtN(p.distinct_from) + '</td><td class="muted small">' + esc(timeAgo(p.last_seen)) + "</td><td>" + partyActions("ip", p.name) + "</td></tr>").join("") :
-        '<tr><td colspan="7">' + empty("No traffic in " + rangeLabel(state.range) + ".") + "</td></tr>";
-      bindPartyActions($("#provRows"));
-      bindPartyActions($("#ipRows"));
-    } catch (e) { toast(e.message, "bad"); }
-  }
-
-  // ---------- lists ----------
-  async function addRule(kind, subject, value, note, ttl) {
-    try {
-      const r = await post("/v1/rules", { kind, subject, value, note: note || "", ttl: ttl || "" });
-      toast(kind + " rule saved for " + subject + " " + r.value, "ok");
-      if (state.view === "lists") renderLists($("#view"));
-      return r;
-    } catch (e) {
-      toast(e.message, "bad");
-    }
-  }
-
-  async function renderLists(v) {
-    v.innerHTML = '<article class="card"><header><h2>Add a rule</h2><span class="hint">deny is a hard reject · allow ends scoring</span></header>' +
-      '<form class="form" id="ruleForm"><label>kind<select name="kind"><option>deny</option><option>allow</option><option value="honeypot">honeypot (unassigned number)</option></select></label>' +
-      '<label>subject<select name="subject"><option value="number">number</option><option value="ip">ip or cidr</option><option value="spc">signer SPC</option></select></label>' +
-      '<label>value<input name="value" type="text" placeholder="+14155550100 · 203.0.113.0/24 · 1234" required></label>' +
-      '<label>note<input name="note" type="text" placeholder="why"></label>' +
-      '<label>expires<select name="ttl"><option value="">never</option><option value="1h">1 hour</option><option value="24h">24 hours</option><option value="168h">7 days</option><option value="720h">30 days</option></select></label>' +
-      '<button class="btn primary" type="submit">Save</button></form></article>' +
-      '<article class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th>kind</th><th>subject</th><th>value</th><th>note</th><th>created</th><th>expires</th><th></th></tr></thead><tbody id="rows"></tbody></table></div></article>' +
-      '<article class="card"><header><h2>Customers and the numbers they may present</h2><span class="hint">outbound calls from a customer with another caller id are rejected and paged</span></header>' +
-      '<form class="form" id="custForm" style="grid-template-columns:1fr 1fr 2fr auto"><label>account id<input name="id" type="text" placeholder="acme" required></label><label>name<input name="name" type="text" placeholder="Acme Dialer"></label>' +
-      '<label>numbers, comma separated, prefixes end with *<input name="dids" type="text" placeholder="+13125550100, +1312555*"></label><button class="btn primary" type="submit">Save</button></form>' +
-      '<div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>account</th><th>name</th><th>numbers</th><th class="right">calls 24h</th><th class="right">rejects</th><th class="right">ASR</th><th class="right">ACD</th><th></th></tr></thead><tbody id="custRows"></tbody></table></div>' +
-      '<p class="muted small">Honeypot rules above list your unassigned numbers or prefixes. A call to one is unsolicited by definition and is one of the ways new spam numbers are found.</p></article>';
-    $("#custForm").onsubmit = async (e) => {
-      e.preventDefault();
-      const f = new FormData(e.target);
-      const dids = String(f.get("dids") || "").split(",").map((x) => x.trim()).filter(Boolean);
+  // ================= CALLS =================
+  const FILTERS = [
+    ["all", "All"], ["stopped", "Stopped"], ["blocked", "Blocked"], ["flagged", "Flagged"], ["recorded", "Recorded"], ["fas", "False answers"], ["outbound", "Outbound"],
+  ];
+  const VERDICTS = ["stopped", "blocked", "flagged"];
+  const Calls = {
+    title: "Calls",
+    mount(root, params) {
+      this.filter = VERDICTS.indexOf(params.verdict) >= 0 ? params.verdict : params.recorded ? "recorded" : params.fas ? "fas" : params.direction === "outbound" ? "outbound" : "all";
+      if (params.q !== undefined) { state.q = params.q; $("#search").value = state.q; }
+      root.innerHTML = '<div class="chips" id="callChips">' + FILTERS.map(([k, label]) => '<button type="button" class="chip-btn" data-f="' + k + '">' + label + "</button>").join("") + "</div>" +
+        '<div class="card flush calls"><div class="row-head"><span>Time</span><span>Result</span><span>Call</span><span>Why</span><span class="right">Score</span><span class="right">Added</span></div>' +
+        '<div class="rows" id="callRows">' + skRows(8) + '</div><div class="list-foot"><button type="button" class="btn" id="moreBtn" hidden>Load more</button></div></div>';
+      this.paintChips();
+      $("#callChips").onclick = (e) => {
+        const b = e.target.closest("[data-f]");
+        if (!b) return;
+        this.filter = b.dataset.f;
+        this.paintChips();
+        history.replaceState(null, "", "#calls" + this.hashQuery());
+        this.load(true);
+      };
+      $("#callRows").onclick = (e) => { const r = e.target.closest("[data-id]"); if (r) Drawer.open(r.dataset.id); };
+      $("#moreBtn").onclick = () => this.load(false);
+      this.onLive = (msg) => this.live(msg);
+      liveOn(this.onLive);
+      const key = "calls:" + this.cacheKey();
+      if (cache[key]) this.paint(cache[key].data, true);
+      this.load(true);
+    },
+    unmount() { liveOff(this.onLive); },
+    rangeChanged() { this.load(true); },
+    searchChanged() { history.replaceState(null, "", "#calls" + this.hashQuery()); this.load(true); },
+    paintChips() { $$("#callChips [data-f]").forEach((b) => b.classList.toggle("on", b.dataset.f === this.filter)); },
+    cacheKey() { return this.filter + "|" + state.range + "|" + state.q; },
+    hashQuery() {
+      const p = new URLSearchParams();
+      if (VERDICTS.indexOf(this.filter) >= 0) p.set("verdict", this.filter);
+      if (this.filter === "recorded") p.set("recorded", "1");
+      if (this.filter === "fas") p.set("fas", "1");
+      if (this.filter === "outbound") p.set("direction", "outbound");
+      if (state.q) p.set("q", state.q);
+      const s = p.toString();
+      return s ? "?" + s : "";
+    },
+    query(before) {
+      const p = new URLSearchParams(this.hashQuery().slice(1));
+      p.set("range", state.range);
+      p.set("limit", "60");
+      if (before) p.set("before", String(before));
+      return "/v1/events?" + p.toString();
+    },
+    async load(reset) {
+      if (this.loading) return;
+      this.loading = true;
       try {
-        await api("/v1/customers", { method: "PUT", body: JSON.stringify({ id: f.get("id"), name: f.get("name"), dids }) });
-        toast("customer saved", "ok"); renderLists(v);
-      } catch (err) { toast(err.message, "bad"); }
-    };
-    try {
-      const cres = await get("/v1/customers");
-      const custs = cres.data || [];
-      const rowsHtml = await Promise.all(custs.map(async (c) => {
-        let act = {}, asr = 0, acd = 0;
-        try { const d = await get("/v1/customers/" + encodeURIComponent(c.id)); act = d.last_24h || {}; asr = d.asr || 0; acd = d.acd || 0; } catch (_) {}
-        return '<tr><td class="mono">' + esc(c.id) + "</td><td>" + esc(c.name || "—") + '</td><td class="mono small">' + esc((c.dids || []).join(", ") || "none: every caller id is accepted") + '</td><td class="right mono num">' + fmtN(act.calls || 0) + '</td><td class="right mono num" style="color:' + ((act.rejects || 0) > 0 ? colors.reject : "inherit") + '">' + fmtN(act.rejects || 0) + '</td><td class="right mono num">' + (act.completed ? asr + "%" : "—") + '</td><td class="right mono num">' + (act.answered ? acd + "s" : "—") + '</td><td><a class="btn sm" href="#traffic?q=' + encodeURIComponent(c.id) + '">Calls</a> <button class="btn sm ghost danger" data-cust="' + esc(c.id) + '">Remove</button></td></tr>';
-      }));
-      $("#custRows").innerHTML = rowsHtml.length ? rowsHtml.join("") : '<tr><td colspan="8">' + empty("No customers yet. Register each account and the numbers it may present; outbound calls then carry the account and a foreign caller id is rejected.") + "</td></tr>";
-      $("#custRows").onclick = async (e) => {
-        const b = e.target.closest("button[data-cust]");
-        if (!b) return;
-        try { await del("/v1/customers/" + encodeURIComponent(b.dataset.cust)); toast("customer removed", "ok"); renderLists(v); } catch (err) { toast(err.message, "bad"); }
-      };
-    } catch (e) { toast(e.message, "bad"); }
-    $("#ruleForm").onsubmit = async (e) => {
-      e.preventDefault();
-      const f = new FormData(e.target);
-      await addRule(f.get("kind"), f.get("subject"), f.get("value"), f.get("note"), f.get("ttl"));
-      e.target.reset();
-    };
-    try {
-      const res = await get("/v1/rules");
-      const rows = res.data || [];
-      $("#rows").innerHTML = rows.length ? rows.map((r) => "<tr><td>" + (r.kind === "honeypot" ? '<span class="pill flag">honeypot</span>' : pill(r.kind === "deny" ? "reject" : "allow").replace(">reject<", ">deny<").replace(">allow<", ">allow<")) + '</td><td class="muted">' + esc(r.subject) + '</td><td class="mono">' + esc(r.value) + "</td><td>" + esc(r.note || "") + '</td><td class="muted small">' + esc(fmtDate(r.created_at)) + '</td><td class="muted small">' + (r.expires_at && !r.expires_at.startsWith("0001") ? esc(fmtDate(r.expires_at)) : "never") + '</td><td><button class="btn sm ghost danger" data-del="' + r.id + '">Remove</button></td></tr>').join("") :
-        '<tr><td colspan="7">' + empty("No rules yet. Deny a number, a CIDR, or a signer SPC above, or from any row in Traffic.") + "</td></tr>";
-      $("#rows").onclick = async (e) => {
-        const b = e.target.closest("button[data-del]");
-        if (!b) return;
-        try { await del("/v1/rules/" + b.dataset.del); toast("rule removed", "ok"); renderLists(v); } catch (err) { toast(err.message, "bad"); }
-      };
-    } catch (e) { toast(e.message, "bad"); }
-  }
+        const res = await get(this.query(reset ? 0 : this.next));
+        const rows = res.data || [];
+        this.next = res.next_before || 0;
+        if (reset) {
+          this.rows = rows;
+          remember("calls:" + this.cacheKey(), { data: rows });
+          this.paint(rows, true);
+        } else {
+          this.rows = this.rows.concat(rows);
+          $("#callRows").insertAdjacentHTML("beforeend", rows.map((r) => this.row(r)).join(""));
+          $("#callRows").__html = null;
+        }
+        $("#moreBtn").hidden = rows.length < 60;
+      } catch (e) {
+        toast(e.message, "bad");
+      } finally {
+        this.loading = false;
+      }
+    },
+    paint(rows) {
+      if (!rows.length) {
+        const words = rangeWords(state.range);
+        patch($("#callRows"), '<div class="empty"><strong>No calls</strong>' + (state.q || this.filter !== "all" ? "Nothing matches in " + esc(words) + "." : "No calls in " + esc(words) + ".") + "</div>");
+        return;
+      }
+      patch($("#callRows"), rows.map((r) => this.row(r)).join(""));
+    },
+    row(ev, fresh) {
+      const v = verdict(ev.action, ev.held);
+      const codes = (ev.reasons || []).map((r) => r.code);
+      const badges = (codes.some((c) => c.indexOf("fas_") === 0) ? '<span class="badge fas">FAS</span>' : "") + (codes.indexOf("voice_scam") >= 0 ? '<span class="badge fas">Scam</span>' : "") + (ev.sampled ? '<span class="badge rec">Audio</span>' : "");
+      const src = [ev.provider, ev.source_ip].filter(Boolean).join(", ");
+      return '<div class="row-item' + (fresh ? " new" : "") + '" data-id="' + ev.id + '"><span class="muted small num" title="' + esc(ev.received_at) + '">' + esc(when(ev.received_at)) + "</span>" +
+        "<span>" + pill(v) + "</span>" +
+        '<div class="cell-main"><div class="line1">' + esc(ev.from || "unknown") + ' <span class="faint">to</span> ' + esc(ev.to || "") + '</div><div class="line2">' + esc(src || ev.direction || "") + "</div></div>" +
+        '<div class="why">' + esc(headline(ev.reasons) || "Nothing wrong") + badges + "</div>" +
+        '<span class="right mono">' + esc(ev.risk_score) + "</span>" +
+        '<span class="right muted small num">' + (ev.latency_us ? fmtMs(ev.latency_us / 1000) + " ms" : "") + "</span></div>";
+    },
+    matches(ev) {
+      switch (this.filter) {
+        case "stopped": if (ev.action === "allow") return false; break;
+        case "blocked": if (ev.action !== "reject") return false; break;
+        case "flagged": if (ev.action !== "flag" && ev.action !== "challenge") return false; break;
+        case "outbound": if (ev.direction !== "outbound") return false; break;
+        case "recorded": case "fas": return false;
+      }
+      return !state.q || JSON.stringify(ev).toLowerCase().indexOf(state.q.toLowerCase()) >= 0;
+    },
+    live(msg) {
+      if (msg.type || !msg.id || !this.matches(msg)) return;
+      const box = $("#callRows");
+      if ($(".empty", box)) box.innerHTML = "";
+      box.insertAdjacentHTML("afterbegin", this.row(msg, true));
+      box.__html = null;
+      this.rows = [msg].concat(this.rows || []);
+    },
+  };
 
-  // ---------- value and Ask Falcon ----------
-  function renderValueCard(el, v) {
-    if (!el || !v) return;
-    const pct = (v.blocked_pct || 0).toFixed(1);
-    el.innerHTML = '<div class="valuecard"><div class="lead"><b>' + fmtN(v.blocked) + ' <span class="muted" style="font-size:14px;font-weight:500">of ' + fmtN(v.screened) + ' calls blocked · ' + pct + '%</span></b>' + esc(v.sentence) + '</div>' +
-      '<div><div class="n" style="color:' + (v.spoofs_stopped ? colors.reject : "inherit") + '">' + fmtN(v.spoofs_stopped) + '</div><div class="l">spoofed caller ids stopped leaving your platform</div></div>' +
-      '<div><div class="n">' + fmtN(v.verify_failed) + '</div><div class="l">failed STIR/SHAKEN verifications</div></div>' +
-      '<div><div class="n">' + fmtN((v.honeypot_hits || 0) + (v.repeat_recordings || 0) + (v.voice_scams || 0)) + '</div><div class="l">honeypot hits, replayed recordings, voice scams</div></div>' +
-      '<div><div class="n">' + (v.minutes_not_carried ? Math.round(v.minutes_not_carried) : "—") + '</div><div class="l">minutes of blocked traffic not carried' + (v.minutes_not_carried ? "" : " (needs call outcomes)") + '</div></div></div>';
-  }
+  // ================= CALL DRAWER =================
+  const Drawer = {
+    async open(id) {
+      this.id = id;
+      $("#drawer").hidden = false;
+      $("#scrim").hidden = false;
+      setText($("#drawerKicker"), "Call");
+      setText($("#drawerTitle"), "");
+      $("#drawerBody").innerHTML = '<div class="stack">' + sk("100%", 64) + sk("60%", 18) + sk("100%", 120) + "</div>";
+      try {
+        const ev = await get("/v1/events/" + id);
+        if (this.id !== id) return;
+        this.render(ev);
+      } catch (e) {
+        $("#drawerBody").innerHTML = '<div class="empty"><strong>Could not load the call</strong>' + esc(e.message) + "</div>";
+      }
+    },
+    async refresh() {
+      const id = this.id;
+      if (!id || (this.audio && !this.audio.paused)) return;
+      try {
+        const ev = await get("/v1/events/" + id);
+        if (this.id === id) this.render(ev);
+      } catch (e) { /* keep what is on screen */ }
+    },
+    close() {
+      $("#drawer").hidden = true;
+      $("#scrim").hidden = true;
+      if (this.audio) { this.audio.pause(); this.audio = null; }
+      this.id = null;
+    },
+    render(ev) {
+      if (this.audio) { this.audio.pause(); this.audio = null; }
+      this.ev = ev;
+      setText($("#drawerKicker"), dayClock(ev.received_at) + (ev.direction === "outbound" ? ", outbound" : "") + (ev.customer ? ", customer " + ev.customer : ""));
+      setText($("#drawerTitle"), (ev.from || "unknown") + "  to  " + (ev.to || ""));
+      const v = verdict(ev.action, ev.held);
+      const lines = {
+        blocked: "Falcon stopped this call. The switch got SIP 603.",
+        would: "Monitor mode: Falcon would have stopped this call. It was let through.",
+        flagged: "Falcon let this call through and marked it for review.",
+        allowed: "Nothing about this call needed action.",
+      };
+      const media = ev.media || null, voice = ev.voice || null;
+      let html = '<div class="verdict ' + v.cls + '"><div><strong>' + esc(v.text) + '</strong><span class="muted small">' + esc(lines[v.cls]) + '</span></div><div class="score"><b>' + esc(ev.risk_score) + '</b><span class="muted small">risk score</span></div></div>';
+      if (ev.recording_url || (voice && (voice.transcript || voice.turns))) html += '<div class="section" id="dwAudio"></div>';
+      if (media && media.answer_ms) html += '<div class="section" id="dwFas"></div>';
+      const why = ev.why || [];
+      html += '<div class="section"><h3>Why</h3>' + (why.length ? '<ul class="reasons">' + why.map((w) => '<li class="' + (w.evidence ? "ev" : "") + '"><div><div class="t">' + esc(w.text) + "</div>" + (w.detail ? '<div class="d">' + esc(w.detail) + "</div>" : "") + '</div><span class="w">' + (w.evidence ? "heard" : "+" + w.weight) + "</span></li>").join("") + "</ul>" : '<p class="muted">Nothing looked wrong.</p>') + "</div>";
+      const fasOn = state.status && state.status.fas && state.status.fas.mode === "enforce";
+      const fasActs = media && media.fas ? (fasOn ? "" : '<button type="button" class="btn primary sm" data-fas="enforce">Hold false answers</button>') + '<a class="btn sm" href="#threats?tab=vendors">Compare vendors</a>' : "";
+      html += '<div class="section"><h3>Act on it</h3><div class="actions" id="dwActs">' + fasActs +
+        (ev.from ? '<button type="button" class="btn danger sm" data-rule="deny|number|' + esc(ev.from) + '">Block ' + esc(ev.from) + '</button><button type="button" class="btn sm" data-rule="allow|number|' + esc(ev.from) + '">Allow this number</button>' : "") +
+        (ev.source_ip ? '<button type="button" class="btn sm" data-rule="deny|ip|' + esc(ev.source_ip) + '">Block address ' + esc(ev.source_ip) + "</button>" : "") +
+        (ev.signer_spc ? '<button type="button" class="btn sm" data-rule="deny|spc|' + esc(ev.signer_spc) + '">Block signer ' + esc(ev.signer_spc) + "</button>" : "") +
+        '<a class="btn ghost sm" href="#calls?q=' + encodeURIComponent(ev.from || "") + '">All calls from this number</a>' +
+        (ev.from ? '<a class="btn ghost sm" href="' + esc(withToken("/v1/traceback.zip?number=" + encodeURIComponent(ev.from) + "&range=7d")) + '">Traceback pack</a>' : "") + "</div></div>";
+      html += this.technical(ev);
+      $("#drawerBody").innerHTML = html;
+      $("#dwActs").onclick = async (e) => {
+        const f = e.target.closest("[data-fas]");
+        if (f) {
+          f.disabled = true;
+          if (await saveSettings({ fas_mode: f.dataset.fas }, "FAS guard holds false answers now")) { f.remove(); loadStatus(); } else f.disabled = false;
+          return;
+        }
+        const b = e.target.closest("[data-rule]");
+        if (!b) return;
+        const [kind, subject, value] = b.dataset.rule.split("|");
+        b.disabled = true;
+        await addRule({ kind, subject, value, note: "from call " + ev.id }, (kind === "deny" ? "Blocked " : "Allowed ") + value);
+      };
+      if ($("#dwAudio")) this.audioSection(ev);
+      if ($("#dwFas")) this.fasSection(ev);
+    },
+    audioSection(ev) {
+      const voice = ev.voice || {};
+      let turns = voice.turns || [];
+      const box = $("#dwAudio");
+      let html = "<h3>Recording</h3>";
+      if (ev.recording_url) {
+        html += '<div class="player"><div class="player-top"><button type="button" class="play" id="plBtn" aria-label="Play">&#9654;</button><div class="track"><div class="bar" id="plBar"><i></i></div><div class="times"><span id="plNow">0:00</span><span id="plDur">' + mmss(voice.seconds || (ev.media && ev.media.seconds) || 0) + "</span></div></div>" +
+          '<a class="btn ghost sm" href="' + esc(withToken(ev.recording_url)) + '" download>Download</a></div><div class="lanes" id="plLanes"></div></div>';
+      } else {
+        html += '<p class="muted small">The audio is not kept, only the text.</p>';
+      }
+      if (voice.category && voice.category !== "none") {
+        const scam = voice.score >= 0.7;
+        html += '<div class="ai" style="margin-top:12px"><span class="pill ' + (scam ? "blocked" : "neutral") + '">' + (scam ? "Sounds like a scam" : "Not a scam") + '</span><span class="tag">' + esc(voice.category) + '</span><span class="tag">' + Math.round((voice.score || 0) * 100) + "% sure</span></div>";
+      } else if (voice.category === "none") {
+        html += '<div class="ai" style="margin-top:12px"><span class="pill allowed">Ordinary call</span></div>';
+      }
+      if (voice.summary) html += '<p class="small" style="margin:10px 0 0">' + esc(voice.summary) + "</p>";
+      if (turns.length) {
+        html += '<div class="transcript" id="plText" style="margin-top:14px">' + turns.map((t, i) => '<div class="bubble ' + (t.speaker === "callee" ? "callee" : "caller") + '" data-i="' + i + '" data-t="' + (t.start || 0) + '"><div class="who"><span>' + (t.speaker === "callee" ? "Callee" : "Caller") + "</span><span>" + mmss(t.start) + "</span></div><p>" + esc(t.text) + "</p></div>").join("") + "</div>";
+      } else if (voice.transcript) {
+        html += "<pre>" + esc(voice.transcript) + "</pre>";
+      } else if (voice.error) {
+        html += '<p class="small" style="color:#fca5a5;margin-top:10px">The transcript failed: ' + esc(voice.error) + "</p>";
+      } else if (ev.recording_url) {
+        html += '<p class="muted small" style="margin-top:10px">No transcript yet. Turn on AI voice analysis in Settings to get one.</p>';
+      }
+      box.innerHTML = html;
+      if (ev.recording_url) this.player(ev, turns);
+      const text = $("#plText");
+      if (text && this.audio) text.onclick = (e) => { const b = e.target.closest("[data-t]"); if (b) { this.audio.currentTime = Number(b.dataset.t); this.audio.play(); } };
+    },
+    player(ev, turns) {
+      const audio = new Audio();
+      audio.preload = "metadata";
+      audio.src = withToken(ev.recording_url);
+      this.audio = audio;
+      const btn = $("#plBtn"), bar = $("#plBar"), fill = $("#plBar i");
+      const total = () => (isFinite(audio.duration) && audio.duration > 0 ? audio.duration : (ev.voice && ev.voice.seconds) || (ev.media && ev.media.seconds) || 1);
+      const lanes = () => {
+        const tt = total();
+        const span = (t) => '<span style="left:' + Math.min(100, (t.start / tt) * 100) + "%;width:" + Math.max(0.6, ((t.end - t.start) / tt) * 100) + '%"></span>';
+        let fas = "";
+        const m = ev.media;
+        if (m && m.fas && m.fas_ms && m.answer_ms) {
+          const start = m.answer_ms / 1000, end = start + m.fas_ms / 1000;
+          fas = '<span>False answer</span><div class="lane fas">' + span({ start: start, end: Math.min(end, tt) }) + "</div>";
+        }
+        $("#plLanes").innerHTML = '<span>Caller</span><div class="lane caller">' + turns.filter((t) => t.speaker !== "callee").map(span).join("") + '</div><span>Callee</span><div class="lane callee">' + turns.filter((t) => t.speaker === "callee").map(span).join("") + "</div>" + fas;
+      };
+      lanes();
+      audio.addEventListener("loadedmetadata", () => { setText($("#plDur"), mmss(total())); lanes(); });
+      audio.addEventListener("timeupdate", () => {
+        fill.style.width = Math.min(100, (audio.currentTime / total()) * 100) + "%";
+        setText($("#plNow"), mmss(audio.currentTime));
+        $$("#plText .bubble").forEach((b) => {
+          const t = turns[Number(b.dataset.i)];
+          b.classList.toggle("playing", !audio.paused && audio.currentTime >= t.start && audio.currentTime < t.end + 0.3);
+        });
+      });
+      audio.addEventListener("play", () => { btn.innerHTML = "&#10074;&#10074;"; btn.setAttribute("aria-label", "Pause"); });
+      audio.addEventListener("pause", () => { btn.innerHTML = "&#9654;"; btn.setAttribute("aria-label", "Play"); });
+      audio.addEventListener("error", () => { $(".player").insertAdjacentHTML("beforeend", '<p class="small" style="color:#fca5a5;margin:0">The recording is gone. Recordings are kept for the days set in Settings.</p>'); btn.disabled = true; });
+      btn.onclick = () => { if (audio.paused) audio.play(); else audio.pause(); };
+      bar.onclick = (e) => { const r = bar.getBoundingClientRect(); audio.currentTime = ((e.clientX - r.left) / r.width) * total(); };
+    },
+    fasSection(ev) {
+      const m = ev.media;
+      const end = Math.max(m.end_ms || 0, m.answer_ms + 1);
+      const ring = m.answer_ms, falseMS = Math.min(m.fas_ms || 0, end - m.answer_ms), talk = Math.max(0, end - m.answer_ms - falseMS);
+      const pctW = (x) => ((x / end) * 100).toFixed(2) + "%";
+      const kind = { ringback: "kept ringing", busy: "played a busy tone", sit: "played an intercept", dead_air: "sent no audio" }[m.fas] || "";
+      const action = { held: "Falcon held the answer until a person spoke, so the caller was not billed for it.", failed: "Falcon failed the call back to the switch, so it could route the call again.", observed: "Falcon watched. Turn on FAS holding in Settings to stop it." }[m.fas_action] || "";
+      const head = m.fas ? '<p style="margin:0 0 10px"><b style="color:#fca5a5">False answer.</b> ' + esc((m.route || "The vendor") + " answered and then " + kind + " for " + seconds((m.fas_ms || 0) / 1000) + ". " + action) + "</p>" : '<p class="muted small" style="margin:0 0 10px">Clean answer' + (m.route ? " from " + esc(m.route) : "") + ". A person or a voice spoke after the answer.</p>";
+      $("#dwFas").innerHTML = "<h3>Answer supervision</h3>" + head + '<div class="timeline"><div class="tl-bar"><span class="tl-ring" style="width:' + pctW(ring) + '"></span>' + (falseMS ? '<span class="tl-false" style="width:' + pctW(falseMS) + '"></span>' : "") + '<span class="tl-talk" style="width:' + pctW(talk) + '"></span></div>' +
+        '<div class="tl-legend"><span><i class="tl-ring"></i>Setup ' + seconds(ring / 1000) + "</span>" + (falseMS ? '<span><i class="tl-false"></i>False answer ' + seconds(falseMS / 1000) + "</span>" : "") + '<span><i class="tl-talk"></i>Conversation ' + seconds(talk / 1000) + "</span>" + (m.ended_by ? "<span>Ended by " + esc(m.ended_by) + "</span>" : "") + "</div></div>";
+    },
+    technical(ev) {
+      const sh = ev.shaken || {};
+      const rows = [
+        ["Call-ID", ev.call_id], ["Source", [ev.source_ip, ev.provider].filter(Boolean).join(", ")], ["Software", ev.user_agent],
+        ["Signer", ev.signer_spc ? ev.signer_spc + (ev.signer_name ? ", " + ev.signer_name : "") : ""], ["Attestation", ev.shaken_attest],
+        ["Verification", ev.verstat], ["Switch", ev.switch], ["Latency added", ev.latency_us ? fmtMs(ev.latency_us / 1000) + " ms" : ""],
+        ["Fingerprint", ev.fingerprint], ["Bridged by", ev.media ? (ev.media.route || "the default path") + ", " + (ev.media.carry || "") : ""],
+      ].filter((r) => r[1]);
+      let checks = "";
+      if (sh.source === "switch") {
+        checks = '<p class="muted small" style="margin:12px 0 0">The switch signs this call after Falcon screens it' + (sh.attest ? " with attestation " + esc(sh.attest) : "") + ". Falcon did not check a signature.</p>";
+      } else if (sh.present) {
+        const c = [["Signature verifies", sh.signature_ok, sh.pending], ["Certificate chains to a trusted CA", sh.chain_trusted, sh.pending], ["Certificate not revoked", !sh.revoked, sh.pending], ["Signed caller ID matches", sh.orig_matches_from, !sh.orig_tn], ["Signature is fresh", sh.fresh, !sh.iat]];
+        checks = '<div class="check">' + c.map(([l, ok, na]) => '<div class="' + (na ? "na" : ok ? "ok" : "bad") + '"><span class="m">' + (na ? "-" : ok ? "✓" : "✕") + "</span><span>" + esc(l) + "</span></div>").join("") + "</div>";
+      }
+      return '<details class="tech"><summary>Technical details</summary><dl class="kv">' + rows.map((r) => "<dt>" + esc(r[0]) + "</dt><dd>" + esc(r[1]) + "</dd>").join("") + "</dl>" + checks + (ev.raw_sip ? "<pre>" + esc(ev.raw_sip) + "</pre>" : "") + "</details>";
+    },
+  };
+
+  // ================= THREATS =================
+  const TABS = [["numbers", "Numbers"], ["signers", "Signers"], ["networks", "Networks"], ["vendors", "Vendors"], ["mine", "Your numbers"]];
+  const Threats = {
+    title: "Threats",
+    mount(root, params) {
+      this.tab = TABS.some((t) => t[0] === params.tab) ? params.tab : "numbers";
+      root.innerHTML = '<div class="tabs" id="thTabs">' + TABS.map(([k, l]) => '<button type="button" data-t="' + k + '">' + l + "</button>").join("") + '</div><div id="thBody" class="stack"></div>';
+      $("#thTabs").onclick = (e) => { const b = e.target.closest("[data-t]"); if (b) { this.tab = b.dataset.t; history.replaceState(null, "", "#threats?tab=" + this.tab); this.show(); } };
+      $("#thBody").onclick = (e) => this.onClick(e);
+      this.show();
+    },
+    rangeChanged() { this.show(); },
+    show() {
+      $$("#thTabs [data-t]").forEach((b) => b.classList.toggle("on", b.dataset.t === this.tab));
+      const body = $("#thBody");
+      body.__html = null;
+      const fn = { numbers: this.numbers, signers: this.signers, networks: this.networks, vendors: this.vendors, mine: this.mine }[this.tab];
+      fn.call(this, body);
+    },
+    table(head, rows, empty) {
+      return '<div class="card flush"><div class="table-wrap"><table><thead><tr>' + head.map((h) => "<th" + (h[1] ? ' class="right"' : "") + ">" + esc(h[0]) + "</th>").join("") + "</tr></thead><tbody>" +
+        (rows.length ? rows.join("") : '<tr><td colspan="' + head.length + '"><div class="empty">' + empty + "</div></td></tr>") + "</tbody></table></div></div>";
+    },
+    async loadInto(body, key, url, render) {
+      if (cache[key]) patch(body, render(cache[key]));
+      else body.innerHTML = '<div class="card">' + sk("100%", 120) + "</div>";
+      try {
+        const d = await get(url);
+        remember(key, d);
+        if (state.view === this) patch(body, render(d));
+      } catch (e) { patch(body, '<div class="card"><div class="empty"><strong>Could not load</strong>' + esc(e.message) + "</div></div>"); }
+    },
+    numbers(body) {
+      this.loadInto(body, "suspects:" + state.range, "/v1/suspects?limit=60&range=" + state.range, (d) => {
+        const rows = (d.data || []).map((r) => '<tr><td class="mono">' + esc(r.number) + "</td><td>" + esc((r.reasons || []).slice(0, 2).map((x) => plain(x.code)).join(", ") || "High score") +
+          '</td><td class="right num">' + fmtN(r.calls) + '</td><td class="right num" style="color:' + (r.held ? "#fcd34d" : "inherit") + '">' + fmtN(r.held) + '</td><td class="right num">' + fmtN(r.destinations) + '</td><td class="muted small">' + esc(ago(r.last_seen)) +
+          '</td><td class="acts"><a class="btn sm" href="#calls?q=' + encodeURIComponent(r.number) + '">Calls</a>' +
+          (r.calls > r.reject ? '<button type="button" class="btn danger sm" data-rule="deny|number|' + esc(r.number) + '">Block</button>' : '<span class="muted small">Already blocked</span>') + "</td></tr>");
+        return '<p class="muted small" style="margin:0">Calling numbers that stand out in ' + esc(rangeWords(state.range)) + ". Flagged calls got through, so numbers with the most flagged calls come first.</p>" +
+          this.table([["Number"], ["Why"], ["Calls", 1], ["Flagged", 1], ["People reached", 1], ["Last seen"], [""]], rows, "<strong>No number stands out</strong>Calls look ordinary in this window.");
+      });
+    },
+    signers(body) {
+      this.loadInto(body, "signers:" + state.range, "/v1/parties?by=signer&limit=100&range=" + state.range, (d) => {
+        const rows = (d.data || []).map((p) => '<tr><td class="mono">' + esc(p.name) + "</td><td>" + esc(p.label || "") + '</td><td class="right num">' + fmtN(p.total) +
+          '</td><td class="right num" style="color:' + (p.verstat_failed / Math.max(1, p.total) > 0.2 ? "#fca5a5" : "inherit") + '">' + pctText(p.verstat_failed, p.total) +
+          '</td><td class="right num">' + pctText(p.reject, p.total) + '</td><td class="right num">' + (p.network_score ? esc(p.network_score) : "") +
+          '</td><td class="acts"><a class="btn sm" href="#calls?q=' + encodeURIComponent(p.name) + '">Calls</a><a class="btn ghost sm" href="' + esc(withToken("/v1/traceback.zip?spc=" + encodeURIComponent(p.name) + "&range=" + state.range)) + '" title="The archive a traceback request asks for">Traceback</a><button type="button" class="btn danger sm" data-rule="deny|spc|' + esc(p.name) + '">Block</button></td></tr>');
+        return '<p class="muted small" style="margin:0">The providers that signed calls with STIR/SHAKEN. Blocking a signer stops every call it attests, whatever number it shows.</p>' +
+          this.table([["SPC"], ["Signer"], ["Calls", 1], ["Failed", 1], ["Blocked", 1], ["Network score", 1], [""]], rows, "<strong>No signed calls</strong>Signers appear once INVITEs carry a STIR/SHAKEN signature.");
+      });
+    },
+    networks(body) {
+      this.loadInto(body, "ips:" + state.range, "/v1/parties?by=ip&limit=100&range=" + state.range, (d) => {
+        const rows = (d.data || []).map((p) => '<tr><td class="mono">' + esc(p.name) + "</td><td>" + esc(p.label || "") + '</td><td class="right num">' + fmtN(p.total) +
+          '</td><td class="right num" style="color:' + (p.reject / Math.max(1, p.total) > 0.5 ? "#fca5a5" : "inherit") + '">' + pctText(p.reject, p.total) + '</td><td class="right num">' + fmtN(p.distinct_from) +
+          '</td><td class="muted small">' + esc(ago(p.last_seen)) + '</td><td class="acts"><a class="btn sm" href="#calls?q=' + encodeURIComponent(p.name) + '">Calls</a><button type="button" class="btn danger sm" data-rule="deny|ip|' + esc(p.name) + '">Block</button></td></tr>');
+        return '<p class="muted small" style="margin:0">Where the SIP came from, with the network that owns each address.</p>' +
+          this.table([["Address"], ["Network"], ["Calls", 1], ["Blocked", 1], ["Callers", 1], ["Last seen"], [""]], rows, "<strong>No traffic</strong>No calls in this window.");
+      });
+    },
+    vendors(body) {
+      const render = (d) => {
+        const vs = d.vendors || {}, routes = d.routes || {};
+        const rows = (vs.data || []).map((r) => {
+          const kinds = (r.by_kind || []).map((k) => k.count + " " + ({ ringback: "ringback", busy: "busy", sit: "intercept", dead_air: "silence" }[k.kind] || k.kind)).join(", ");
+          return "<tr><td>" + esc(r.route || "Default path") + '</td><td class="right num">' + fmtN(r.calls) + '</td><td class="right num">' + pctText(r.answered, r.calls) +
+            '</td><td class="right num" style="color:' + (r.fas ? "#fca5a5" : "inherit") + '">' + fmtN(r.fas) + "</td><td>" + esc(kinds) + '</td><td class="right num">' + (r.fas_seconds ? seconds(r.fas_seconds) : "") +
+            '</td><td class="right num">' + (r.avg_ring_ms ? (r.avg_ring_ms / 1000).toFixed(1) + " s" : "") + "</td></tr>";
+        });
+        const rts = (routes.data || []).map((r) => '<tr><td class="mono">' + esc(r.prefix) + "</td><td>" + esc(r.label) + "</td><td>" + (r.target ? '<span class="mono">' + esc(r.target) + "</span>" : "Back to the switch") +
+          "</td><td>" + (r.strip ? "Yes" : "No") + "</td><td>" + (r.carry === "all" ? "Every call" : "Suspicious calls") + '</td><td class="acts"><button type="button" class="btn ghost sm" data-delroute="' + r.id + '">Remove</button></td></tr>');
+        const fasMode = vs.fas_mode || "monitor";
+        return '<p class="muted small" style="margin:0">False answer supervision per vendor on bridged calls. ' + (fasMode === "enforce" ? "Falcon holds each answer until a person speaks." : fasMode === "off" ? "The FAS guard is off." : "Falcon watches. It does not hold answers yet.") + "</p>" +
+          this.table([["Vendor"], ["Bridged", 1], ["Answered", 1], ["False answers", 1], ["Kinds"], ["Billed falsely", 1], ["Avg ring", 1]], rows, "<strong>No bridged calls</strong>Turn on the call bridge to hear vendor answers.") +
+          '<div class="card"><div class="card-head"><h2>Vendor routes</h2><span class="hint">The switch adds a tech prefix, Falcon names the vendor</span></div>' +
+          '<form id="routeForm" class="form-row" style="grid-template-columns:110px 1.2fr 1.2fr 140px 120px auto">' +
+          '<label class="field">Prefix<input name="prefix" type="text" placeholder="9901" required></label><label class="field">Vendor name<input name="label" type="text" placeholder="Vendor X" required></label>' +
+          '<label class="field">Send to (empty: back to the switch)<input name="target" type="text" placeholder="203.0.113.7:5060"></label>' +
+          '<label class="field">Carry<select name="carry"><option value="all">Every call</option><option value="suspicious">Suspicious calls</option></select></label>' +
+          '<label class="field">Strip prefix<select name="strip"><option value="true">Yes</option><option value="false">No</option></select></label><button class="btn primary" type="submit">Add route</button></form>' +
+          '<div style="margin-top:14px">' + this.table([["Prefix"], ["Vendor"], ["Send to"], ["Strip"], ["Carry"], [""]], rts, "No routes. Calls without a prefix go back to the switch.") + "</div></div>";
+      };
+      const key = "vendors:" + state.range;
+      if (cache[key]) patch(body, render(cache[key])); else body.innerHTML = '<div class="card">' + sk("100%", 120) + "</div>";
+      Promise.all([get("/v1/vendors?range=" + state.range), get("/v1/routes")]).then(([vendors, routes]) => {
+        const d = { vendors, routes };
+        remember(key, d);
+        if (state.view === this && this.tab === "vendors") { patch(body, render(d)); this.bindRoutes(); }
+      }).catch((e) => toast(e.message, "bad"));
+      this.bindRoutes();
+    },
+    bindRoutes() {
+      const form = $("#routeForm");
+      if (!form || form.__bound) return;
+      form.__bound = true;
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        const f = new FormData(form);
+        try {
+          await post("/v1/routes", { prefix: f.get("prefix"), label: f.get("label"), target: f.get("target"), carry: f.get("carry"), strip: f.get("strip") === "true" });
+          toast("Route saved. The bridge uses it on the next call.", "ok");
+          this.show();
+        } catch (err) { toast(err.message, "bad"); }
+      };
+    },
+    mine(body) {
+      body.innerHTML = '<div class="card" id="ncImport"><div class="card-head"><h2>Your numbers</h2><span class="hint">1 credit per new number, 1 credit per number on each recheck</span></div>' +
+        '<p class="muted small" style="margin:0 0 12px">Import a file with your numbers. Falcon finds them in any text, spreadsheet, or PDF, and shows which ones carriers and apps flag.</p>' +
+        '<form id="ncForm" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><input id="ncFile" type="file" required><button class="btn primary" type="submit">Import numbers</button></form></div>' +
+        '<div class="card" id="ncSched" hidden></div>' +
+        '<div id="ncPanel">' + '<div class="card">' + sk("100%", 120) + "</div></div>";
+      get("/v1/numbercheck/schedule").then((s) => this.paintSchedule(s)).catch(() => { /* number check is off; the panel says why */ });
+      $("#ncForm").onsubmit = async (e) => {
+        e.preventDefault();
+        const file = $("#ncFile").files[0];
+        if (!file) return;
+        const fd = new FormData();
+        fd.append("file", file, file.name);
+        const btn = $("#ncForm button");
+        btn.disabled = true;
+        try {
+          const res = await fetch("/v1/numbercheck/import", { method: "POST", headers: headers(), body: fd });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || res.statusText);
+          toast("Numbers imported", "ok");
+          this.paintNumbers(data);
+        } catch (err) { toast(err.message, "bad"); }
+        btn.disabled = false;
+      };
+      get("/v1/numbercheck/view?q=" + encodeURIComponent(state.q)).then((d) => this.paintNumbers(d)).catch((e) => {
+        const off = /CALLERAPI_API_KEY/.test(e.message);
+        if (off && $("#ncImport")) $("#ncImport").hidden = true;
+        patch($("#ncPanel"), '<div class="card"><div class="empty"><strong>' + (off ? "Number check is off" : "Could not load your numbers") + "</strong>" +
+          esc(off ? "Set CALLERAPI_API_KEY to keep a list of your own numbers and recheck them on a schedule." : e.message) + "</div></div>");
+      });
+    },
+    paintSchedule(s) {
+      const box = $("#ncSched");
+      if (!box) return;
+      const days = [[1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "Sat"], [7, "Sun"]];
+      const on = new Set(s.weekdays || []);
+      const state = { off: "Off", scheduled: "Next check " + (s.next_run_local || "soon"), checking: "Checking now", paused: "Paused: the account is out of credits" }[s.state] || s.state || "";
+      const zone = s.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      box.hidden = false;
+      box.innerHTML = '<div class="card-head"><h2>Recheck schedule</h2><span class="hint">' + esc(state) + "</span></div>" +
+        '<form id="ncSchedForm" class="form-row" style="grid-template-columns:110px 140px repeat(2, 120px) minmax(0,1fr) auto">' +
+        '<label class="field">Recheck<select name="enabled"><option value="true">On</option><option value="false">Off</option></select></label>' +
+        '<label class="field">Every<select name="interval_minutes"><option value="15">15 minutes</option><option value="60">Hour</option><option value="360">6 hours</option><option value="1440">Day</option></select></label>' +
+        '<label class="field">From<input name="start" type="time" value="' + esc(s.start || "09:00") + '"></label>' +
+        '<label class="field">To<input name="end" type="time" value="' + esc(s.end || "17:00") + '"></label>' +
+        '<label class="field">Time zone<input name="timezone" type="text" value="' + esc(zone) + '"></label>' +
+        '<button class="btn primary" type="submit">Save</button></form>' +
+        '<div class="chips" id="ncDays" style="margin-top:12px">' + days.map(([n, l]) => '<button type="button" class="chip-btn' + (on.has(n) ? " on" : "") + '" data-day="' + n + '">' + l + "</button>").join("") + "</div>" +
+        (s.last_run_local ? '<p class="muted small" style="margin:10px 0 0">Last check ' + esc(s.last_run_local) + (s.note ? ". " + esc(s.note) : "") + "</p>" : "");
+      const form = $("#ncSchedForm");
+      form.enabled.value = s.enabled ? "true" : "false";
+      form.interval_minutes.value = String(s.interval_minutes || 60);
+      $("#ncDays").onclick = (e) => { const b = e.target.closest("[data-day]"); if (b) b.classList.toggle("on"); };
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        const weekdays = $$("#ncDays .on").map((b) => Number(b.dataset.day));
+        try {
+          const saved = await put("/v1/numbercheck/schedule", { enabled: form.enabled.value === "true", interval_minutes: Number(form.interval_minutes.value), weekdays, start: form.start.value, end: form.end.value, timezone: form.timezone.value.trim() });
+          toast("Schedule saved. Each recheck costs 1 credit per number.", "ok");
+          this.paintSchedule(saved);
+        } catch (err) { toast(err.message, "bad"); }
+      };
+    },
+    paintNumbers(panel) {
+      const cols = panel.columns || [];
+      const stats = (panel.stats || []).map((s) => '<article class="card kpi" style="min-height:0"><div class="kpi-label">' + esc(s.label) + '</div><div class="kpi-value num" style="font-size:22px">' + esc(s.value) + "</div></article>").join("");
+      const rows = (panel.rows || []).map((r) => "<tr>" + cols.map((c) => "<td" + (c.key === "number" ? ' class="mono"' : "") + ">" + (c.key === "status" ? '<span class="pill ' + (r[c.key] === "flagged" ? "blocked" : r[c.key] === "clear" ? "allowed" : "neutral") + '">' + esc(r[c.key] || "pending") + "</span>" : esc(r[c.key] || "")) + "</td>").join("") + "</tr>");
+      patch($("#ncPanel"), (stats ? '<section class="grid kpis" style="margin-bottom:16px">' + stats + "</section>" : "") + this.table(cols.map((c) => [c.label || c.key]), rows, "<strong>No numbers yet</strong>Import a file to start."));
+    },
+    async onClick(e) {
+      const rule = e.target.closest("[data-rule]");
+      if (rule) {
+        const [kind, subject, value] = rule.dataset.rule.split("|");
+        rule.disabled = true;
+        if (await addRule({ kind, subject, value, note: "from threats" }, "Blocked " + value)) rule.textContent = "Blocked";
+        else rule.disabled = false;
+        return;
+      }
+      const dr = e.target.closest("[data-delroute]");
+      if (dr) {
+        try { await del("/v1/routes/" + dr.dataset.delroute); toast("Route removed", "ok"); this.show(); } catch (err) { toast(err.message, "bad"); }
+      }
+    },
+  };
+
+  // ================= RULES =================
+  const Rules = {
+    title: "Rules",
+    mount(root) {
+      root.innerHTML =
+        '<div class="card"><div class="card-head"><h2>Add a rule</h2><span class="hint">Applies to the next call</span></div>' +
+        '<form id="ruleForm" class="form-row" style="grid-template-columns:150px 160px minmax(0,1.4fr) minmax(0,1fr) 130px auto">' +
+        '<label class="field">Do<select name="kind"><option value="deny">Block</option><option value="allow">Always allow</option><option value="honeypot">Honeypot</option></select></label>' +
+        '<label class="field">Match<select name="subject"><option value="number">Number</option><option value="ip">Address or range</option><option value="spc">Signer (SPC)</option></select></label>' +
+        '<label class="field">Value<input name="value" type="text" placeholder="+14155550100, 203.0.113.0/24, or 1234" required></label>' +
+        '<label class="field">Note<input name="note" type="text" placeholder="Why"></label>' +
+        '<label class="field">For<select name="ttl"><option value="">Always</option><option value="1h">1 hour</option><option value="24h">1 day</option><option value="168h">7 days</option><option value="720h">30 days</option></select></label>' +
+        '<button class="btn primary" type="submit">Save</button></form>' +
+        '<p class="muted small" style="margin:12px 0 0">Block rejects the call with SIP 603. Always allow skips every check. Honeypot marks your unassigned numbers: anyone who calls them is a robocaller.</p></div>' +
+        '<div id="ruleList">' + '<div class="card">' + sk("100%", 80) + "</div></div>" +
+        '<div class="card"><div class="card-head"><h2>Your customers</h2><span class="hint">Outbound calls with a caller ID the customer does not own are rejected</span></div>' +
+        '<form id="custForm" class="form-row" style="grid-template-columns:minmax(0,0.8fr) minmax(0,1fr) minmax(0,2fr) auto">' +
+        '<label class="field">Account ID<input name="id" type="text" placeholder="acme" required></label><label class="field">Name<input name="name" type="text" placeholder="Acme Dialer"></label>' +
+        '<label class="field">Numbers it may send, comma separated. End a prefix with *<input name="dids" type="text" placeholder="+13125550100, +1312555*"></label><button class="btn primary" type="submit">Save</button></form>' +
+        '<div id="custList" style="margin-top:14px"></div></div>';
+      $("#ruleForm").onsubmit = async (e) => {
+        e.preventDefault();
+        const f = new FormData(e.target);
+        const kind = f.get("kind");
+        if (await addRule({ kind, subject: f.get("subject"), value: f.get("value"), note: f.get("note"), ttl: f.get("ttl") }, kind === "deny" ? "Blocked" : kind === "allow" ? "Allowed" : "Honeypot saved")) { e.target.reset(); this.loadRules(); }
+      };
+      $("#custForm").onsubmit = async (e) => {
+        e.preventDefault();
+        const f = new FormData(e.target);
+        try {
+          await put("/v1/customers", { id: f.get("id"), name: f.get("name"), dids: String(f.get("dids") || "").split(",").map((x) => x.trim()).filter(Boolean) });
+          toast("Customer saved", "ok");
+          e.target.reset();
+          this.loadCustomers();
+        } catch (err) { toast(err.message, "bad"); }
+      };
+      $("#ruleList").onclick = async (e) => {
+        const b = e.target.closest("[data-del]");
+        if (!b) return;
+        try { await del("/v1/rules/" + b.dataset.del); toast("Rule removed", "ok"); this.loadRules(); } catch (err) { toast(err.message, "bad"); }
+      };
+      $("#custList").onclick = async (e) => {
+        const b = e.target.closest("[data-cust]");
+        if (!b) return;
+        try { await del("/v1/customers/" + encodeURIComponent(b.dataset.cust)); toast("Customer removed", "ok"); this.loadCustomers(); } catch (err) { toast(err.message, "bad"); }
+      };
+      this.loadRules();
+      this.loadCustomers();
+    },
+    async loadRules() {
+      try {
+        const res = await get("/v1/rules");
+        const rows = (res.data || []).map((r) => {
+          const kind = r.kind === "deny" ? '<span class="pill blocked">Block</span>' : r.kind === "allow" ? '<span class="pill allowed">Allow</span>' : '<span class="pill flagged">Honeypot</span>';
+          const exp = r.expires_at && r.expires_at.indexOf("0001") !== 0 ? "Until " + dayClock(r.expires_at) : "Always";
+          return "<tr><td>" + kind + "</td><td>" + esc({ number: "Number", ip: "Address", spc: "Signer" }[r.subject] || r.subject) + '</td><td class="mono">' + esc(r.value) + "</td><td>" + esc(r.note || "") +
+            '</td><td class="muted small">' + esc(exp) + (r.origin === "fleet" ? ", from the fleet hub" : "") + '</td><td class="acts">' + (r.origin === "fleet" ? "" : '<button type="button" class="btn ghost sm" data-del="' + r.id + '">Remove</button>') + "</td></tr>";
+        });
+        patch($("#ruleList"), Threats.table([["Rule"], ["Match"], ["Value"], ["Note"], ["Active"], [""]], rows, "<strong>No rules yet</strong>Block a number from any call, or add one above."));
+      } catch (e) { toast(e.message, "bad"); }
+    },
+    async loadCustomers() {
+      try {
+        const res = await get("/v1/customers");
+        const custs = res.data || [];
+        if (!custs.length) { patch($("#custList"), '<p class="muted small" style="margin:0">No customers. Add one to stop your own customers from sending caller IDs they do not own.</p>'); return; }
+        patch($("#custList"), '<div class="table-wrap"><table><thead><tr><th>Account</th><th>Name</th><th>Numbers</th><th></th></tr></thead><tbody>' + custs.map((c) => '<tr><td class="mono">' + esc(c.id) + "</td><td>" + esc(c.name || "") + '</td><td class="mono small">' + esc((c.dids || []).join(", ") || "Any caller ID") +
+          '</td><td class="acts"><a class="btn sm" href="#calls?q=' + encodeURIComponent(c.id) + '">Calls</a><button type="button" class="btn ghost sm" data-cust="' + esc(c.id) + '">Remove</button></td></tr>').join("") + "</tbody></table></div>");
+      } catch (e) { toast(e.message, "bad"); }
+    },
+  };
+
+  // ================= SETTINGS =================
+  const PRESETS = [
+    ["relaxed", "Relaxed", { flag_score: 50, challenge_score: 75, reject_score: 95 }, "Blocks only near-certain fraud."],
+    ["balanced", "Balanced", { flag_score: 40, challenge_score: 60, reject_score: 80 }, "The default for a PBX trunk."],
+    ["strict", "Strict", { flag_score: 30, challenge_score: 50, reject_score: 70 }, "Blocks more. Watch for false blocks."],
+    ["carrier", "Carrier", { flag_score: 40, challenge_score: 101, reject_score: 101 }, "Scores only flag. Lists and hard checks still block."],
+  ];
+  const Settings = {
+    title: "Settings",
+    async mount(root) {
+      root.innerHTML = '<div class="card flush" id="setMain"><div style="padding:20px">' + sk("100%", 160) + "</div></div>" + '<div class="card"><div class="card-head"><h2>Add-ons</h2><span class="hint">Built in. Each one says how to turn it on.</span></div><div class="modules" id="setModules">' + sk("100%", 90) + "</div></div>" +
+        '<div class="grid two"><div class="card" id="setAlerts"></div><div class="card" id="setData"></div></div><div class="card" id="setSystem"></div>';
+      try {
+        const [settings, status, modules, alertsRes, audit, cfg] = await Promise.all([get("/v1/settings"), loadStatus(), get("/v1/modules"), get("/v1/alerts?limit=8"), get("/v1/audit?limit=12"), get("/v1/config")]);
+        if (state.view !== this) return;
+        this.eff = settings.effective;
+        this.paintMain(status);
+        this.paintModules(modules.data || []);
+        this.paintAlerts(alertsRes);
+        this.paintData(settings, status);
+        this.paintSystem(status, audit.data || [], cfg);
+      } catch (e) { toast(e.message, "bad"); }
+    },
+    paintMain(status) {
+      const e = this.eff, sip = (status && status.sip) || {};
+      const preset = PRESETS.find((p) => p[2].flag_score === e.flag_score && p[2].challenge_score === e.challenge_score && p[2].reject_score === e.reject_score);
+      const bridge = sip.mode === "bridge" && sip.enabled;
+      $("#setMain").innerHTML =
+        '<div class="set"><div><h3>Protection</h3><p>Enforce blocks hard fraud and tells the switch to drop it. Monitor records every decision and blocks nothing. Start a new switch in monitor for a week.</p></div><div class="ctl">' +
+        '<div class="seg" id="modeSeg"><button type="button" data-v="enforce">Enforce</button><button type="button" data-v="monitor">Monitor</button></div></div></div>' +
+        '<div class="set"><div><h3>Sensitivity</h3><p>How high a score has to be before Falcon flags, holds, or blocks a call.</p></div><div class="ctl">' +
+        '<div class="seg" id="presetSeg">' + PRESETS.map((p) => '<button type="button" data-p="' + p[0] + '">' + p[1] + "</button>").join("") + "</div>" +
+        '<p class="muted small" id="presetHint">' + esc(preset ? preset[3] : "Custom levels") + "</p>" +
+        '<form id="threshForm" class="form-row" style="grid-template-columns:repeat(3, 110px) auto"><label class="field">Flag at<input name="flag_score" type="number" min="0" max="101" value="' + e.flag_score + '"></label><label class="field">Hold at<input name="challenge_score" type="number" min="0" max="101" value="' + e.challenge_score + '"></label><label class="field">Block at<input name="reject_score" type="number" min="0" max="101" value="' + e.reject_score + '"></label><button class="btn" type="submit">Save levels</button></form></div></div>' +
+        '<div class="set"><div><h3>Call bridge and recording</h3><p>' + (bridge ? "Falcon carries suspicious calls back to your switch, records both sides, and hears false answers." : "Off. Set FALCON_SIP_LISTEN and FALCON_SIP_MODE=bridge, then add Falcon to your switch as a carrier and as a customer.") + "</p></div><div class=\"ctl\">" +
+        (bridge ? '<span class="tag good">On: ' + fmtN(sip.active_calls || 0) + " calls up, room for " + fmtN(sip.capacity || 0) + "</span>" : '<span class="tag">Off</span>') +
+        '<form id="bridgeForm" class="form-row" style="grid-template-columns:repeat(3, 150px) auto"><label class="field">Keep recordings (days)<input name="recording_retention_days" type="number" min="0" max="3650" value="' + e.recording_retention_days + '"></label>' +
+        '<label class="field">Hear 1 in N fan-out calls<input name="bridge_fanout_every" type="number" min="0" value="' + e.bridge_fanout_every + '"></label><label class="field">Hear 1 in N clean calls<input name="bridge_clean_every" type="number" min="0" value="' + e.bridge_clean_every + '"></label><button class="btn" type="submit">Save</button></form>' +
+        '<p class="muted small" style="margin:0">0 turns sampling off. Clean-call sampling lets the FAS guard check vendors on ordinary traffic.</p></div></div>' +
+        '<div class="set"><div><h3>FAS guard</h3><p>Hears ringback, busy, intercepts, and silence after a vendor answers a bridged call. Watch records it and alerts. Hold keeps the answer back until a person speaks, so your customer is not billed for a false answer and the switch can route again.</p></div><div class="ctl">' +
+        '<div class="seg" id="fasSeg"><button type="button" data-v="off">Off</button><button type="button" data-v="monitor">Watch</button><button type="button" data-v="enforce">Hold</button></div>' +
+        (bridge ? "" : '<p class="muted small" style="margin:0">Needs the call bridge.</p>') + "</div></div>";
+      const paintSegs = () => {
+        $$("#modeSeg button").forEach((b) => b.classList.toggle("on", b.dataset.v === this.eff.mode));
+        $$("#fasSeg button").forEach((b) => b.classList.toggle("on", b.dataset.v === this.eff.fas_mode));
+        const p = PRESETS.find((x) => x[2].flag_score === this.eff.flag_score && x[2].challenge_score === this.eff.challenge_score && x[2].reject_score === this.eff.reject_score);
+        $$("#presetSeg button").forEach((b) => b.classList.toggle("on", !!p && b.dataset.p === p[0]));
+        setText($("#presetHint"), p ? p[3] : "Custom levels");
+      };
+      paintSegs();
+      const apply = async (body, text) => { const eff = await saveSettings(body, text); if (eff) { this.eff = eff; paintSegs(); const tf = $("#threshForm"); ["flag_score", "challenge_score", "reject_score"].forEach((k) => { tf[k].value = eff[k]; }); loadStatus(); } };
+      $("#modeSeg").onclick = (ev) => { const b = ev.target.closest("[data-v]"); if (b && b.dataset.v !== this.eff.mode) apply({ mode: b.dataset.v }, b.dataset.v === "enforce" ? "Enforce: Falcon blocks hard fraud now" : "Monitor: Falcon records and blocks nothing"); };
+      $("#fasSeg").onclick = (ev) => { const b = ev.target.closest("[data-v]"); if (b && b.dataset.v !== this.eff.fas_mode) apply({ fas_mode: b.dataset.v }, "FAS guard saved"); };
+      $("#presetSeg").onclick = (ev) => { const b = ev.target.closest("[data-p]"); const p = b && PRESETS.find((x) => x[0] === b.dataset.p); if (p) apply(p[2], p[1] + " levels saved"); };
+      $("#threshForm").onsubmit = (ev) => { ev.preventDefault(); const f = ev.target; apply({ flag_score: Number(f.flag_score.value), challenge_score: Number(f.challenge_score.value), reject_score: Number(f.reject_score.value) }, "Levels saved"); };
+      $("#bridgeForm").onsubmit = (ev) => { ev.preventDefault(); const f = ev.target; apply({ recording_retention_days: Number(f.recording_retention_days.value), bridge_fanout_every: Number(f.bridge_fanout_every.value), bridge_clean_every: Number(f.bridge_clean_every.value) }, "Bridge settings saved"); };
+    },
+    paintModules(mods) {
+      const words = { on: "On", off: "Off", needs_key: "Needs a key", error: "Problem" };
+      patch($("#setModules"), mods.map((m) => '<div class="module"><div class="module-top"><strong>' + esc(m.title) + '</strong><span class="state ' + esc(m.state) + '">' + esc(words[m.state] || m.state) + "</span></div><p>" + esc(m.summary) + "</p>" +
+        (m.detail ? '<p style="color:var(--text-2)">' + esc(m.detail) + "</p>" : "") + (m.state !== "on" && m.enable ? '<span class="enable">' + esc(m.enable) + "</span>" : "") + "</div>").join(""));
+    },
+    paintAlerts(res) {
+      const th = res.settings || {};
+      const list = (res.data || []).map((a) => '<li><div><div class="t">' + esc(a.title) + '</div><div class="d">' + esc(ago(a.at)) + (a.delivered ? "" : a.error ? ", not delivered: " + esc(a.error) : ", kept here only") + "</div></div><span></span></li>").join("");
+      $("#setAlerts").innerHTML = '<div class="card-head"><h2>Alerts</h2><span class="hint">Slack or any JSON webhook</span></div>' +
+        '<form id="alertForm" class="stack" style="gap:12px"><label class="field">Webhook URL<input name="alert_webhook_url" type="url" placeholder="https://hooks.slack.com/services/..." value="' + esc(th.alert_webhook_url || "") + '"></label>' +
+        '<div class="form-row" style="grid-template-columns:repeat(2, minmax(0,1fr))"><label class="field">Page when blocks pass (%)<input name="alert_reject_pct" type="number" min="0" max="100" value="' + esc(th.alert_reject_pct) + '"></label>' +
+        '<label class="field">Page when a signer fails (%)<input name="alert_signer_reject_pct" type="number" min="0" max="100" value="' + esc(th.alert_signer_reject_pct) + '"></label></div>' +
+        '<div style="display:flex;gap:8px"><button class="btn primary" type="submit">Save</button><button class="btn" type="button" id="alertTest">Send a test</button></div></form>' +
+        (list ? '<ul class="reasons" style="margin-top:14px">' + list + "</ul>" : '<p class="muted small" style="margin:14px 0 0">No alerts yet.</p>');
+      $("#alertForm").onsubmit = async (e) => {
+        e.preventDefault();
+        const f = e.target;
+        try { await put("/v1/alerts/settings", Object.assign({}, th, { alert_webhook_url: f.alert_webhook_url.value, alert_reject_pct: Number(f.alert_reject_pct.value), alert_signer_reject_pct: Number(f.alert_signer_reject_pct.value) })); toast("Alerts saved", "ok"); } catch (err) { toast(err.message, "bad"); }
+      };
+      $("#alertTest").onclick = async () => { try { await post("/v1/alerts/test", {}); toast("Test alert sent", "ok"); } catch (err) { toast(err.message, "bad"); } };
+    },
+    paintData(settings, status) {
+      const e = settings.effective, share = (status && status.share) || {};
+      $("#setData").innerHTML = '<div class="card-head"><h2>Data and privacy</h2></div>' +
+        '<form id="retForm" class="form-row" style="grid-template-columns:repeat(2, minmax(0,1fr)) auto"><label class="field">Keep calls (days)<input name="retention_days" type="number" min="1" max="3650" value="' + e.retention_days + '"></label>' +
+        '<label class="field">Keep raw SIP (days)<input name="raw_sip_retention_days" type="number" min="0" max="3650" value="' + e.raw_sip_retention_days + '"></label><button class="btn" type="submit">Save</button></form>' +
+        '<dl class="kv"><dt>Telemetry</dt><dd>' + (share.effective ? "On. Redacted call decisions go to CallerAPI and make every install sharper. Set FALCON_SHARE=false to turn it off." : status && status.demo && status.demo.enabled ? "Off in demo mode. Demo calls are synthetic." : "Off (FALCON_SHARE=false).") + "</dd>" +
+        "<dt>Never leaves this host</dt><dd>" + esc((share.redacted || []).join(", ")) + "</dd></dl>";
+      $("#retForm").onsubmit = async (ev) => {
+        ev.preventDefault();
+        const f = ev.target;
+        await saveSettings({ retention_days: Number(f.retention_days.value), raw_sip_retention_days: Number(f.raw_sip_retention_days.value) }, "Retention saved");
+      };
+    },
+    paintSystem(st, audit, cfg) {
+      const tr = (st.shaken && st.shaken.trust) || {};
+      const rows = [
+        ["Version", st.version + (st.release && st.release.newer ? ", " + st.release.latest + " is out" : "")], ["Install", st.install_id], ["Started", ago(st.started_at)],
+        ["Profile", st.profile], ["SIP", st.sip && st.sip.enabled ? st.sip.mode + " on " + st.sip.listen : "Off"],
+        ["STIR/SHAKEN", st.shaken && st.shaken.enabled ? (tr.roots ? tr.roots + " trusted roots" : "Trust list not loaded") : "Off"],
+        ["Spam list", st.spam_feed && st.spam_feed.configured ? fmtN(st.spam_feed.count) + " numbers" : "Off"],
+        ["IP fraud list", st.ip_intel && st.ip_intel.configured ? fmtN(st.ip_intel.count) + " blocks" : "Off"],
+        ["Recordings", (cfg.bridge && cfg.bridge.recordings) || ""],
+      ];
+      $("#setSystem").innerHTML = '<div class="card-head"><h2>System</h2><div style="display:flex;gap:8px"><button type="button" class="btn sm" id="reloadBtn">Reload lists</button><a class="btn sm" href="' + esc(withToken("/metrics")) + '" target="_blank" rel="noreferrer">Prometheus</a><a class="btn sm" href="' + esc(withToken("/v1/events.csv?range=" + state.range)) + '">Export CSV</a></div></div>' +
+        '<div class="grid two"><dl class="kv" style="margin:0">' + rows.map((r) => "<dt>" + esc(r[0]) + "</dt><dd>" + esc(r[1]) + "</dd>").join("") + "</dl>" +
+        '<div><h3 class="muted small" style="margin:0 0 8px">Changes</h3>' + (audit.length ? '<ul class="reasons">' + audit.map((a) => '<li><div><div class="t">' + esc(a.action + " " + a.subject) + '</div><div class="d">' + esc(ago(a.at) + ", " + a.actor) + "</div></div><span></span></li>").join("") + "</ul>" : '<p class="muted small">No changes yet.</p>') + "</div></div>";
+      $("#reloadBtn").onclick = async (e) => { e.target.disabled = true; try { await post("/v1/reload", {}); toast("Lists reloaded", "ok"); } catch (err) { toast(err.message, "bad"); } e.target.disabled = false; };
+    },
+  };
+
+  // ---------- Ask Falcon ----------
   const ask = { history: [], busy: false };
-  function askOpen() {
-    $("#ask").hidden = false; $("#scrim").hidden = false;
+  $("#askBtn").onclick = () => {
+    $("#ask").hidden = false;
+    $("#scrim").hidden = false;
+    const a = (state.status && state.status.assistant) || {};
+    setText($("#askProvider"), "Answers from this install's data for " + rangeWords(state.range) + (a.model ? ", " + a.model : ""));
     $("#askInput").focus();
-    askRefresh();
-  }
-  function askClose() { $("#ask").hidden = true; if ($("#drawer").hidden) $("#scrim").hidden = true; }
-  async function askRefresh() {
-    try {
-      const [v, st] = await Promise.all([get("/v1/value?range=" + state.range), state.status ? Promise.resolve(state.status) : get("/v1/status")]);
-      const a = (st && st.assistant) || {};
-      $("#askProvider").textContent = a.provider ? "answers by " + a.provider + (a.model ? " · " + a.model : "") + " · context is this install's data for " + rangeLabel(state.range) : "no model connected · value card only · set FALCON_ASSISTANT_PROVIDER to ask questions";
-      $("#askValue").innerHTML = '<div class="big"><b>' + fmtN(v.blocked) + '</b> of ' + fmtN(v.screened) + ' blocked · ' + (v.blocked_pct || 0).toFixed(1) + '%</div><div class="small" style="margin-top:6px">' + esc(v.sentence) + '</div>' +
-        '<div class="row">' + [["spoofs stopped", v.spoofs_stopped], ["verify failed", v.verify_failed], ["honeypot hits", v.honeypot_hits], ["replayed recordings", v.repeat_recordings], ["voice scams", v.voice_scams], ["customers flagged", (v.customers_flagged || []).length], ["alerts", v.alerts_fired]].map(([k, n]) => '<span class="chip ' + (n ? "warn" : "dim") + '">' + esc(k) + " " + fmtN(n || 0) + "</span>").join("") + "</div>";
-      const suggestions = ["What did you block today and from whom?", "Which of my customers should I look at first?", "Which signer is behind most rejects?", "How many spoofed caller ids left my platform?", "What would you tighten in the thresholds?"];
-      $("#askSuggest").innerHTML = suggestions.map((q) => '<button class="btn sm ghost" data-q="' + esc(q) + '">' + esc(q) + "</button>").join("");
-      $("#askSuggest").onclick = (e) => { const b = e.target.closest("button[data-q]"); if (b) { $("#askInput").value = b.dataset.q; $("#askForm").requestSubmit(); } };
-    } catch (e) { toast(e.message, "bad"); }
-  }
-  function askAppend(role, text) {
-    const d = document.createElement("div");
-    d.className = "ask-msg " + (role === "user" ? "user" : "bot");
-    d.textContent = text;
-    $("#askLog").appendChild(d);
-    $("#askLog").scrollTop = $("#askLog").scrollHeight;
-  }
-  $("#askBtn").onclick = askOpen;
-  $("#askClose").onclick = askClose;
+  };
+  $("#askClose").onclick = () => { $("#ask").hidden = true; if ($("#drawer").hidden) $("#scrim").hidden = true; };
   $("#askForm").onsubmit = async (e) => {
     e.preventDefault();
     const q = $("#askInput").value.trim();
     if (!q || ask.busy) return;
     ask.busy = true;
     $("#askInput").value = "";
-    askAppend("user", q);
+    const add = (role, t) => { const d = document.createElement("div"); d.className = "ask-msg " + role; d.textContent = t; $("#askLog").appendChild(d); $("#askLog").scrollTop = 1e9; };
+    add("user", q);
     try {
-      const r = await api("/v1/assistant", { method: "POST", body: JSON.stringify({ question: q, range: state.range, history: ask.history.slice(-8) }) });
-      askAppend("assistant", r.answer + (r.provider === "none" && r.note ? "\n\n" + r.note : ""));
+      const r = await post("/v1/assistant", { question: q, range: state.range, history: ask.history.slice(-8) });
+      add("bot", r.answer);
       ask.history.push({ role: "user", content: q }, { role: "assistant", content: r.answer });
-    } catch (err) { askAppend("assistant", "Could not answer: " + err.message); }
+    } catch (err) { add("bot", "Could not answer: " + err.message); }
     ask.busy = false;
   };
 
-  // ---------- tuning ----------
-  async function renderTuning(v) {
-    v.innerHTML = '<section class="grid wide-narrow"><article class="card"><header><h2>Score distribution</h2><span class="hint" id="hHint"></span></header><canvas class="chart" id="hist"></canvas>' +
-      '<div id="sliders"></div><div class="tune-foot" id="tuneFoot" hidden><span class="hint">Applies on the next call</span><button class="btn primary" id="saveThresh" type="button">Save</button></div><div class="whatif" id="whatif"></div></article>' +
-      '<article class="card"><header><h2>Reasons by weight</h2><span class="hint">held calls only</span></header><div class="rank" id="reasons"></div></article></section>';
-    try {
-      const [h, stats] = await Promise.all([get("/v1/histogram?range=" + state.range), get("/v1/stats?range=" + state.range)]);
-      const buckets = h.buckets || [];
-      const th = Object.assign({}, h.thresholds);
-      const live = { flag: th.flag, challenge: th.challenge, reject: th.reject };
-      const total = buckets.reduce((a, b) => a + b, 0);
-      $("#hHint").textContent = fmtN(total) + " requests · dashed lines are the live thresholds";
-      const paintSave = () => {
-        const dirty = th.flag !== live.flag || th.challenge !== live.challenge || th.reject !== live.reject;
-        $("#tuneFoot").hidden = !dirty;
-      };
-      const draw = () => {
-        drawHistogram($("#hist"), buckets, th);
-        let allow = 0, flag = 0, challenge = 0, reject = 0;
-        buckets.forEach((n, i) => {
-          const lo = i * 10;
-          if (lo >= th.reject) reject += n; else if (lo >= th.challenge) challenge += n; else if (lo >= th.flag) flag += n; else allow += n;
-        });
-        $("#whatif").innerHTML = [["allow", allow, colors.allow], ["flag", flag, colors.flag], ["challenge", challenge, colors.challenge], ["reject", reject, colors.reject]].map(([k, n, c]) => '<div class="w"><b style="color:' + c + '">' + fmtN(n) + "</b><span>" + k + " · " + pct(n, total) + "%</span></div>").join("");
-        paintSave();
-      };
-      $("#sliders").innerHTML = ["flag", "challenge", "reject"].map((k) => '<div class="slider"><span style="color:' + colors[k] + '">' + k + ' at</span><input type="range" min="0" max="101" step="1" value="' + th[k] + '" data-k="' + k + '"><span class="mono num" id="v_' + k + '">' + th[k] + "</span></div>").join("");
-      $("#sliders").oninput = (e) => {
-        const k = e.target.dataset.k;
-        if (!k) return;
-        th[k] = Number(e.target.value);
-        if (k === "flag") { th.challenge = Math.max(th.challenge, th.flag); th.reject = Math.max(th.reject, th.challenge); }
-        if (k === "challenge") { th.flag = Math.min(th.flag, th.challenge); th.reject = Math.max(th.reject, th.challenge); }
-        if (k === "reject") { th.challenge = Math.min(th.challenge, th.reject); th.flag = Math.min(th.flag, th.challenge); }
-        ["flag", "challenge", "reject"].forEach((kk) => { $('#sliders input[data-k="' + kk + '"]').value = th[kk]; $("#v_" + kk).textContent = th[kk]; });
-        draw();
-      };
-      $("#saveThresh").onclick = async () => {
-        const btn = $("#saveThresh");
-        btn.disabled = true;
-        try {
-          await api("/v1/settings", { method: "PUT", body: JSON.stringify({ flag_score: th.flag, challenge_score: th.challenge, reject_score: th.reject }) });
-          live.flag = th.flag;
-          live.challenge = th.challenge;
-          live.reject = th.reject;
-          paintSave();
-          toast("Thresholds saved", "ok");
-        } catch (err) { toast(err.message, "bad"); }
-        btn.disabled = false;
-      };
-      draw();
-      renderRank($("#reasons"), stats.top_reasons, (r) => "#traffic?q=" + encodeURIComponent(r.name));
-    } catch (e) { toast(e.message, "bad"); }
+  // ---------- router ----------
+  const VIEWS = { overview: Overview, calls: Calls, threats: Threats, rules: Rules, settings: Settings };
+  function parseHash() {
+    const raw = (location.hash || "#overview").slice(1);
+    const i = raw.indexOf("?");
+    const name = (i >= 0 ? raw.slice(0, i) : raw) || "overview";
+    const params = {};
+    new URLSearchParams(i >= 0 ? raw.slice(i + 1) : "").forEach((v, k) => { params[k] = v; });
+    return { name: VIEWS[name] ? name : "overview", params };
   }
+  function navigate() {
+    const { name, params } = parseHash();
+    if (state.view && state.view.unmount) state.view.unmount();
+    const view = VIEWS[name];
+    state.view = view;
+    state.viewName = name;
+    $$("#nav a").forEach((a) => a.classList.toggle("on", a.dataset.view === name));
+    setText($("#viewTitle"), view.title);
+    document.title = view.title + " - Falcon";
+    const root = $("#view");
+    root.__html = null;
+    view.mount(root, params);
+  }
+  window.addEventListener("hashchange", navigate);
 
-  // ---------- system ----------
-  async function renderSystem(v) {
-    v.innerHTML = '<section class="grid three" id="sys"></section>' +
-      '<section class="grid two"><article class="card"><header><h2>Effective configuration</h2><span class="hint">secrets shown as set or empty</span></header><dl class="kv" id="cfg"></dl></article>' +
-      '<article class="card"><header><h2>Operations</h2></header><div class="toolbar" style="flex-wrap:wrap;gap:8px">' +
-      '<button class="btn" id="reloadBtn">Reload tables</button>' +
-      '<a class="btn" href="/metrics' + (token ? "?token=" + encodeURIComponent(token) : "") + '" target="_blank" rel="noreferrer">Prometheus /metrics</a>' +
-      '<a class="btn" href="/v1/events.csv?range=' + state.range + (token ? "&token=" + encodeURIComponent(token) : "") + '">Export events CSV</a></div>' +
-      '</article></section>' +
-      '<section class="grid two"><article class="card"><header><h2>Telemetry</h2><span class="hint" id="shareState"></span></header>' +
-      '<label style="display:flex;gap:10px;align-items:flex-start"><input type="checkbox" id="shareBox" style="margin-top:4px"><span>Share redacted screening events with CallerAPI<div class="muted small">On by default. Every install that shares improves detection for every other install. Untick to opt out; it applies within 30 seconds and survives restarts. <code>FALCON_SHARE=false</code> in the environment turns it off for good.</div></span></label>' +
-      '<dl class="kv" style="margin-top:14px"><dt>sent</dt><dd>decision, score, reasons, calling number, source IP, user agent, signer SPC and name, verification result, SIP headers, Call-ID, switch label</dd>' +
-      '<dt>never sent</dt><dd id="shareRedacted"></dd><dt>endpoint</dt><dd id="shareEndpoint" class="mono"></dd><dt>credit</dt><dd id="shareCredit"></dd><dt>network feed</dt><dd id="shareFeed"></dd></dl></article>' +
-      '<article class="card"><header><h2>What the called number becomes</h2></header>' +
-      '<pre class="mono small" style="white-space:pre-wrap;margin:0">INVITE sip:<b>REDACTED</b>@your-switch SIP/2.0\nFrom: &lt;sip:+13125550188@203.0.113.9&gt;;tag=a1\nTo: &lt;sip:<b>REDACTED</b>@your-switch&gt;;tag=b2\nP-Called-Party-ID: &lt;sip:<b>REDACTED</b>@your-switch&gt;\nIdentity: <b>REDACTED</b>\nContent-Length: 0\n\n<span class="muted">(SDP body dropped)</span></pre>' +
-      '<p class="muted small">The same digits are also removed from any other header, the Call-ID, and reason text. A keyed hash with a per-install secret replaces the number so fan-out can be counted without it.</p></article></section>' +
-      '<section class="grid two"><article class="card"><header><h2>Data retention</h2><span class="hint">applies within the hour, no restart</span></header>' +
-      '<form id="retentionForm" class="form" style="grid-template-columns:1fr 1fr auto"><label>keep decisions for (days)<input name="retention_days" type="number" min="1" max="3650" required></label>' +
-      '<label>keep raw SIP for (days)<input name="raw_sip_retention_days" type="number" min="0" max="3650" required></label><button class="btn primary" type="submit">Save</button></form>' +
-      '<p class="muted small" id="retentionHint">Raw SIP carries subscriber numbers in the clear. It is scrubbed after its window; the decision, score, and reasons stay for the full retention. Set raw SIP to 0 to keep it for the life of the row.</p></article>' +
-      '<article class="card"><header><h2>What leaves this host</h2></header><dl class="kv" id="egress"></dl></article></section>' +
-      '<section class="grid two"><article class="card"><header><h2>Alerts</h2><span class="hint">evaluated every minute over the last 15 minutes, one page per key per hour</span></header>' +
-      '<form id="alertForm" class="form" style="grid-template-columns:1fr 1fr 1fr">' +
-      '<label style="grid-column:1/-1">webhook URL (Slack incoming webhook or any JSON receiver)<input name="alert_webhook_url" type="url" placeholder="https://hooks.slack.com/services/..."></label>' +
-      '<label>min calls before a rate counts<input name="alert_min_calls" type="number" min="0"></label>' +
-      '<label>signer reject % <input name="alert_signer_reject_pct" type="number" min="0" max="100"></label>' +
-      '<label>overall reject %<input name="alert_reject_pct" type="number" min="0" max="100"></label>' +
-      '<label>verification failure %<input name="alert_verify_fail_pct" type="number" min="0" max="100"></label>' +
-      '<label>trust list stale after (hours)<input name="alert_trust_stale_hours" type="number" min="0"></label>' +
-      '<div style="display:flex;gap:8px;align-items:end"><button class="btn primary" type="submit">Save</button><button class="btn" type="button" id="alertTest">Send test</button></div></form>' +
-      '<div id="alertList" style="margin-top:12px"></div></article>' +
-      '<article class="card"><header><h2>Audit log</h2><span class="hint">who changed what</span></header><div class="table-wrap"><table><thead><tr><th>when</th><th>actor</th><th>action</th><th>subject</th></tr></thead><tbody id="auditRows"></tbody></table></div></article></section>';
-    try {
-      const [status, cfg, settings, alertsRes, auditRes] = await Promise.all([get("/v1/status"), get("/v1/config"), get("/v1/settings"), get("/v1/alerts?limit=20"), get("/v1/audit?limit=30")]);
-      const af = $("#alertForm");
-      Object.entries(alertsRes.settings || {}).forEach(([k, v]) => { if (af[k]) af[k].value = v; });
-      af.onsubmit = async (e) => {
-        e.preventDefault();
-        const body = {};
-        [...af.elements].forEach((el) => { if (!el.name) return; body[el.name] = el.type === "number" ? Number(el.value) : el.value; });
-        try { await api("/v1/alerts/settings", { method: "PUT", body: JSON.stringify(body) }); toast("alert settings saved", "ok"); } catch (err) { toast(err.message, "bad"); }
-      };
-      $("#alertTest").onclick = async () => { try { await api("/v1/alerts/test", { method: "POST", body: "{}" }); toast("test alert sent", "ok"); } catch (err) { toast(err.message, "bad"); } };
-      const al = alertsRes.data || [];
-      $("#alertList").innerHTML = al.length ? al.map((a) => '<div class="reason"><div><div class="code">' + esc(a.severity) + " · " + esc(a.title) + '</div><div class="detail">' + esc(a.detail) + '</div></div><div class="muted small">' + esc(timeAgo(a.at)) + (a.delivered ? "" : a.error ? " · not delivered: " + esc(a.error) : " · stored only") + "</div></div>").join("") : '<div class="muted small">No alerts fired yet. Thresholds above are the defaults; a webhook makes them page you.</div>';
-      const au = auditRes.data || [];
-      $("#auditRows").innerHTML = au.length ? au.map((e) => "<tr><td class=\"muted small\">" + esc(fmtDate(e.at)) + '</td><td class="mono small">' + esc(e.actor) + '</td><td class="mono small">' + esc(e.action) + '</td><td class="small" title="' + esc(e.detail || "") + '">' + esc(e.subject) + "</td></tr>").join("") : '<tr><td colspan="4" class="muted small">No changes recorded yet.</td></tr>';
-      state.status = status;
-      const tr = (status.shaken && status.shaken.trust) || {};
-      const rf = $("#retentionForm");
-      rf.retention_days.value = settings.effective.retention_days;
-      rf.raw_sip_retention_days.value = settings.effective.raw_sip_retention_days;
-      if (!settings.raw_sip_stored) $("#retentionHint").textContent = "Raw SIP storage is off (FALCON_STORE_RAW_SIP=false). Only decisions are kept.";
-      rf.onsubmit = async (e) => {
-        e.preventDefault();
-        try {
-          const r = await api("/v1/settings", { method: "PUT", body: JSON.stringify({ retention_days: Number(rf.retention_days.value), raw_sip_retention_days: Number(rf.raw_sip_retention_days.value) }) });
-          toast("retention saved: " + r.effective.retention_days + " days, raw SIP " + r.effective.raw_sip_retention_days + " days", "ok");
-        } catch (err) { toast(err.message, "bad"); }
-      };
-      const sh = cfg.shaken || {}, ipc = cfg.ip_intel || {}, ca = cfg.callerapi || {}, s3 = cfg.s3 || {}, sh2 = status.share || {};
-      $("#egress").innerHTML = [
-        ["STI-PA trust list", sh.enabled ? (sh.ca_url || "off, file only") : "off"],
-        ["STI-PA CRL", sh.enabled ? (sh.crl_url || "off") : "off"],
-        ["signer certificates", sh.enabled ? "https fetch of each x5u, public addresses only" + (sh.allow_http ? " (LAB MODE: http and private allowed)" : "") : "off"],
-        ["IP intel table", ipc.url || "local file only"],
-        ["CallerAPI feed", ca.spam_feed ? "download from " + ca.base : "off"],
-        ["CallerAPI live lookup", ca.voice_firewall ? "calling number to " + ca.base : "off"],
-        ["CallerAPI telemetry", sh2.effective ? "on, called party redacted, every 30s" : (sh2.configured ? "off, opted out in dashboard" : "off, FALCON_SHARE=false")],
-        ["CallerAPI network feed", (status.reputation || {}).configured ? "hourly GET, signed with the install key" : "off"],
-        ["alert webhook", (alertsRes.settings || {}).alert_webhook_url ? "on, fired alerts only" : "off"],
-        ["voice provider", (status.voice || {}).provider && (status.voice || {}).provider !== "off" ? (status.voice || {}).provider + ": sampled clips and the calling number" : "off"],
-        ["S3 export", s3.enabled ? s3.endpoint + " / " + s3.bucket : "off"],
-      ].map(([k, v]) => "<dt>" + esc(k) + "</dt><dd>" + esc(v) + "</dd>").join("");
-      const cards = [
-        { t: "STIR/SHAKEN trust", on: status.shaken && status.shaken.enabled && tr.roots > 0, bad: status.shaken && status.shaken.enabled && !(tr.roots > 0), rows: [["roots", fmtN(tr.roots) + (tr.sequence ? " (list #" + tr.sequence + ")" : "")], ["roots loaded", tr.roots_loaded_at ? timeAgo(tr.roots_loaded_at) : "never"], ["revoked serials", fmtN(tr.revoked)], ["CRL loaded", tr.crl_loaded_at ? timeAgo(tr.crl_loaded_at) : "never"], ["cached chains", fmtN(status.shaken && status.shaken.cached_chains)], ["fetch budget", (status.shaken && status.shaken.budget_ms) + " ms"], ["list signature", (cfg.shaken || {}).verify_list ? "verified (ES256, same origin, expiry, sequence)" + ((cfg.shaken || {}).pa_pin === "set" ? ", pinned" : "") : "NOT CHECKED (lab)"], ["errors", [tr.roots_error, tr.crl_error].filter(Boolean).join("; ") || "none"]] },
-        { t: "Telecom IP intel", on: status.ip_intel && status.ip_intel.configured && status.ip_intel.count > 0, bad: status.ip_intel && !!status.ip_intel.error, rows: [["blocks", fmtN(status.ip_intel && status.ip_intel.count)], ["loaded", status.ip_intel && status.ip_intel.loaded_at && !String(status.ip_intel.loaded_at).startsWith("0001") ? timeAgo(status.ip_intel.loaded_at) : "never"], ["file", (status.ip_intel && status.ip_intel.file) || "—"], ["url", (status.ip_intel && status.ip_intel.url) || "—"], ["error", (status.ip_intel && status.ip_intel.error) || "none"]] },
-        { t: "Voice analysis", on: !!(status.voice && status.voice.budget && status.voice.budget.enabled), rows: [["provider", (status.voice || {}).provider || "off"], ["clips per hour", ((status.voice || {}).budget || {}).per_hour || 0], ["per customer per hour", ((status.voice || {}).budget || {}).per_customer_per_hour || 0], ["clip length", (((status.voice || {}).budget || {}).clip_seconds || 0) + " s"], ["triggers", "honeypot, sequential, fan-out, low ASR, short calls, network, outbound flagged"], ["transcripts", "kept on this host, never shared"]] },
-        { t: "Storage and export", on: true, rows: [["decisions kept", ((status.retention || {}).retention_days || "—") + " days"], ["raw SIP kept", status.raw_sip_stored ? ((status.retention || {}).raw_sip_retention_days || 0) + " days" : "not stored"], ["rules", fmtN(status.rules)], ["S3 export", status.s3 ? "on" : "off"], ["telemetry", (status.share || {}).effective ? "on, redacted" : "off"], ["install", status.install_id], ["version", status.version], ["started", timeAgo(status.started_at)]] },
-        { t: "Spam database feed", on: status.spam_feed && status.spam_feed.configured && status.spam_feed.count > 0, bad: status.spam_feed && !!status.spam_feed.error, rows: [["numbers", fmtN(status.spam_feed && status.spam_feed.count)], ["loaded", status.spam_feed && status.spam_feed.loaded_at && !String(status.spam_feed.loaded_at).startsWith("0001") ? timeAgo(status.spam_feed.loaded_at) : "never"], ["error", (status.spam_feed && status.spam_feed.error) || "none"]] },
-        { t: "Voice firewall", on: status.voice_firewall && status.voice_firewall.configured, rows: [["live lookup", status.voice_firewall && status.voice_firewall.configured ? "on for every INVITE" : "off"]] },
-        { t: "Thresholds", on: true, rows: [["flag", status.thresholds.flag], ["challenge", status.thresholds.challenge], ["reject", status.thresholds.reject], ["listen", status.listen]] },
-      ];
-      $("#sys").innerHTML = cards.map((c) => '<article class="card status-card"><div class="title"><h2>' + esc(c.t) + '</h2><span class="state ' + (c.bad ? "bad" : c.on ? "on" : "off") + '">' + (c.bad ? "attention" : c.on ? "active" : "off") + '</span></div><dl class="kv">' + c.rows.map(([k, val]) => "<dt>" + esc(k) + "</dt><dd>" + esc(val == null ? "—" : val) + "</dd>").join("") + "</dl></article>").join("");
-      $("#cfg").innerHTML = Object.keys(cfg).sort().map((k) => "<dt>" + esc(k) + "</dt><dd>" + esc(typeof cfg[k] === "object" ? JSON.stringify(cfg[k]) : cfg[k]) + "</dd>").join("");
-      const share = status.share || {};
-      $("#shareBox").checked = !!share.effective;
-      $("#shareBox").disabled = !share.configured;
-      $("#shareState").textContent = share.effective ? "sharing" : (share.configured ? "opted out" : "disabled by FALCON_SHARE=false");
-      $("#shareRedacted").textContent = (share.redacted || []).join(", ");
-      $("#shareEndpoint").textContent = share.endpoint || "";
-      $("#shareCredit").textContent = share.credited ? "CALLERAPI_API_KEY set, this account is credited" : "anonymous (set CALLERAPI_API_KEY to be credited)";
-      const rep = status.reputation || {}, rs = rep.status || {};
-      $("#shareFeed").textContent = !rep.configured ? "off" : rs.error ? "not loaded: " + rs.error : (rs.signers || 0) + " signers, " + (rs.fingerprints || 0) + " tools, loaded " + (rs.loaded_at ? timeAgo(rs.loaded_at) : "never") + (rep.enforce ? " · enforce on" : " · corroboration only");
-      $("#shareBox").onchange = async (e) => {
-        try {
-          const r = await api("/v1/settings", { method: "PUT", body: JSON.stringify({ share_telemetry: e.target.checked }) });
-          $("#shareState").textContent = r.effective.share_telemetry ? "sharing" : "opted out";
-          toast(r.effective.share_telemetry ? "telemetry on, called party stays redacted" : "telemetry off, nothing leaves this host", "ok");
-        } catch (err) { e.target.checked = !e.target.checked; toast(err.message, "bad"); }
-      };
-      $("#reloadBtn").onclick = async () => { $("#reloadBtn").disabled = true; try { const r = await post("/v1/reload", {}); toast("reloaded " + Object.keys(r.reloaded || {}).join(", "), "ok"); renderSystem(v); } catch (err) { toast(err.message, "bad"); $("#reloadBtn").disabled = false; } };
-    } catch (e) { toast(e.message, "bad"); }
-  }
-
-  // ---------- drawer ----------
-  async function openEvent(id) {
-    try {
-      const ev = await get("/v1/events/" + id);
-      state.drawer.ev = ev;
-      state.drawer.tab = "summary";
-      $$("#drawerTabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === "summary"));
-      $("#drawerKicker").textContent = "event #" + ev.id + " · " + fmtDate(ev.received_at) + (ev.switch ? " · " + ev.switch : "");
-      $("#drawerTitle").innerHTML = esc(ev.from || "—") + ' <span class="muted">→</span> ' + esc(ev.to || "—");
-      renderDrawer();
-      $("#drawer").hidden = false;
-      $("#scrim").hidden = false;
-    } catch (e) { toast(e.message, "bad"); }
-  }
-  function closeDrawer() { $("#drawer").hidden = true; $("#scrim").hidden = true; }
-  $("#drawerClose").onclick = closeDrawer;
-  $("#scrim").onclick = () => { closeDrawer(); if (!$("#ask").hidden) askClose(); };
-  $("#drawerTabs").onclick = (e) => {
-    const b = e.target.closest("button[data-tab]");
-    if (!b) return;
-    state.drawer.tab = b.dataset.tab;
-    $$("#drawerTabs button").forEach((x) => x.classList.toggle("on", x === b));
-    renderDrawer();
-  };
-
-  function b64json(s) {
-    try { return JSON.parse(atob(s.replace(/-/g, "+").replace(/_/g, "/").padEnd(s.length + ((4 - (s.length % 4)) % 4), "="))); } catch (e) { return null; }
-  }
-  function highlightSIP(raw) {
-    return esc(raw).split("\n").map((line) => {
-      const m = line.match(/^([A-Za-z][A-Za-z0-9-]*):(.*)$/);
-      if (m) {
-        const hl = /^(Identity|From|P-Asserted-Identity|Via|User-Agent|Contact)$/i.test(m[1]) ? " hl" : "";
-        return '<span class="h' + hl + '">' + m[1] + ":</span><span class='v'>" + m[2] + "</span>";
-      }
-      return line;
-    }).join("\n");
-  }
-  const clearVoice = { "": 1, "Store": 1, "Company": 1, "Surveys": 1, "Advertising": 1, "Hang Up": 1, "No Subject Provided": 1, "Other": 1, "none": 1 };
-
-  function voiceIsSpam(vs) {
-    if (!vs || !vs.category || clearVoice[vs.category]) return false;
-    return vs.score >= 0.7;
-  }
-
-  function transcriptTab(ev) {
-    const vs = ev.voice || null;
-    const listen = ev.listen || {};
-    if (vs && vs.error && !vs.transcript && !vs.category) {
-      return '<div class="card"><h2>Transcript</h2><p>The listen failed.</p><p class="mono small" style="color:' + colors.reject + '">' + esc(vs.error) + "</p></div>";
-    }
-    if (vs && (vs.transcript || vs.category)) {
-      const spam = voiceIsSpam(vs);
-      const verdict = vs.category ? (spam ? "spam" : "not spam") : "no verdict yet";
-      const tone = spam ? "bad" : (vs.category ? "ok" : "dim");
-      return '<div class="toolbar"><span class="chip ' + tone + '">' + esc(verdict) + "</span>" +
-        (vs.category ? '<span class="chip">' + esc(vs.category) + "</span>" : "") +
-        '<span class="chip">' + esc(Math.round((vs.score || 0) * 100)) + "%</span>" +
-        (vs.provider === "callerapi-live" ? '<span class="chip dim">live filter</span>' : "") +
-        "</div>" +
-        (vs.summary ? '<p class="small">' + esc(vs.summary) + "</p>" : "") +
-        (vs.transcript ? '<pre style="white-space:pre-wrap">' + esc(vs.transcript) + "</pre>" : '<p class="muted">No transcript text yet.</p>') +
-        '<p class="muted small">The transcript stays on this host.</p>';
-    }
-    if (ev.sampled) {
-      return '<div class="card"><h2>Transcript</h2><p>Falcon asked for the first seconds of this call. The transcript is not in yet.</p></div>';
-    }
-    if (!listen.clips && !listen.live_key) {
-      return '<div class="card"><h2>Transcript</h2><p>This install is not receiving transcripts.</p><p class="muted small">On ConnexCS the route script screens the INVITE and returns before anyone speaks. Falcon shows a transcript here only after the text is posted to this host with that call\'s Call-ID. A clip needs a voice provider on this host.</p></div>';
-    }
-    return '<div class="card"><h2>Transcript</h2><p>This call has no transcript.</p><p class="muted small">Falcon joins a transcript to this row by Call-ID. On ConnexCS the route script sends that id at INVITE and does not receive the spoken text. A clip is separate: honeypot, fan-out, sequential dialing, a low answer rate, short calls, network reputation, or an outbound flag, inside the hourly budget.</p></div>';
-  }
-
-  function renderDrawer() {
-    const ev = state.drawer.ev;
-    if (!ev) return;
-    const body = $("#drawerBody");
-    const tab = state.drawer.tab;
-    if (tab === "summary") {
-      const vs = ev.voice || null;
-      const sh = ev.shaken || {};
-      body.innerHTML = '<div class="toolbar">' + pill(ev.action) + scoreCell(ev.risk_score, ev.action) + directionChip(ev) + verstatChip(ev.verstat, ev.shaken_attest, sh.source) + (ev.customer ? '<span class="chip">customer ' + esc(ev.customer) + "</span>" : "") + (ev.honeypot ? '<span class="chip bad">honeypot target</span>' : "") + (ev.provider ? '<span class="chip">' + esc(ev.provider) + "</span>" : "") + (ev.signer_spc ? '<span class="chip">SPC ' + esc(ev.signer_spc) + (ev.signer_name ? " · " + esc(ev.signer_name) : "") + "</span>" : "") + "</div>" +
-        (ev.answered !== undefined || ev.sampled ? '<dl class="kv"><dt>outcome</dt><dd>' + (ev.answered === undefined ? "not reported yet" : (ev.answered ? "answered, " + esc(ev.duration_s || 0) + " s" : "not answered") + (ev.hangup_cause ? " · " + esc(ev.hangup_cause) : "")) + "</dd>" + (ev.sampled ? "<dt>audio</dt><dd>" + (vs ? esc((vs.seconds || 0).toFixed(1)) + " s, " + esc(vs.channels) + (vs.channels > 1 ? " legs" : " channel") + (vs.repeat_count ? ' · <b style="color:' + colors.reject + '">same recording as ' + esc(vs.repeat_count) + " earlier calls</b>" : "") + (vs.caller_speech >= 0.55 && vs.callee_speech <= 0.08 && vs.channels > 1 ? " · one-way monologue" : "") : "requested, not received yet") + "</dd>" : "") + "</dl>" : "") +
-        '<dl class="kv"><dt>source</dt><dd>' + esc(ev.source_ip) + "</dd><dt>user agent</dt><dd>" + esc(ev.user_agent || "—") + "</dd><dt>call id</dt><dd>" + esc(ev.call_id || "—") + "</dd>" +
-        (ev.fingerprint ? '<dt>tool fingerprint</dt><dd class="mono"><a href="#traffic?q=' + esc(ev.fingerprint) + '" title="show every call from software with these habits">' + esc(ev.fingerprint) + "</a>" + (ev.network_fingerprint ? ' <span class="chip ' + (ev.network_fingerprint.score >= 80 ? "bad" : ev.network_fingerprint.score >= 50 ? "warn" : "dim") + '">network ' + esc(ev.network_fingerprint.score) + " · " + esc(ev.network_fingerprint.installs) + " installs</span>" : "") + "</dd>" : "") +
-        (ev.network_signer ? '<dt>signer on network</dt><dd>score ' + esc(ev.network_signer.score) + " across " + esc(ev.network_signer.installs) + " installs · " + esc(ev.network_signer.failed) + " failed · " + esc(ev.network_signer.spam_hits) + " spam hits</dd>" : "") +
-        "<dt>SIP response</dt><dd>" + (ev.action === "reject" ? "603 Decline" : ev.action === "challenge" ? "407 Proxy Authentication Required" : "pass through") + "</dd></dl>" +
-        (ev.fingerprint_parts ? '<details class="small" style="margin:0 0 10px"><summary class="muted">what the fingerprint is made of</summary><pre style="margin:6px 0 0">' + esc(ev.fingerprint_parts.join("\n")) + "</pre></details>" : "") +
-        '<div class="card" style="padding:6px 14px"><header style="margin:8px 0 2px"><h2>Reasons</h2><span class="hint">weight adds to the score, capped at 100</span></header>' +
-        ((ev.reasons || []).length ? ev.reasons.map((r) => '<div class="reason"><div><div class="code">' + esc(r.code) + '</div><div class="detail">' + esc(r.detail) + '</div></div><div class="w' + (r.weight ? "" : " zero") + '">' + (r.code === "voice_scam" && !r.weight ? "evidence" : (r.weight ? "+" + r.weight : "0")) + "</div></div>").join("") : '<div class="muted small" style="padding:8px 0">Nothing looked wrong.</div>') + "</div>";
-    } else if (tab === "transcript") {
-      body.innerHTML = transcriptTab(ev);
-    } else if (tab === "shaken") {
-      const sh = ev.shaken;
-      const roots = !!(state.status && state.status.shaken && state.status.shaken.trust && state.status.shaken.trust.roots);
-      if (sh && sh.source === "switch") {
-        const na = sh.pending || !sh.x5u;
-        const checks = [
-          ["Certificate chains to a trusted STI-CA", sh.chain_trusted, na || (!sh.chain_trusted && !roots)],
-          ["Certificate is within its validity period", sh.cert_valid, na],
-          ["Certificate is not on the STI-PA CRL", !sh.revoked, na],
-        ];
-        body.innerHTML = '<div class="toolbar">' + verstatChip(sh.verstat, sh.attest, sh.source) + (sh.pending ? '<span class="chip warn">certificate fetch pending</span>' : "") + (sh.cached ? '<span class="chip dim">from cache</span>' : "") + "</div>" +
-          '<p class="muted small">The switch signs this call on the way out, after Falcon screens the INVITE. Falcon read the certificate the switch signs with. There was no signature to check.</p>' +
-          '<div class="check">' + checks.map(([label, ok, skip]) => '<div class="c ' + (skip ? "na" : ok ? "ok" : "bad") + '"><span class="m">' + (skip ? "–" : ok ? "✓" : "✕") + "</span><span>" + esc(label) + "</span></div>").join("") + "</div>" +
-          errorsCard(sh) + signerCard(sh) +
-          '<div class="card"><h2 style="margin-bottom:8px">Signing</h2><dl class="kv"><dt>attestation</dt><dd>' + esc(sh.attest || "—") + "</dd><dt>origid</dt><dd>" + esc(sh.origid || "—") + "</dd></dl></div>";
-        return;
-      }
-      if (!sh || !sh.present) {
-        body.innerHTML = empty(ev.shaken_attest ? "The Identity header was decoded but verification did not run on this install." : "This INVITE carried no Identity header. Unsigned traffic is legal but weak. Attestation and signer are unknown.");
-        return;
-      }
-      const checks = [
-        ["Identity header parsed as a PASSporT", sh.parsed_jwt],
-        ["Algorithm is ES256", sh.alg === "ES256"],
-        ["Signature verifies with the x5u certificate", sh.signature_ok, sh.pending],
-        ["Certificate chains to a trusted STI-CA", sh.chain_trusted, sh.pending || (!sh.chain_trusted && !roots)],
-        ["Certificate is within its validity period", sh.cert_valid, sh.pending],
-        ["Certificate is not on the STI-PA CRL", sh.present && !sh.revoked && !sh.pending, sh.pending],
-        ["iat is within 60 seconds", sh.fresh, !sh.iat],
-        ["orig tn matches the calling number", sh.orig_matches_from, !sh.orig_tn || !ev.from],
-        ["dest tn includes the called number", sh.dest_matches_to, !(sh.dest_tn && sh.dest_tn.length) || !ev.to],
-      ];
-      const raw = (ev.raw_sip || "").split("\n").find((l) => /^Identity:/i.test(l));
-      const jwt = raw ? raw.replace(/^Identity:\s*/i, "").split(";")[0].trim() : "";
-      const parts = jwt.split(".");
-      const hdr = parts.length === 3 ? b64json(parts[0]) : null;
-      const payload = parts.length === 3 ? b64json(parts[1]) : null;
-      body.innerHTML = '<div class="toolbar">' + verstatChip(sh.verstat, sh.attest) + (sh.pending ? '<span class="chip warn">certificate fetch pending</span>' : "") + (sh.cached ? '<span class="chip dim">from cache</span>' : "") + '<span class="chip dim">' + esc(sh.latency_ms) + " ms</span></div>" +
-        '<div class="check">' + checks.map(([label, ok, na]) => '<div class="c ' + (na ? "na" : ok ? "ok" : "bad") + '"><span class="m">' + (na ? "–" : ok ? "✓" : "✕") + "</span><span>" + esc(label) + "</span></div>").join("") + "</div>" +
-        errorsCard(sh) + signerCard(sh) +
-        '<div class="card"><h2 style="margin-bottom:8px">PASSporT</h2><dl class="kv"><dt>attestation</dt><dd>' + esc(sh.attest || "—") + "</dd><dt>orig tn</dt><dd>" + esc(sh.orig_tn || "—") + "</dd><dt>dest tn</dt><dd>" + esc((sh.dest_tn || []).join(", ") || "—") + "</dd><dt>origid</dt><dd>" + esc(sh.origid || "—") + "</dd><dt>iat</dt><dd>" + (sh.iat ? esc(new Date(sh.iat * 1000).toISOString()) : "—") + "</dd></dl>" +
-        (hdr ? "<pre>" + esc(JSON.stringify(hdr, null, 2)) + "\n" + esc(JSON.stringify(payload, null, 2)) + "</pre>" : "") + "</div>";
-    } else if (tab === "sip") {
-      body.innerHTML = '<div class="toolbar"><button class="btn sm" id="copySip">Copy raw SIP</button></div><pre id="rawSip">' + highlightSIP(ev.raw_sip || "") + "</pre>";
-      $("#copySip").onclick = () => { navigator.clipboard.writeText(ev.raw_sip || "").then(() => toast("copied", "ok")); };
-    } else if (tab === "actions") {
-      body.innerHTML = '<p class="muted small">Rules take effect on the next INVITE. Deny is a hard reject with SIP 603. Allow skips scoring for that subject.</p><div class="actions">' +
-        (ev.from ? '<button class="btn danger" data-act="deny" data-subject="number" data-value="' + esc(ev.from) + '">Deny number ' + esc(ev.from) + '</button><button class="btn" data-act="allow" data-subject="number" data-value="' + esc(ev.from) + '">Allow number</button>' : "") +
-        (ev.source_ip ? '<button class="btn danger" data-act="deny" data-subject="ip" data-value="' + esc(ev.source_ip) + '">Deny IP ' + esc(ev.source_ip) + '</button><button class="btn" data-act="allow" data-subject="ip" data-value="' + esc(ev.source_ip) + '">Allow IP</button>' : "") +
-        (ev.signer_spc ? '<button class="btn danger" data-act="deny" data-subject="spc" data-value="' + esc(ev.signer_spc) + '">Deny signer ' + esc(ev.signer_spc) + '</button><button class="btn" data-act="allow" data-subject="spc" data-value="' + esc(ev.signer_spc) + '">Allow signer</button>' : "") +
-        '</div><div class="toolbar" style="margin-top:14px"><a class="btn sm" href="#traffic?q=' + encodeURIComponent(ev.from || "") + '">All calls from this number</a><a class="btn sm" href="#traffic?q=' + encodeURIComponent(ev.source_ip || "") + '">All calls from this IP</a>' + (ev.signer_spc ? '<a class="btn sm" href="#traffic?q=' + encodeURIComponent(ev.signer_spc) + '">All calls by this signer</a>' : "") + "</div>";
-      body.onclick = async (e) => {
-        const b = e.target.closest("button[data-act]");
-        if (!b) return;
-        b.disabled = true;
-        await addRule(b.dataset.act, b.dataset.subject, b.dataset.value, "from event #" + ev.id);
-        b.disabled = false;
-      };
-    }
-  }
-
-  // ---------- live ----------
-  function setLive(on) {
-    state.live = on;
-    $("#liveBtn").classList.toggle("on", on);
-    if (state.sse) { state.sse.close(); state.sse = null; }
-    if (!on) return;
-    const es = new EventSource("/v1/stream" + (token ? "?token=" + encodeURIComponent(token) : ""));
-    es.addEventListener("screen", (e) => {
-      try {
-        const ev = JSON.parse(e.data);
-        if (state.view === "traffic") {
-          const t = state.traffic;
-          if (t.action && ev.action !== t.action) return;
-          if (t.verstat && ev.verstat !== t.verstat) return;
-          if (t.direction === "outbound" && ev.direction !== "outbound") return;
-          if (t.direction === "inbound" && ev.direction === "outbound") return;
-          if (state.q && !JSON.stringify(ev).toLowerCase().includes(state.q.toLowerCase())) return;
-          t.rows.unshift(ev);
-          const body = $("#rows");
-          if (body) {
-            if (body.querySelector(".empty")) body.innerHTML = "";
-            body.insertAdjacentHTML("afterbegin", trafficRow(ev, true));
-            $("#tCount").textContent = fmtN(t.rows.length) + " shown";
-          }
-        }
-      } catch (err) { /* ignore malformed frame */ }
-    });
-    es.onerror = () => { $("#liveBtn").classList.remove("on"); };
-    es.onopen = () => { $("#liveBtn").classList.add("on"); };
-    state.sse = es;
-  }
-  $("#liveBtn").onclick = () => setLive(!state.live);
-
-  function pluginSection(title, html) {
-    if (!html) return "";
-    return '<h2 class="plugin-head">' + esc(title) + '</h2><section class="plugin-list">' + html + "</section>";
-  }
-
-  function pluginCard(p, mode) {
-    const title = p.title || p.slug;
-    const blurb = p.summary || "";
-    const state = mode === "available" ? "Not on this install" : (mode === "on" ? "On" : "Open");
-    const kicker = mode === "available" ? "Available" : (p.kind || "view");
-    const inner = '<span class="kicker">' + esc(kicker) + "</span><strong>" + esc(title) + '</strong><span class="muted small">' + esc(blurb) + '</span><span class="muted small">' + esc(state) + "</span>";
-    if (mode === "open") {
-      return '<a class="card plugin-card" href="#plugins?slug=' + encodeURIComponent(p.slug) + '">' + inner + "</a>";
-    }
-    return '<article class="card plugin-card' + (mode === "available" ? " locked" : "") + '">' + inner + "</article>";
-  }
-
-  function productCard(title, on, body) {
-    return '<article class="card plugin-card' + (on ? "" : " locked") + '"><span class="kicker">' + (on ? "On" : "Available") + "</span><strong>" + esc(title) + '</strong><span class="muted small">' + esc(body) + "</span></article>";
-  }
-
-  function productCards(status) {
-    const feed = (status && status.spam_feed) || {};
-    const fw = (status && status.voice_firewall) || {};
-    const feedOn = !!feed.configured;
-    const fwOn = !!fw.configured;
-    const feedBody = feedOn
-      ? fmtN(feed.count || 0) + " numbers loaded" + (feed.error ? ". " + feed.error : "")
-      : "Set FALCON_SPAM_FEED=true with a CallerAPI key. A listed number is a hard reject.";
-    const fwBody = fwOn
-      ? "Each INVITE is checked against live reputation. A spam hit flags the call."
-      : "Set FALCON_VOICE_FIREWALL=true with a CallerAPI key. This flags the INVITE from live number reputation. It does not hear the call.";
-    return productCard("Spam database feed", feedOn, feedBody) + productCard("INVITE reputation", fwOn, fwBody);
-  }
-
-  async function renderBridge(v, item) {
-    let cfg;
-    try { cfg = await get("/v1/plugins/" + encodeURIComponent(item.slug) + "/settings"); }
-    catch (e) { v.innerHTML = '<div class="card">' + esc(e.message) + "</div>"; return; }
-    const fields = cfg.settings || [];
-    const ready = fields.every((f) => f.secret ? f.set : f.value);
-    const status = cfg.connected ? "Connected" : (ready ? "Connecting" : "Off");
-    const tone = cfg.connected ? "ok" : "dim";
-    const inputs = fields.map((f) => '<label>' + esc(f.label) + '<input name="' + esc(f.key) + '" type="' + (f.secret ? "password" : "text") + '" value="' + esc(f.secret ? "" : (f.value || "")) + '" placeholder="' + (f.secret && f.set ? "saved" : "") + '" autocomplete="off"></label>').join("");
-    v.innerHTML = '<article class="card"><h2>' + esc(cfg.title || item.title || item.slug) + "</h2>" +
-      '<p>' + esc(cfg.summary || item.summary || "") + "</p>" +
-      '<p><span class="chip ' + tone + '">' + esc(status) + "</span> <span class=\"muted small\">" + esc(cfg.sink || "") + "</span>" +
-      (cfg.last_at ? '<span class="muted small"> last ' + esc(cfg.last_at) + "</span>" : "") +
-      (cfg.last_error ? '<span class="muted small"> ' + esc(cfg.last_error) + "</span>" : "") + "</p>" +
-      '<form class="form" id="bridgeForm" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)) auto">' + inputs +
-      '<button class="btn primary" type="submit">Save</button></form>' +
-      '<p class="muted small">Falcon runs the core API named above. It does not run plugin code. Values stay on this host.</p></article>';
-    $("#bridgeForm").onsubmit = async (e) => {
-      e.preventDefault();
-      const values = {};
-      [...e.target.elements].forEach((el) => { if (el.name) values[el.name] = el.value.trim(); });
-      try {
-        await api("/v1/plugins/" + encodeURIComponent(item.slug) + "/settings", { method: "PUT", body: JSON.stringify({ values: values }) });
-        toast("Saved", "ok");
-        renderBridge(v, item);
-      } catch (err) { toast(err.message); }
-    };
-    if (ready && !cfg.connected) schedule(() => renderBridge(v, item), 4000);
-  }
-
-  function addonSlug() {
-    if (state.view === "numbercheck") return "number-check";
-    if (state.view === "aivoice") return "ai-voice";
-    return "";
-  }
-
-  async function renderTranscripts(v) {
-    v.innerHTML = '<section class="grid kpis" id="trKpis"></section><article class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th>when</th><th>from</th><th>seconds</th><th>category</th><th>score</th><th>transcript</th></tr></thead><tbody id="trRows"><tr><td colspan="6" class="muted">Loading</td></tr></tbody></table></div></article>';
-    try {
-      const res = await get("/v1/voice/samples?limit=100");
-      let rows = res.data || [];
-      if (state.q) {
-        const q = state.q.toLowerCase();
-        rows = rows.filter((r) => [r.from, r.call_id, r.transcript, r.category, r.error].join(" ").toLowerCase().includes(q));
-      }
-      $("#trKpis").innerHTML = '<article class="card kpi"><label>clips</label><b>' + fmtN(rows.length) + '</b></article><article class="card kpi"><label>with text</label><b>' + fmtN(rows.filter((r) => r.transcript).length) + '</b></article><article class="card kpi"><label>failed</label><b>' + fmtN(rows.filter((r) => r.error && !r.transcript).length) + "</b></article>";
-      $("#trRows").innerHTML = rows.length ? rows.map((r) => {
-        const text = r.transcript || r.error || r.summary || "";
-        const link = r.event_id ? '<a class="mono" href="#traffic" data-ev="' + r.event_id + '">' + esc(r.call_id || String(r.event_id)) + "</a>" : '<span class="mono muted">' + esc(r.call_id || "no call") + "</span>";
-        return "<tr><td class=\"muted small\">" + esc(timeAgo(r.at)) + "</td><td class=\"mono\">" + esc(r.from || "") + "</td><td class=\"mono num\">" + (r.seconds ? Math.round(r.seconds) : "") + "</td><td>" + esc(r.category || "") + "</td><td class=\"mono num\">" + (r.score ? r.score.toFixed(2) : "") + '</td><td><div class="small">' + link + "</div><div>" + esc(text) + "</div></td></tr>";
-      }).join("") : '<tr><td colspan="6">' + empty("No transcripts yet.") + "</td></tr>";
-      $("#trRows").onclick = (e) => {
-        const a = e.target.closest("[data-ev]");
-        if (!a) return;
-        e.preventDefault();
-        openEvent(a.dataset.ev);
-      };
-    } catch (e) {
-      $("#trRows").innerHTML = '<tr><td colspan="6">' + empty(e.message) + "</td></tr>";
-    }
-  }
-
-  async function renderFeedPage(v, spec) {
-    v.innerHTML = '<section class="grid kpis" id="feedKpis"></section><article class="card" style="padding:0"><header style="padding:16px 18px 0"><h2>' + esc(spec.hits) + '</h2></header><div class="table-wrap"><table><thead><tr><th>time</th><th>decision</th><th>score</th><th>direction</th><th>from</th><th>to</th><th>source</th><th>signer</th><th>shaken</th><th>reasons</th></tr></thead><tbody id="feedRows"><tr><td colspan="10" class="muted">Loading</td></tr></tbody></table></div></article>';
-    try {
-      const [status, events] = await Promise.all([
-        get("/v1/status"),
-        get("/v1/events?" + new URLSearchParams({ range: state.range, limit: "50", q: spec.reason }).toString()),
-      ]);
-      const block = status[spec.key] || {};
-      const bits = spec.kpis(block);
-      $("#feedKpis").innerHTML = bits.map(([k, val]) => '<article class="card kpi"><label>' + esc(k) + "</label><b>" + esc(val) + "</b></article>").join("");
-      const rows = events.data || [];
-      $("#feedRows").innerHTML = rows.length ? rows.map((ev) => trafficRow(ev, false)).join("") : '<tr><td colspan="10">' + empty("No matching calls in " + rangeLabel(state.range) + ".") + "</td></tr>";
-      $("#feedRows").onclick = (e) => {
-        const tr = e.target.closest("tr[data-id]");
-        if (tr) openEvent(tr.dataset.id);
-      };
-    } catch (e) {
-      $("#feedRows").innerHTML = '<tr><td colspan="10">' + empty(e.message) + "</td></tr>";
-    }
-  }
-
-  function renderBlocklist(v) {
-    return renderFeedPage(v, {
-      key: "spam_feed", reason: "spam_feed_hit", hits: "Calls blocked from the feed",
-      kpis: (b) => [["numbers loaded", fmtN(b.count || 0)], ["loaded", b.loaded_at ? timeAgo(b.loaded_at) : "never"], ["status", b.configured ? (b.error || "on") : "off"]],
-    });
-  }
-  function renderScoring(v) {
-    return renderFeedPage(v, {
-      key: "voice_firewall", reason: "voice_firewall_spam", hits: "INVITEs the live check marked",
-      kpis: (b) => [["live check", b.configured ? "on" : "off"]],
-    });
-  }
-  function renderIPIntel(v) {
-    return renderFeedPage(v, {
-      key: "ip_intel", reason: "ip_intel", hits: "Calls from listed addresses",
-      kpis: (b) => [["addresses loaded", fmtN(b.count || 0)], ["loaded", b.loaded_at ? timeAgo(b.loaded_at) : "never"], ["status", b.configured ? (b.error || "on") : "off"]],
-    });
-  }
-  function renderNumberCheck(v) { return openAddon(v, "number-check"); }
-  function renderAIVoice(v) { return openAddon(v, "ai-voice"); }
-
-  async function openAddon(v, slug) {
-    let catalog;
-    try {
-      catalog = await get("/v1/plugins");
-    } catch (e) {
-      v.innerHTML = '<div class="card">' + esc(e.message) + "</div>";
-      return;
-    }
-    const items = (catalog && catalog.plugins) || [];
-    const available = (catalog && catalog.available) || [];
-    const views = items.filter((p) => p.surface === "native" || p.surface === "iframe");
-    const bridge = items.find((p) => p.slug === slug && p.kind === "bridge");
-    if (bridge) {
-      $("#viewTitle").textContent = bridge.title || bridge.slug;
-      renderBridge(v, bridge);
-      return;
-    }
-    const offer = available.find((p) => p.slug === slug);
-    const item = views.find((p) => p.slug === slug);
-    if (!item && offer) {
-      $("#viewTitle").textContent = offer.title || offer.slug;
-      v.innerHTML = '<article class="card"><h2>' + esc(offer.title || offer.slug) + "</h2><p>" + esc(offer.summary || "") + '</p><p class="muted">Not on this install.</p></article>';
-      return;
-    }
-    $("#viewTitle").textContent = item ? (item.title || item.slug) : slug;
-    if (item && item.surface === "iframe") {
-      const frame = document.createElement("iframe");
-      frame.className = "plugin-frame";
-      frame.setAttribute("sandbox", "");
-      frame.referrerPolicy = "no-referrer";
-      frame.title = item.title || item.slug;
-      v.appendChild(frame);
-      try {
-        const res = await fetch("/v1/plugins/" + encodeURIComponent(slug) + "/frame" + (state.q ? "?q=" + encodeURIComponent(state.q) : ""), { headers: headers() });
-        if (!res.ok) throw new Error("plugin page unavailable");
-        const html = await res.text();
-        if (/<script/i.test(html)) throw new Error("plugin page refused");
-        frame.srcdoc = html;
-      } catch (e) {
-        v.innerHTML = '<div class="card">' + esc(e.message) + "</div>";
-      }
-      return;
-    }
-    let panel;
-    try {
-      panel = await get("/v1/plugins/" + encodeURIComponent(slug) + "/view" + (state.q ? "?q=" + encodeURIComponent(state.q) : ""));
-    } catch (e) {
-      v.innerHTML = '<div class="card">' + esc(e.message) + "</div>";
-      return;
-    }
-    paintPlugin(v, panel, slug);
-  }
-
-  function pendingCount(panel) {
-    const row = (panel.stats || []).find((s) => s.label === "Pending");
-    return row ? Number(row.value) || 0 : 0;
-  }
-
-  function paintPlugin(v, panel, slug) {
-    const stats = (panel.stats || []).map((s) => '<article class="card kpi"><label>' + esc(s.label) + "</label><b>" + esc(s.value) + "</b></article>").join("");
-    const cols = panel.columns || [];
-    const head = cols.map((c) => "<th>" + esc(c.label || c.key) + "</th>").join("");
-    const cell = (key, value) => {
-      const text = value || "";
-      if (key === "status") {
-        const tone = text === "flagged" ? "flag" : text === "clear" ? "allow" : "challenge";
-        return '<span class="pill ' + tone + '">' + esc(text || "unknown") + "</span>";
-      }
-      return esc(text);
-    };
-    const body = (panel.rows || []).map((row) => "<tr>" + cols.map((c) => "<td>" + cell(c.key, row[c.key]) + "</td>").join("") + "</tr>").join("");
-    const emptyText = panel.import
-      ? (state.q ? "No numbers match this search." : "No numbers yet. Drop a file to import them.")
-      : (state.q ? "Nothing matches this number." : "Nothing to show.");
-    const importer = panel.import
-      ? '<form class="plugin-import" id="pluginImport"><label class="plugin-drop" id="pluginDrop"><input id="pluginFile" type="file"><span id="pluginDropText">Drop any file here, or choose one. Numbers are detected automatically. Each new number uses 1 credit.</span></label><div class="plugin-import-row"><button class="btn primary" type="submit">Import numbers</button></div></form>' + scheduleCard()
-      : "";
-    v.innerHTML = importer + (stats ? '<section class="grid kpis">' + stats + "</section>" : "") +
-      '<article class="card" style="padding:0"><div class="table-wrap"><table><thead><tr>' + head + "</tr></thead><tbody>" +
-      (body || '<tr><td colspan="' + Math.max(cols.length, 1) + '">' + empty(emptyText) + "</td></tr>") +
-      "</tbody></table></div></article>";
-    const form = $("#pluginImport");
-    if (form) bindImport(form, v, slug);
-    if (panel.import) bindSchedule(v, slug);
-    if (panel.import && pendingCount(panel) > 0) {
-      schedule(() => refreshPlugin(slug), 2000);
-    }
-  }
-
-  function bindImport(form, v, slug) {
-    let chosen = null;
-    const drop = $("#pluginDrop");
-    const input = $("#pluginFile");
-    const label = $("#pluginDropText");
-    const remember = () => { if (chosen) form.dataset.file = "1"; };
-    input.onchange = () => {
-      chosen = input.files && input.files[0];
-      if (chosen) label.textContent = chosen.name;
-      remember();
-    };
-    drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
-    drop.ondragleave = () => drop.classList.remove("over");
-    drop.ondrop = (e) => {
-      e.preventDefault();
-      drop.classList.remove("over");
-      chosen = e.dataTransfer.files && e.dataTransfer.files[0];
-      if (chosen) label.textContent = chosen.name;
-      remember();
-    };
-    form.onsubmit = async (e) => {
-      e.preventDefault();
-      if (!chosen) { toast("Choose a file."); return; }
-      const btn = form.querySelector("button");
-      btn.disabled = true;
-      try {
-        const panel = await postFile("/v1/plugins/" + encodeURIComponent(slug) + "/import", chosen);
-        v.innerHTML = "";
-        paintPlugin(v, panel, slug);
-        toast("Numbers imported.");
-      } catch (err) {
-        toast(err.message);
-        btn.disabled = false;
-      }
-    };
-  }
-
-  async function postFile(path, file) {
-    const body = new FormData();
-    body.append("file", file, file.name || "numbers");
-    const res = await fetch(path, { method: "POST", headers: headers(), body });
-    if (!res.ok) {
-      let msg = res.status + " " + res.statusText;
-      try { const j = await res.json(); if (j.error) msg = j.error; } catch (e) { /* ignore */ }
-      throw new Error(msg);
-    }
-    return res.json();
-  }
-
-  const scheduleZones = [
-    ["UTC", "UTC"],
-    ["America/New_York", "Eastern time"],
-    ["America/Chicago", "Central time"],
-    ["America/Denver", "Mountain time"],
-    ["America/Los_Angeles", "Pacific time"],
-    ["America/Toronto", "Toronto"],
-    ["Europe/London", "London"],
-    ["Europe/Dublin", "Dublin"],
-    ["Europe/Paris", "Paris"],
-    ["Europe/Berlin", "Berlin"],
-    ["Europe/Amsterdam", "Amsterdam"],
-    ["Europe/Madrid", "Madrid"],
-    ["Europe/Rome", "Rome"],
-    ["Europe/Warsaw", "Warsaw"],
-    ["Europe/Stockholm", "Stockholm"],
-    ["Asia/Dubai", "Dubai"],
-    ["Asia/Kolkata", "India"],
-    ["Asia/Singapore", "Singapore"],
-    ["Asia/Tokyo", "Tokyo"],
-    ["Australia/Sydney", "Sydney"]
-  ];
-
-  function scheduleCard() {
-    const days = ["M", "T", "W", "T", "F", "S", "S"].map((label, i) => {
-      const on = i < 5;
-      return '<button type="button" class="day' + (on ? " on" : "") + '" data-day="' + (i + 1) + '" aria-pressed="' + (on ? "true" : "false") + '">' + label + "</button>";
-    }).join("");
-    const every = [["15", "15m"], ["60", "1 hour"], ["360", "6 hours"], ["1440", "Day"]].map(([n, label]) =>
-      '<button type="button" data-interval="' + n + '"' + (n === "60" ? ' class="on"' : "") + ">" + label + "</button>"
-    ).join("");
-    const zones = scheduleZones.map(([id, label]) => '<option value="' + id + '">' + esc(label) + "</option>").join("");
-    return '<form class="card plugin-schedule" id="pluginSchedule">' +
-      '<div class="plugin-schedule-head"><div><strong>Schedule</strong><span class="muted small" id="pluginScheduleWhen">Off</span></div>' +
-      '<button type="button" class="switch" id="pluginScheduleOn" aria-pressed="false" aria-label="Check on a schedule"><i></i></button></div>' +
-      '<div class="plugin-schedule-row"><span>Every</span><div class="seg" id="pluginEvery">' + every + "</div></div>" +
-      '<div class="plugin-schedule-row"><span>Days</span><div class="days" id="pluginDays">' + days + "</div></div>" +
-      '<div class="plugin-schedule-row"><span>Hours</span><input id="pluginStart" type="time" value="09:00" aria-label="Start"><span class="muted">to</span><input id="pluginEnd" type="time" value="17:00" aria-label="End"></div>' +
-      '<div class="plugin-schedule-row"><span>Zone</span><select id="pluginZone" aria-label="Timezone">' + zones + "</select></div>" +
-      '<p class="muted small">Each check uses 1 credit per number.</p>' +
-      '<div class="plugin-import-row"><button class="btn primary" type="submit">Save schedule</button></div></form>';
-  }
-
-  function scheduleWhen(row) {
-    if (!row || row.state === "off" || !row.enabled) return "Off";
-    if (row.state === "checking") return "Checking the list.";
-    if (row.state === "paused") return (row.note || "Not enough credits") + (row.next_run_local ? ". Next try " + row.next_run_local : "");
-    return row.next_run_local ? "Next check " + row.next_run_local : "Scheduled";
-  }
-
-  function fillSchedule(row) {
-    const form = $("#pluginSchedule");
-    if (!form || !row) return;
-    const on = $("#pluginScheduleOn");
-    on.classList.toggle("on", !!row.enabled);
-    on.setAttribute("aria-pressed", row.enabled ? "true" : "false");
-    $$("#pluginEvery button").forEach((b) => b.classList.toggle("on", Number(b.dataset.interval) === Number(row.interval_minutes)));
-    const days = row.weekdays || [];
-    $$("#pluginDays button").forEach((b) => {
-      const pressed = days.indexOf(Number(b.dataset.day)) >= 0;
-      b.classList.toggle("on", pressed);
-      b.setAttribute("aria-pressed", pressed ? "true" : "false");
-    });
-    $("#pluginStart").value = row.start || "09:00";
-    $("#pluginEnd").value = row.end || "17:00";
-    const zone = $("#pluginZone");
-    if (row.timezone && !zone.querySelector('option[value="' + row.timezone + '"]')) {
-      const extra = document.createElement("option");
-      extra.value = row.timezone;
-      extra.textContent = row.timezone;
-      zone.appendChild(extra);
-    }
-    zone.value = row.timezone || "UTC";
-    $("#pluginScheduleWhen").textContent = scheduleWhen(row);
-    form.classList.toggle("off", !row.enabled);
-    form.dataset.dirty = "";
-  }
-
-  function readSchedule() {
-    return {
-      enabled: $("#pluginScheduleOn").classList.contains("on"),
-      interval_minutes: Number(($("#pluginEvery button.on") || { dataset: { interval: "60" } }).dataset.interval),
-      weekdays: $$("#pluginDays button.on").map((b) => Number(b.dataset.day)),
-      start: $("#pluginStart").value || "09:00",
-      end: $("#pluginEnd").value || "17:00",
-      timezone: $("#pluginZone").value || "UTC"
-    };
-  }
-
-  function bindSchedule(v, slug) {
-    const form = $("#pluginSchedule");
-    const mark = () => { form.dataset.dirty = "1"; };
-    $("#pluginScheduleOn").onclick = () => {
-      const on = $("#pluginScheduleOn");
-      const next = !on.classList.contains("on");
-      on.classList.toggle("on", next);
-      on.setAttribute("aria-pressed", next ? "true" : "false");
-      form.classList.toggle("off", !next);
-      mark();
-    };
-    $("#pluginEvery").onclick = (e) => {
-      const b = e.target.closest("button[data-interval]");
-      if (!b) return;
-      $$("#pluginEvery button").forEach((x) => x.classList.toggle("on", x === b));
-      mark();
-    };
-    $("#pluginDays").onclick = (e) => {
-      const b = e.target.closest("button[data-day]");
-      if (!b) return;
-      const next = b.getAttribute("aria-pressed") !== "true";
-      b.classList.toggle("on", next);
-      b.setAttribute("aria-pressed", next ? "true" : "false");
-      mark();
-    };
-    $("#pluginStart").onchange = mark;
-    $("#pluginEnd").onchange = mark;
-    $("#pluginZone").onchange = mark;
-    form.onsubmit = async (e) => {
-      e.preventDefault();
-      const btn = form.querySelector('button[type="submit"]');
-      btn.disabled = true;
-      try {
-        fillSchedule(await put("/v1/plugins/" + encodeURIComponent(slug) + "/schedule", readSchedule()));
-        toast("Schedule saved.");
-      } catch (err) {
-        toast(err.message);
-      }
-      btn.disabled = false;
-    };
-    get("/v1/plugins/" + encodeURIComponent(slug) + "/schedule").then(fillSchedule).catch(() => {});
-  }
-
-  async function refreshPlugin(slug) {
-    if (addonSlug() !== slug) return;
-    const editing = $("#pluginSchedule");
-    if (editing && editing.dataset.dirty === "1") return;
-    const importing = $("#pluginImport");
-    if (importing && importing.dataset.file === "1") return;
-    try {
-      const panel = await get("/v1/plugins/" + encodeURIComponent(slug) + "/view" + (state.q ? "?q=" + encodeURIComponent(state.q) : ""));
-      const v = $("#view");
-      v.innerHTML = "";
-      paintPlugin(v, panel, slug);
-    } catch (e) { /* keep the current table */ }
-  }
-
-  // ---------- topbar ----------
+  // ---------- top bar ----------
+  $$("#rangeSeg button").forEach((b) => b.classList.toggle("on", b.dataset.range === state.range));
   $("#rangeSeg").onclick = (e) => {
-    const b = e.target.closest("button[data-range]");
-    if (!b) return;
+    const b = e.target.closest("[data-range]");
+    if (!b || b.dataset.range === state.range) return;
     state.range = b.dataset.range;
     localStorage.setItem("falcon_range", state.range);
     $$("#rangeSeg button").forEach((x) => x.classList.toggle("on", x === b));
-    $("#viewHint").textContent = titles[state.view][1] + " · " + rangeLabel(state.range);
-    render();
+    if (state.view && state.view.rangeChanged) state.view.rangeChanged();
   };
-  $$("#rangeSeg button").forEach((x) => x.classList.toggle("on", x.dataset.range === state.range));
-  let searchTimer;
+  let searchTimer = 0;
   $("#search").oninput = (e) => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       state.q = e.target.value.trim();
-      if (state.view === "numbercheck" || state.view === "transcripts" || state.view === "blocklist" || state.view === "scoring" || state.view === "ipintel") render();
-      else if (state.view === "numbers") loadNumbers();
-      else if (state.view !== "traffic") location.hash = "#traffic?q=" + encodeURIComponent(state.q);
-      else loadTraffic(true);
-    }, 250);
+      if (state.viewName === "calls") Calls.searchChanged();
+      else if (state.q) location.hash = "#calls?q=" + encodeURIComponent(state.q);
+    }, 300);
   };
+  function closeAll() {
+    if (!$("#ask").hidden) { $("#ask").hidden = true; }
+    if (!$("#drawer").hidden) Drawer.close();
+    $("#scrim").hidden = true;
+  }
+  $("#drawerClose").onclick = () => Drawer.close();
+  $("#scrim").onclick = closeAll;
   document.addEventListener("keydown", (e) => {
-    if (e.key === "/" && document.activeElement !== $("#search") && !/input|textarea|select/i.test(document.activeElement.tagName)) { e.preventDefault(); $("#search").focus(); $("#search").select(); }
-    if (e.key === "Escape") { if (!$("#ask").hidden) askClose(); else if (!$("#drawer").hidden) closeDrawer(); else $("#search").blur(); }
-    if ((e.key === "a" || e.key === "A") && !e.metaKey && !e.ctrlKey && document.activeElement.tagName !== "INPUT" && $("#ask").hidden) { e.preventDefault(); askOpen(); }
-    if ((e.key === "l" || e.key === "L") && !/input|textarea|select/i.test(document.activeElement.tagName)) setLive(!state.live);
+    const typing = /input|textarea|select/i.test(document.activeElement.tagName);
+    if (e.key === "/" && !typing) { e.preventDefault(); $("#search").focus(); $("#search").select(); }
+    if (e.key === "Escape") closeAll();
   });
 
   // ---------- health ----------
@@ -1442,17 +1177,21 @@
     try {
       const h = await get("/v1/health");
       $("#healthDot").className = "dot ok";
-      $("#healthText").textContent = "healthy";
-      $("#installId").textContent = "install " + (h.install_id || "").slice(0, 8);
-      $("#versionText").textContent = "falcon " + (h.version || "");
+      setText($("#healthText"), "Running");
+      setText($("#versionText"), "Falcon " + (h.version || ""));
     } catch (e) {
       $("#healthDot").className = "dot bad";
-      $("#healthText").textContent = token ? "unreachable" : "unauthorized · add ?token=";
+      setText($("#healthText"), token ? "Not reachable" : "Add ?token= to the address");
     }
   }
-  health();
-  setInterval(health, 10000);
-  window.addEventListener("resize", () => { if (state.view === "overview" || state.view === "tuning") render(); });
 
+  liveOn((msg) => {
+    if (msg.type === "voice" && Drawer.id && String(msg.event_id) === String(Drawer.id)) Drawer.refresh();
+  });
+
+  health();
+  setInterval(health, 15000);
+  loadStatus();
+  startLive();
   navigate();
 })();

@@ -6,8 +6,14 @@
 
 Falcon is a SIP risk engine that runs next to your switch. It reads each
 INVITE, verifies STIR/SHAKEN, names the provider behind the source IP, applies
-your allow and deny rules, scores the request, and returns an action. The
-switch keeps signaling and media. Falcon never sits in the call.
+your allow and deny rules, scores the request, and returns an action. By
+default the switch keeps signaling and media, and Falcon never sits in the
+call.
+
+In bridge mode Falcon is also a carrier on your switch. It fails clean calls
+back before any answer, so the switch routes them to the next vendor. It
+carries the suspicious calls, records both sides, and catches false answer
+supervision (FAS).
 
 One binary. One SQLite file. No external service. A laptop and a fleet of a
 thousand nodes run the same build with the same configuration.
@@ -28,17 +34,24 @@ thousand nodes run the same build with the same configuration.
 4. **A local score** from SIP header shape, User-Agent, velocity, and the
    signals above. An action: `allow`, `flag`, `challenge`, or `reject`, with
    the reasons.
-5. **A dashboard** on the same process: overview, traffic with live tail,
-   signers, providers, lists, tuning, system. No build step, no external
-   fonts or scripts.
-6. **An operator API**: filtered events with cursors, stats, histogram,
+5. **A dashboard** on the same process. The Overview answers three questions:
+   is Falcon protecting the switch, what did it stop, and what needs you.
+   Every item on it has the one action that settles it. No build step, no
+   external fonts or scripts.
+6. **A call bridge.** Falcon carries suspicious calls, records the caller and
+   the callee on separate channels, and fails clean calls back to the switch.
+7. **A FAS guard.** On bridged calls Falcon hears ringback, busy tones,
+   intercepts, and silence after a vendor answers. It can hold the answer
+   until a person speaks.
+8. **Recordings you can play** with a transcript split by speaker.
+9. **An operator API**: an overview, filtered events with cursors, stats,
    parties, rules, server-sent events, CSV export, `/metrics` for Prometheus.
-7. **Optional paid connections** to CallerAPI: the spam database feed and the
-   live voice firewall lookup.
-8. **Business Caller ID.** On by default when a CallerAPI key is set. Falcon
-   verifies each INVITE for free. A spoofed registered brand is a hard
-   reject. A verified name is put in `X-Falcon-BCID-Name` and
-   `Remote-Party-ID` when the switch can set those headers.
+10. **Optional paid connections** to CallerAPI: the spam database feed and
+    the live reputation lookup.
+11. **Business Caller ID.** On by default when a CallerAPI key is set. Falcon
+    verifies each INVITE for free. A spoofed registered brand is a hard
+    reject. A verified name is put in `X-Falcon-BCID-Name` and
+    `Remote-Party-ID` when the switch can set those headers.
 
 ## Telemetry: on by default, called party redacted
 
@@ -67,6 +80,7 @@ What is never sent:
 | Forwarding numbers (`Diversion`, `History-Info`, `Referred-By`) | Replaced with `REDACTED` |
 | PASSporT (`Identity` header) | Removed. It carries the called number in its `dest` claim. The verification result is sent instead |
 | SDP body | Dropped. It carries media addresses and SRTP keys |
+| Recordings and transcripts | Never in telemetry. Only the voice category and score travel |
 | Calling number when it equals the called number | Replaced with `REDACTED` and marked `from_equals_to` |
 
 A keyed hash of the called number (`to_hmac`) travels instead of the number.
@@ -74,19 +88,23 @@ The key is a random secret created on this install and never sent, so
 CallerAPI can count how many of your subscribers one campaign reached
 without learning who they are, and cannot join it across installs.
 
-Falcon logs the telemetry state on every boot. The System view shows the
-same, with the exact endpoint and a sample of a redacted INVITE. Every
-shared event is also in your local database, so you can audit what left.
+Falcon logs the telemetry state on every boot. Settings shows the same
+state and the fields that never leave the host. Every shared event is also
+in your local database, so you can audit what left.
 
-To opt out:
+To opt out, set this and restart:
 
 ```
 FALCON_SHARE=false
 ```
 
-or untick "Share redacted screening events" in the System view. The
-dashboard opt-out applies within 30 seconds and survives restarts. The
-environment flag wins over the dashboard.
+The environment is the only switch. The dashboard shows the state and
+cannot change it, so a change of the setting is always a change of the
+deployment. Demo mode never shares, because its calls are synthetic.
+
+An event on a bridged call waits until the call ends, so the FAS verdict
+travels with it. A recorded call waits three more minutes for the voice
+verdict.
 
 If you screen outbound calls on the same switch, the calling number is your
 subscriber. Run that switch with `FALCON_SHARE=false`.
@@ -109,8 +127,8 @@ that have shared for at least a day, or that carry a key.
 
 A score is a rate of failed verifications, rejects, and spam database hits,
 capped by evidence: one install behind it caps at 50, two at 70, five with
-a few hundred calls can reach 100. The Signers view shows it in the
-`network` column. The event drawer shows it per call.
+a few hundred calls can reach 100. Threats, Signers shows it in the
+`Network score` column.
 
 By default the feed is corroboration. A signer or tool with a score of 70
 or more across at least 3 installs adds weight to the local score and can
@@ -129,8 +147,8 @@ Falcon hashes the habits of the software that sent each INVITE: header
 order, the `Allow`, `Supported`, and `User-Agent` values, the shape of the
 Call-ID and tags, the transport, and the SDP codec order and attributes.
 Never a number, an address, a port, a key, or a time. The result is a 16
-character `fingerprint` on every event, searchable in Traffic and grouped
-in `/v1/parties?by=fingerprint`. The drawer lists the parts behind it.
+character `fingerprint` on every event, searchable in Calls and grouped
+in `/v1/parties?by=fingerprint`.
 
 A fingerprint names a tool, not a party, and a common tool is shared by
 good and bad traffic alike. That is why the feed scores it by what the
@@ -163,8 +181,8 @@ Then:
   (`caller_id_not_owned`, SIP 603, `X-Falcon-Block: caller_id`) and the
   webhook fires at once with `customer_id`, `calling_number`, the
   customer's numbers, and `suggested_action`.
-- Every call from the customer carries the account label, so the Lists,
-  Traffic, alerts, and the traceback pack can be filtered by customer.
+- Every call from the customer carries the account label, so Calls,
+  alerts, and the traceback pack can be filtered by customer.
 - The alert watcher pages when a customer's reject rate crosses
   `alert_customer_reject_pct` (default 30% over 50 calls in 15 minutes).
 
@@ -242,7 +260,10 @@ Two checks run on the host for free, before any model:
   A recording played at a person.
 
 Then, if a provider is configured, the clip is transcribed and classified
-into the CallerAPI complaint categories:
+into the CallerAPI complaint categories. A stereo clip is transcribed one
+channel at a time. Falcon puts both channels on one timeline, so the
+transcript shows who said what: the caller on the left channel, the callee
+on the right.
 
 ```
 # Any OpenAI-compatible pair: OpenAI, Groq, xAI for chat, a local Whisper server for speech
@@ -260,11 +281,14 @@ CALLERAPI_API_KEY=...
 ```
 
 Transcripts, categories, and summaries live in the local database and in
-the event drawer. They are never shared. Telemetry carries the category
-and score only. A scam verdict at 0.7 or above fires `voice_scam` on the
+the call view. They are never shared. Telemetry carries the category and
+score only. A scam verdict at 0.7 or above fires `voice_scam` on the
 webhook with the category, summary, customer, and calling number. With
 the CallerAPI provider and `FALCON_VOICE_REPORT=true` (default), a scam
 verdict also files the calling number in the spam database.
+
+The provider receives the audio for transcription. Falcon sends a long
+recording in pieces and joins the text, so the whole call is transcribed.
 
 ## Run
 
@@ -298,14 +322,8 @@ curl -sS -X POST http://127.0.0.1:8090/v1/screen \
 ```
 
 Switch adapters for Asterisk (and the FreePBX family), FreeSWITCH (and
-FusionPBX), Kamailio, OpenSIPS, and ConnexCS live in `adapters/`. Each one
-is tested in CI against a live Falcon on a real switch container.
-
-On ConnexCS the route keeps one ScriptForge app,
-`adapters/connexcs/falcon.js`. That app screens the INVITE and returns.
-It does not receive the transcript, and CallerAPI does not hear the audio
-on that route. Live text is the AI voice firewall plugin. See
-`adapters/README.md`. A Class 5 app does not cover a carrier route.
+FusionPBX), Kamailio, and OpenSIPS live in `adapters/`. Each one is tested
+in CI against a live Falcon on a real switch container.
 
 On a class 4 or wholesale ingress run `FALCON_PROFILE=carrier`. The default
 scoring is tuned for a PBX trunk and rejects a normal call center CLI
@@ -332,6 +350,114 @@ the path for Sansay, Sippy, PortaSwitch, Metaswitch, Ribbon, Oracle,
 AudioCodes, Cisco CUBE, and any proprietary class 4 platform. Details and
 per-vendor notes are in `adapters/README.md`.
 
+## Call bridge: hear the suspicious calls
+
+The redirect listener decides and steps out. The bridge stays in the
+calls it wants to hear. It needs no script on the switch and no Asterisk.
+
+```
+FALCON_SIP_LISTEN=0.0.0.0:5060
+FALCON_SIP_PEERS=203.0.113.10
+FALCON_SIP_MODE=bridge
+FALCON_MEDIA_IP=203.0.113.20
+```
+
+Set it up on the switch in two steps:
+
+1. Add Falcon as a carrier, first in the routing strategy of the traffic you
+   want screened.
+2. Add Falcon as a customer with IP authentication. Its routes are your real
+   vendors. Do not put Falcon in that customer's routes.
+
+What Falcon does with each INVITE:
+
+| Decision | Bridge |
+| --- | --- |
+| Allow, flag | `503` before any answer. The switch routes the call to the next vendor. Nothing is recorded |
+| Reject, enforce mode | `603`. The switch drops the call |
+| Challenge, or reject in monitor mode | Falcon calls the switch back as the customer, relays the audio, and records both sides |
+| Flag from `caller_fanout` | One call in `FALCON_BRIDGE_FANOUT_EVERY` (20) is carried and recorded. The rest get `503` |
+| Allow | One call in `FALCON_BRIDGE_CLEAN_EVERY` (0, off) is carried, so the FAS guard also checks ordinary traffic |
+
+The bridge does not create FAS of its own:
+
+- It never answers the caller before the far end answers. Ringing and early
+  media go through.
+- A hangup on either side hangs up the other side at once. A cancel goes
+  through to the far end.
+- A call with no audio in either direction for `FALCON_RTP_TIMEOUT` (30s)
+  ends. No call lasts longer than `FALCON_BRIDGE_MAX_DURATION` (4h).
+- On shutdown Falcon hangs up both legs of every call it carries.
+- A loop guard refuses a call that Falcon itself sent.
+
+The bridge fails clean. A call it cannot carry gets `503`, so the switch
+routes it: no early offer, no free RTP port, more than
+`FALCON_BRIDGE_MAX_CALLS` (1000) calls up, or a far end that refuses
+Falcon. If the switch refuses Falcon with `401`, `403`, or `407`, the log
+says to add Falcon as a customer with IP authentication.
+
+`FALCON_RTP_PORT_MIN` and `FALCON_RTP_PORT_MAX` (20000 to 29999) are the
+media ports. Open them on the firewall. `FALCON_MEDIA_IP` is the address
+Falcon puts in SDP. Set it when the host has more than one address.
+
+### Vendor routes
+
+To check the answers of one vendor, give it a tech prefix. Threats, Vendors
+saves the route: a prefix, a name, and where to send the call.
+
+1. On the switch, add the prefix in front of the number for that vendor's
+   route, and route the prefix to Falcon.
+2. In Falcon, add the route with "Strip prefix" on. Leave "Send to" empty to
+   send the call back to the switch, or give the vendor `host:port`.
+3. Set "Carry" to "Every call" to hear all of that vendor's calls.
+
+Vendors then lists the bridged calls, answers, and false answers per
+vendor. The longest matching prefix wins.
+
+## FAS guard
+
+On every bridged call Falcon listens to the far end after it answers. It
+hears these kinds of false answer supervision:
+
+| Kind | What Falcon hears |
+| --- | --- |
+| `ringback` | A ringing tone after the answer: US, UK, and European cadences |
+| `busy` | A busy or reorder tone after the answer |
+| `sit` | The three intercept tones in front of an announcement |
+| `dead_air` | The far end answers and never speaks, for 4 seconds or more |
+
+`FALCON_FAS_MODE` sets what Falcon does. Settings changes it at runtime.
+
+| Mode | Effect |
+| --- | --- |
+| `monitor` (default) | Falcon records the false answer, marks the call, and alerts. The call goes on |
+| `enforce` | Falcon holds the answer. The caller hears the far end as early media and is not billed. The answer goes through when a person speaks |
+| `off` | No detection |
+
+In enforce mode a tone that goes on past `FALCON_FAS_MAX_RINGBACK` (60s),
+or an intercept, fails the call back to the switch with `480`, and the far
+end is hung up. The switch can then route again. Silence for
+`FALCON_FAS_HOLD` (2s) lets the answer through, so a quiet person is never
+cut off.
+
+The call view shows the timeline: setup, false answer, and conversation.
+Vendors totals the false answers and the billed seconds per vendor.
+
+## Recordings and transcripts
+
+Each bridged call is one stereo WAV: the caller on the left channel, the
+callee on the right. The file is in `FALCON_RECORDINGS_DIR` (default: a
+`recordings` folder next to the database). Falcon keeps it for
+`FALCON_RECORDING_RETENTION_DAYS` (7), which Settings can change. A
+recording stops at `FALCON_RECORD_MAX_SECONDS` (1800).
+
+The call view plays the recording in the browser. Lanes under the player
+show when each side spoke. With a voice provider, the transcript is split
+by speaker. A click on a line plays the audio from that point.
+
+A recording is served only to a signed-in operator, at
+`GET /v1/recordings/{id}.wav`. It never goes into telemetry.
+
 ## Score
 
 The engine adds weights and caps the total at 100.
@@ -344,8 +470,9 @@ The engine adds weights and caps the total at 100.
 | high | 80-100 | reject |
 
 Thresholds are `FALCON_FLAG_SCORE`, `FALCON_CHALLENGE_SCORE`, and
-`FALCON_REJECT_SCORE`. The Tuning view shows where they sit against your
-traffic and prints the values to apply.
+`FALCON_REJECT_SCORE`. Settings, Sensitivity changes them at runtime. The
+presets are Relaxed, Balanced, Strict, and Carrier. The three levels stay
+editable one by one.
 
 Hard rejects skip the score: a deny rule, a spam feed hit, or an IP intel
 `block` row. The response carries `X-Falcon-Block` with the source.
@@ -367,7 +494,7 @@ budget (`FALCON_SHAKEN_BUDGET`, default 400 ms) returns `No-TN-Validation`
 and warms the cache for the next call. Chains are cached for an hour.
 
 The signer's SPC and organization are on the event, in `X-Falcon-Signer`,
-and aggregated in the Signers view. A deny rule on an SPC rejects every call
+and summed in Threats, Signers. A deny rule on an SPC rejects every call
 that provider signs.
 
 Air-gapped hosts: set `FALCON_SHAKEN_CA_FILE` to a PEM bundle and set
@@ -444,69 +571,68 @@ All endpoints take the token. Ranges are `range=15m|1h|6h|24h|7d|30d` or
 | Method and path | Purpose |
 | --- | --- |
 | `POST /v1/screen` | Score one request. |
-| `GET /v1/events` | Events. Filters: `action`, `verstat`, `ip`, `spc`, `provider`, `fingerprint`, `number`, `q`. Cursor: `before`. |
-| `GET /v1/events/{id}` | One event with raw SIP, the verification result, the fingerprint parts, and the network rows for its signer and tool. |
+| `GET /v1/overview` | The home screen in one request: protection state, totals, the latency Falcon adds, the trend, the items that need a decision, and the latest stopped callers. |
+| `POST /v1/insights/dismiss` | Hide one item of the overview for `hours` (default 24). Body: `key`, `hours`. |
+| `GET /v1/events` | Events. Filters: `verdict` (`blocked`, `flagged`, `allowed`, `stopped`), `recorded`, `fas`, `bridged`, `action`, `verstat`, `ip`, `spc`, `provider`, `fingerprint`, `direction`, `customer`, `number`, `q`. Cursor: `before`. |
+| `GET /v1/events/{id}` | One event with raw SIP, the verification result, the reasons in words, the bridged call, the recording URL, and the transcript turns. |
 | `GET /v1/events.csv` | CSV export with the same filters. |
+| `GET /v1/recordings/{id}.wav` | A recording. Range requests work, so the player can seek. |
+| `GET /v1/suspects` | Calling numbers worth acting on. The most flagged calls first. |
+| `GET /v1/vendors` | Bridged calls, answers, and false answers per vendor route. |
+| `GET|POST /v1/routes`, `DELETE /v1/routes/{id}` | Vendor routes for the bridge: `prefix`, `label`, `target`, `strip`, `carry` (`all` or `suspicious`). |
+| `GET /v1/modules` | The built-in add-ons and their state. |
+| `GET /v1/numbercheck/view`, `POST /v1/numbercheck/import`, `GET|PUT /v1/numbercheck/schedule` | Number check: the list, a file import (multipart `file`), and the recheck schedule. |
 | `GET /v1/stats` | Counts, top lists, and a dense timeseries. |
 | `GET /v1/histogram` | Ten score buckets and the live thresholds. |
 | `GET /v1/parties?by=signer|provider|ip|fingerprint|customer|caller` | Per-entity totals, reject rate, attestation mix, verstat, distinct callers, and the network score for signers and tools. |
 | `GET /v1/rules`, `POST /v1/rules`, `DELETE /v1/rules/{id}` | Allow and deny rules. |
 | `GET /v1/stream` | Server-sent events, one per screened request. |
 | `POST /v1/reload` | Reload the IP intel table, the trust list, the CRL, and the rules. |
-| `GET /v1/settings`, `PUT /v1/settings` | Runtime settings: retention, raw SIP retention, telemetry sharing. |
+| `GET /v1/settings`, `PUT /v1/settings` | Runtime settings: `mode`, `fas_mode`, retention, raw SIP retention, recording retention, bridge sampling, and the three score levels. Telemetry is not a runtime setting. |
 | `GET /v1/alerts`, `GET|PUT /v1/alerts/settings`, `POST /v1/alerts/test` | Fired alerts, webhook and thresholds, a test message. |
 | `GET /v1/audit` | Who changed what. |
 | `GET /v1/traceback.zip?spc=|number=|ip=|fingerprint=` | The traceback pack. |
 | `POST /v1/outcome` | How a call ended: `call_id`, `answered`, `duration_s`, `hangup_cause`. |
-| `POST /v1/audio?call_id=` | The first seconds of a sampled call as WAV (body or multipart `audio`). |
-| `GET /v1/voice/samples` | Clips with features, transcript, category. |
+| `POST /v1/audio?call_id=` | A sampled call as WAV (body or multipart `audio`). A stereo file keeps the caller left and the callee right. |
+| `POST /v1/voice/transcript` | A transcript a switch made itself, joined to the event by `call_id`. |
+| `GET /v1/voice/samples` | Clips with features, transcript, turns, category. |
 | `GET|PUT /v1/customers`, `GET|DELETE /v1/customers/{id}` | Customers and the numbers they may present; activity per customer. |
 | `GET /v1/status`, `GET /v1/config`, `GET /v1/health` | State, redacted configuration, liveness. |
 | `GET /metrics` | Prometheus text. Send `FALCON_METRICS_TOKEN`, or `FALCON_TOKEN` when the metrics token is empty. |
 
-## Plugins
+## Built-in add-ons
 
-A plugin is a catalog row on CallerAPI, not a new Falcon binary. Falcon
-asks `GET /api/falcon/v1/plugins` once a minute when `CALLERAPI_API_KEY` is
-set. An enabled plugin with a dashboard page is in that list for every
-install. The next refresh shows it. No Falcon upgrade is required.
-A feed or live plugin is in that list only after a grant, because Falcon
-runs those on the INVITE. The Plugins page also shows the spam database
-feed and the voice firewall, on or off for this install.
-`FALCON_PLUGINS=false` turns the catalog off.
+Every add-on is part of the binary. There is nothing to install. Settings,
+Add-ons lists each one as on, off, or needing a key, with the variable
+that turns it on. `GET /v1/modules` returns the same list.
 
-The contract is `sdk.Input` and `sdk.Output` in `sdk/plugin.go`. A plugin
-names the fields it may read. The called number, the raw SIP message, and
-the Identity header are not fields. Unknown names are dropped.
+| Add-on | Turn it on |
+| --- | --- |
+| STIR/SHAKEN verification | On by default |
+| Telecom IP fraud list | `FALCON_IP_INTEL=true` with a key, or `FALCON_IP_INTEL_FILE` |
+| Spam list | `CALLERAPI_API_KEY` and `FALCON_SPAM_FEED=true` |
+| Live reputation | `CALLERAPI_API_KEY` and `FALCON_VOICE_FIREWALL=true` |
+| Business Caller ID | `CALLERAPI_API_KEY` |
+| Network reputation | `FALCON_SHARE=true` and `FALCON_REPUTATION=true` (both default) |
+| Call bridge and recording | `FALCON_SIP_LISTEN` and `FALCON_SIP_MODE=bridge` |
+| FAS guard | The call bridge |
+| AI voice analysis | `FALCON_VOICE_PROVIDER=callerapi` or `openai` |
+| Number check | `CALLERAPI_API_KEY` |
 
-A feed plugin matches a local key set. A live plugin calls CallerAPI, which
-calls the partner. Live checks share one budget, `FALCON_PLUGIN_BUDGET`
-(default 400 ms). A late or failed plugin does not change the decision.
+### Number check
 
-`mode` `monitor` records the hit and does not drop the call. `mode`
-`enforce` may raise the action. It does not lower a harder one.
+Threats, Your numbers keeps a list of your own numbers and shows which
+ones carriers and apps flag. Import a file. Falcon sends it to CallerAPI
+with the API key, and CallerAPI reads the numbers out of it. CSV,
+spreadsheets, PDF, JSON, and plain text all work. The file does not need a
+fixed column. Each new number costs 1 credit. A number that was already
+checked is not charged again. Flagged numbers are first.
 
-A plugin with `kind` `view` does not run on the INVITE path. It has a
-dashboard page. `surface` `native` is a table or a set of stats. Falcon
-draws that from JSON. `surface` `iframe` is HTML that Falcon fetches
-and shows on its own host. The browser does not call CallerAPI for that
-page. A partner address must be a public http or https URL. Private and
-link-local addresses are refused.
-
-The operator search filters a page. It is not the screened called number.
-The called number stays on the host.
-
-A native page can take a file. Falcon sends that file to CallerAPI with
-the API key. CallerAPI reads numbers out of the bytes. CSV, spreadsheets,
-PDF, JSON, and plain text all work. The file does not need a fixed column.
-Each new number costs 1 credit. A number that was already checked is not
-charged again. The page lists the inventory. Flagged numbers are first.
-
-The same page can recheck that list on a schedule. Pick the interval, the
-days, the hours, and the timezone. Cron runs the checks. Each recheck costs
-1 credit per number. A list that is still running does not start a second
-pass. If the account is out of credits, the current results stay and the
-next slot tries again.
+The same page rechecks that list on a schedule. Pick the interval, the
+days, the hours, and the time zone. Cron runs the checks. Each recheck
+costs 1 credit per number. A list that is still running does not start a
+second pass. If the account is out of credits, the current results stay
+and the next slot tries again.
 
 ## Monitor
 
@@ -518,14 +644,15 @@ real action, so you can see what enforce would drop.
 `FALCON_MODE=enforce` is the default. The switch applies the decision.
 
 Use monitor for the first week on a live ingress. Hard blocks are held
-too. After you trust the Traffic view, set enforce and restart.
+too. The Overview counts the calls that monitor let through. When the
+calls look right, open Settings, Protection and choose Enforce. No restart
+is needed. `FALCON_MODE` is the value a new install starts with.
 
 ## Updates
 
 Falcon compares its version with the public GitHub release every six
-hours. A newer tag raises one alert. The webhook and the System view
-show it. Falcon does not download or install that release. You pin the
-image.
+hours. A newer tag raises one alert. The webhook and the Overview show
+it. Falcon does not download or install that release. You pin the image.
 
 `FALCON_UPDATE_CHECK=false` stops the check. A `dev` build does not check.
 
@@ -608,7 +735,7 @@ A watcher evaluates the last 15 minutes every minute and posts to a
 webhook when a threshold is crossed: overall reject rate, STIR/SHAKEN
 failure rate, per-signer reject rate, and a stale STI-PA list. Each rule
 sits behind a minimum call count and fires at most once an hour per key.
-Set the webhook and thresholds in the System view or with
+Set the webhook and thresholds in Settings, Alerts or with
 `PUT /v1/alerts/settings`. `POST /v1/alerts/test` sends one. Fired alerts
 are listed at `GET /v1/alerts`. The payload carries a Slack compatible
 `text` field and a `falcon` object with the details, so a Slack incoming
@@ -618,8 +745,8 @@ webhook works as is and any JSON receiver gets the structure.
 
 Every change made through the API is recorded with the actor, the action,
 the subject, and the detail: rules added or deleted, settings, alert
-settings, reloads, traceback exports. `GET /v1/audit` lists them; the
-System view shows the last thirty. The actor is the dashboard user, the
+settings, reloads, traceback exports. `GET /v1/audit` lists them. Settings,
+System shows the latest changes. The actor is the dashboard user, the
 token, or the query token, with the client address.
 
 ## Traceback pack
@@ -629,16 +756,18 @@ token, or the query token, with the client address.
 for: `events.csv`, `events.json`, one raw INVITE per call under `sip/`, the
 signer certificate chains still in the verifier cache under
 `certificates/`, `summary.json`, and a `README.txt` that explains every
-column. The Signers view has a `Pack` button per signer. The export is
-written to the audit log.
+column. Threats, Signers has a `Traceback` button per signer, and the call
+view has one for the calling number. The export is written to the audit
+log.
 
 ## Storage
 
 Every screen writes a row to the SQLite file at `FALCON_DB_PATH`. Decisions
 are kept for `FALCON_RETENTION_DAYS` (default 30). The raw SIP message on each
 row is scrubbed after `FALCON_RAW_SIP_RETENTION_DAYS` (default 7) while the
-decision stays. Both are editable at runtime from the System view or
+decision stays. Both are editable at runtime from Settings or
 `PUT /v1/settings`. `FALCON_STORE_RAW_SIP=false` never writes raw SIP.
+Recordings have their own window, described under the call bridge.
 
 If you set S3 variables, Falcon writes JSONL objects to your bucket. That path
 is your storage.
@@ -677,15 +806,16 @@ FALCON_SPAM_FEED=true
 Falcon downloads `/api/spam-reports/csv` on a timer. A From number on that
 list is a hard reject.
 
-Voice firewall:
+Live reputation:
 
 ```
 CALLERAPI_API_KEY=...
 FALCON_VOICE_FIREWALL=true
 ```
 
-Falcon calls `/api/lookup/{phone}` on each screen. For inline SIP blocking at
-the edge, use the hosted product at https://callerapi.com/sip-firewall.
+Falcon calls `/api/lookup/{phone}` on each screen. A spam hit adds score
+and flags the call. It does not listen to audio. The audio is the call
+bridge and the AI voice analysis above.
 
 ## Configuration
 
@@ -700,7 +830,7 @@ never held longer than the budget, mutations refuse cross-site form
 submissions, the dashboard runs under a strict content security policy, an
 empty token on a public listen stops startup, raw SIP has its own short
 retention, telemetry never carries the called party, and nothing leaves the
-host that the System view does not list.
+host that Settings does not list.
 
 ## Releases
 
@@ -720,19 +850,18 @@ make build VERSION=1.0.0
 
 ## Ask Falcon: the assistant
 
-The Overview opens with the value card: calls screened, calls blocked and
-the percentage, spoofed caller ids stopped leaving your platform, failed
-verifications, honeypot hits, replayed recordings, voice scams, customers
-flagged, and an estimate of the minutes of blocked traffic you did not
-carry. It is computed from your own database with no model, so the proof
-of value never depends on a key. `GET /v1/value?range=24h` returns it.
+The value card is the summary the assistant reads: calls screened, calls
+blocked and the percentage, spoofed caller ids stopped leaving your
+platform, failed verifications, honeypot hits, replayed recordings, voice
+scams, customers flagged, and an estimate of the minutes of blocked traffic
+you did not carry. It is computed from your own database with no model.
+`GET /v1/value?range=24h` returns it.
 
-`Ask Falcon` (top right, or press `A`) opens a chat that answers
-questions about this install's data: what was blocked and from whom, which
-customer to look at first, which signer is behind the rejects, what to
-tighten. The model only sees the value card and the window; it is told to
-use nothing else and to never invent a number. Bring your own model or use
-your CallerAPI key:
+`Ask Falcon` (top right) opens a chat that answers questions about this
+install's data: what was blocked and from whom, which customer to look at
+first, which signer is behind the rejects, what to tighten. The model only
+sees the value card and the window. It is told to use nothing else and to
+never invent a number. Bring your own model or use your CallerAPI key:
 
 ```
 FALCON_ASSISTANT_PROVIDER=openai          # any OpenAI-compatible chat endpoint
@@ -743,8 +872,8 @@ FALCON_ASSISTANT_MODEL=grok-3-mini
 FALCON_ASSISTANT_PROVIDER=callerapi       # on CALLERAPI_API_KEY, no other setup
 ```
 
-Without a provider the panel still shows the value card and answers with
-its sentence.
+Without a provider the button is hidden. `POST /v1/assistant` still
+answers with the sentence of the value card.
 
 ## For AI agents
 

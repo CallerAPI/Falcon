@@ -4,101 +4,77 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0b0c11">
   <title>Falcon</title>
   <link rel="icon" href="/favicon.ico" type="image/x-icon">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <div class="app">
-    <nav class="side" aria-label="Sections">
-      <a class="brand" href="#overview">
-        <span class="mark" aria-hidden="true"><img src="/logo.png" alt=""></span>
-        <span class="brand-text"><strong>Falcon</strong><small>by CallerAPI</small></span>
+    <nav class="side" aria-label="Pages">
+      <a class="brand" href="#overview" aria-label="Falcon overview">
+        <img src="/logo.png" alt="" width="30" height="30">
+        <span><strong>Falcon</strong><small>by CallerAPI</small></span>
       </a>
       <ul class="nav" id="nav">
-        <li><a href="#overview" data-view="overview"><i class="ico ico-grid"></i>Overview</a></li>
-        <li><a href="#traffic" data-view="traffic"><i class="ico ico-list"></i>Traffic</a></li>
-        <li><a href="#numbers" data-view="numbers"><i class="ico ico-rules"></i>Numbers</a></li>
-        <li><a href="#signers" data-view="signers"><i class="ico ico-shield"></i>Signers</a></li>
-        <li><a href="#providers" data-view="providers"><i class="ico ico-globe"></i>Providers</a></li>
-        <li><a href="#lists" data-view="lists"><i class="ico ico-rules"></i>Lists</a></li>
-        <li><a href="#tuning" data-view="tuning"><i class="ico ico-tune"></i>Tuning</a></li>
-        <li><a href="#system" data-view="system"><i class="ico ico-cog"></i>System</a></li>
-        <li class="nav-label">Add-ons</li>
-        <li><a href="#transcripts" data-view="transcripts"><i class="ico"></i>Transcripts</a></li>
-        <li><a href="#blocklist" data-view="blocklist"><i class="ico"></i>Blocklist</a></li>
-        <li><a href="#scoring" data-view="scoring"><i class="ico"></i>Live scoring</a></li>
-        <li><a href="#ipintel" data-view="ipintel"><i class="ico"></i>IP intel</a></li>
-        <li><a href="#numbercheck" data-view="numbercheck"><i class="ico"></i>Number check</a></li>
-        <li><a href="#aivoice" data-view="aivoice"><i class="ico"></i>AI voice</a></li>
+        <li><a href="#overview" data-view="overview">Overview</a></li>
+        <li><a href="#calls" data-view="calls">Calls</a></li>
+        <li><a href="#threats" data-view="threats">Threats</a></li>
+        <li><a href="#rules" data-view="rules">Rules</a></li>
+        <li><a href="#settings" data-view="settings">Settings</a></li>
       </ul>
       <div class="side-foot">
-        <div class="health"><span class="dot" id="healthDot"></span><span id="healthText">connecting</span></div>
-        <div class="mono muted" id="installId">install —</div>
-        <div class="mono muted" id="versionText"></div>
+        <div class="health"><span class="dot" id="healthDot"></span><span id="healthText">Connecting</span></div>
+        <div class="faint" id="versionText"></div>
       </div>
     </nav>
 
     <div class="main">
       <header class="topbar">
-        <div class="topbar-left">
-          <h1 id="viewTitle">Overview</h1>
-          <span class="muted" id="viewHint"></span>
-        </div>
-        <div class="topbar-right">
-          <div class="search">
-            <input id="search" type="search" placeholder="Search number, IP, Call-ID, signer  ( / )" autocomplete="off" spellcheck="false">
-          </div>
+        <h1 id="viewTitle">Overview</h1>
+        <div class="topbar-tools">
+          <label class="search">
+            <span class="sr-only">Search calls</span>
+            <input id="search" type="search" placeholder="Search a number, IP, or Call-ID" autocomplete="off" spellcheck="false">
+          </label>
           <div class="seg" id="rangeSeg" role="group" aria-label="Time range">
-            <button data-range="15m">15m</button>
-            <button data-range="1h">1h</button>
-            <button data-range="6h">6h</button>
-            <button data-range="24h" class="on">24h</button>
-            <button data-range="7d">7d</button>
-            <button data-range="30d">30d</button>
+            <button type="button" data-range="1h">1h</button>
+            <button type="button" data-range="24h">24h</button>
+            <button type="button" data-range="7d">7d</button>
+            <button type="button" data-range="30d">30d</button>
           </div>
-          <button class="btn ghost" id="liveBtn" title="Live tail (L)"><span class="live-dot"></span>Live</button>
-          <button class="btn primary" id="askBtn" title="Ask Falcon what it did and why (A)">Ask Falcon</button>
+          <button type="button" class="btn ghost" id="askBtn" hidden>Ask Falcon</button>
         </div>
       </header>
-
-      <main id="view" class="view"></main>
+      <main id="view" class="view" tabindex="-1"></main>
     </div>
   </div>
 
-  <aside id="drawer" class="drawer" hidden aria-label="Event detail">
+  <aside id="drawer" class="drawer" hidden aria-label="Call detail" aria-modal="true" role="dialog">
     <header class="drawer-head">
-      <div>
-        <div class="muted small" id="drawerKicker">event</div>
-        <h2 id="drawerTitle">—</h2>
+      <div class="drawer-title">
+        <div class="muted small" id="drawerKicker"></div>
+        <h2 id="drawerTitle"></h2>
       </div>
-      <button class="btn ghost icon" id="drawerClose" title="Close (Esc)">✕</button>
+      <button type="button" class="icon-btn" id="drawerClose" aria-label="Close">×</button>
     </header>
-    <div class="tabs" id="drawerTabs">
-      <button data-tab="summary" class="on">Summary</button>
-      <button data-tab="transcript">Transcript</button>
-      <button data-tab="shaken">PASSporT</button>
-      <button data-tab="sip">SIP</button>
-      <button data-tab="actions">Actions</button>
-    </div>
     <div class="drawer-body" id="drawerBody"></div>
   </aside>
-  <aside id="ask" class="ask" hidden aria-label="Ask Falcon">
-    <header class="ask-head">
-      <div><div class="kicker">Ask Falcon</div><div class="muted small" id="askProvider"></div></div>
-      <button class="btn ghost sm" id="askClose" aria-label="Close">✕</button>
+
+  <aside id="ask" class="drawer ask" hidden aria-label="Ask Falcon" role="dialog">
+    <header class="drawer-head">
+      <div class="drawer-title"><div class="muted small" id="askProvider"></div><h2>Ask Falcon</h2></div>
+      <button type="button" class="icon-btn" id="askClose" aria-label="Close">×</button>
     </header>
-    <section class="ask-value" id="askValue"></section>
     <div class="ask-log" id="askLog"></div>
-    <div class="ask-suggest" id="askSuggest"></div>
     <form class="ask-form" id="askForm">
-      <input id="askInput" type="text" placeholder="What did Falcon block today, and from whom?" autocomplete="off">
+      <input id="askInput" type="text" placeholder="What did Falcon stop today, and from whom?" autocomplete="off">
       <button class="btn primary" type="submit">Ask</button>
     </form>
   </aside>
+
   <div id="scrim" class="scrim" hidden></div>
   <div id="toasts" class="toasts" aria-live="polite"></div>
-
   <script src="/app.js"></script>
 </body>
 </html>

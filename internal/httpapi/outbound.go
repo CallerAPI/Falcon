@@ -7,11 +7,14 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/callerapi/falcon/internal/alerts"
+	"github.com/callerapi/falcon/internal/media"
 	"github.com/callerapi/falcon/internal/score"
 	"github.com/callerapi/falcon/internal/sipmsg"
 	"github.com/callerapi/falcon/internal/store"
@@ -150,8 +153,7 @@ func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "clip too large"})
 		return
 	}
-	clip, err := voice.DecodeWAV(wav)
-	if err != nil {
+	if _, err := voice.DecodeWAV(wav); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -160,38 +162,33 @@ func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no event with that call id"})
 		return
 	}
-
-	f := voice.Analyse(clip)
-	recent, _ := s.Store.RecentPHashes(r.Context(), time.Now().Add(-24*time.Hour), 2000)
-	sample := store.VoiceSample{
-		EventID: ev.ID, CallID: callID, Seconds: f.Seconds, Channels: f.Channels, PHash: f.PHash,
-		CallerSpeech: f.CallerSpeech, CalleeSpeech: f.CalleeSpeech, RepeatCount: voice.Repeats(f.PHash, recent),
-		Customer: ev.Customer, From: ev.From,
+	// The clip is kept so the operator can listen to it. A host that
+	// cannot write the folder still analyses the clip.
+	rel := media.RecordingName(time.Now(), callID)
+	if err := writeRecording(s.Cfg.RecordingsPath(), rel, wav); err != nil {
+		log.Printf("falcon voice: keep clip: %v", err)
+		rel = ""
 	}
-	id, err := s.Store.AddVoiceSample(r.Context(), sample)
+	sample, f, err := s.ingestAudio(r.Context(), wav, rel, ev, callID, ev.From, true)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	sample.ID = id
-	s.metrics.clip(f.Monologue, sample.RepeatCount)
-
-	if sample.RepeatCount+1 >= 3 && s.Alerts != nil {
-		s.Alerts.FireNow(r.Context(), alerts.Fired{
-			Key: "repeat_recording:" + ev.From, Severity: "critical",
-			Title:  fmt.Sprintf("%s is playing the same recording on every call", ev.From),
-			Detail: fmt.Sprintf("The opening of this call matches %d earlier clips in 24 hours. That is a prerecorded message, not a person. No model was needed to tell.", sample.RepeatCount),
-			Data:   map[string]any{"kind": "repeat_recording", "calling_number": ev.From, "customer_id": ev.Customer, "repeat_count": sample.RepeatCount + 1, "event_id": ev.ID, "suggested_action": "block_number_and_review_customer"},
-		})
-	}
-
-	if s.VoiceProvider != nil {
-		go s.classifyClip(sample, ev, wav, f)
-	}
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"sample_id": id, "features": f, "repeat_count": sample.RepeatCount,
+		"sample_id": sample.ID, "features": f, "repeat_count": sample.RepeatCount,
 		"provider": providerName(s.VoiceProvider), "classification": s.VoiceProvider != nil,
 	})
+}
+
+func writeRecording(dir, rel string, wav []byte) error {
+	path, ok := store.RecordingPath(dir, rel)
+	if !ok {
+		return fmt.Errorf("bad recording path")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return err
+	}
+	return os.WriteFile(path, wav, 0o640)
 }
 
 func providerName(p voice.Provider) string {
@@ -206,13 +203,19 @@ func providerName(p voice.Provider) string {
 func (s *Server) classifyClip(sample store.VoiceSample, ev store.Event, wav []byte, f voice.Features) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
-	v, err := s.VoiceProvider.Analyse(ctx, wav, voice.Meta{From: ev.From, Customer: ev.Customer, Report: s.VoiceReport})
+	from := firstNonEmpty(ev.From, sample.From)
+	v, err := s.VoiceProvider.Analyse(ctx, wav, voice.Meta{From: from, Customer: ev.Customer, CallID: sample.CallID, Report: s.VoiceReport})
 	sample.Provider = providerName(s.VoiceProvider)
 	if err != nil {
 		sample.Error = err.Error()
 		log.Printf("falcon voice: %s: %v", sample.Provider, err)
 	} else {
 		sample.Transcript, sample.Category, sample.Score, sample.Summary = v.Transcript, v.Category, v.Score, v.Summary
+		if len(v.Turns) > 0 {
+			if b, err := json.Marshal(v.Turns); err == nil {
+				sample.Turns = b
+			}
+		}
 	}
 	if err := s.Store.UpdateVoiceSample(ctx, sample); err != nil {
 		log.Printf("falcon voice store: %v", err)

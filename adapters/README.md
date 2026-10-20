@@ -1,13 +1,17 @@
 # Switch adapters
 
-Falcon is a decision service. The switch keeps signaling and media. Falcon
-scores the SIP request and returns an action. There are two ways to ask:
+Falcon scores the SIP request and returns an action. There are three ways
+to ask:
 
 1. `POST /v1/screen` over HTTP from a script hook in the switch.
 2. Send the INVITE to Falcon over SIP. Falcon answers as a redirect server:
    302 to continue, 603 to drop. This is for switches with no script hook.
+3. Add Falcon to the switch as a carrier and as a customer. Falcon is the
+   call bridge: it fails clean calls back with 503 and carries the
+   suspicious ones, so it can record them and catch false answers.
 
-Fail open if Falcon does not answer. Every adapter here does.
+In the first two ways the switch keeps signaling and media. Fail open if
+Falcon does not answer. Every adapter here does.
 
 ## Which adapter for which platform
 
@@ -17,8 +21,8 @@ Fail open if Falcon does not answer. Every adapter here does.
 | FreeSWITCH 1.10, FusionPBX | `freeswitch/falcon.lua` | Real FreeSWITCH 1.10 container with `mod_curl` in CI, plus a Lua harness |
 | Kamailio 5.x | `kamailio/falcon.cfg`, or `kamailio/falcon_async.cfg` for a busy proxy | Real Kamailio 5.5 container in CI, both routes |
 | OpenSIPS 3.x | `opensips/falcon.cfg`, or `opensips/falcon_async.cfg` for a busy proxy | Real OpenSIPS 3.6 container in CI, both routes |
-| ConnexCS | `connexcs/falcon.js` (one ScriptForge App, on the route) | Node harness in CI, all three enforcement postures |
 | Sansay VSXi, Sippy, PortaSwitch, Telinta, Metaswitch, Ribbon, Oracle SBC, AudioCodes, Cisco CUBE, TelcoBridges, BroadWorks, VOS3000, and any switch that can route to a SIP redirect server | SIP redirect listener, no adapter file | UDP and TCP tests, `sipsend` in CI |
+| Any class 4 or class 5 switch that routes to a carrier and accepts a customer by IP | Call bridge, no adapter file | B2BUA tests with real RTP, `sipsend` against the binary in CI |
 | 2600Hz Kazoo | HTTP from a Pivot callflow | Not yet |
 | Twilio, Telnyx, Bandwidth, Vonage, Plivo, SignalWire | HTTP from your voice webhook | Not yet |
 
@@ -194,6 +198,56 @@ Test from any host with the bundled tool:
 go run ./adapters/e2e/sipsend -to falcon:5060 -from +13125550188
 ```
 
+## Call bridge
+
+The bridge is the SIP listener with `FALCON_SIP_MODE=bridge`. Falcon is a
+back-to-back user agent for the calls it carries. It needs no script on
+the switch.
+
+```
+FALCON_SIP_LISTEN=0.0.0.0:5060
+FALCON_SIP_PEERS=203.0.113.10
+FALCON_SIP_MODE=bridge
+FALCON_MEDIA_IP=203.0.113.20
+```
+
+On the switch:
+
+1. Add Falcon as a carrier, first in the routing strategy of the traffic
+   you want screened.
+2. Add Falcon as a customer with IP authentication. Its routes are your
+   real vendors. Do not route that customer's calls back to Falcon.
+3. Open UDP 5060 and the RTP range (`FALCON_RTP_PORT_MIN` to
+   `FALCON_RTP_PORT_MAX`, default 20000 to 29999) from the switch to
+   Falcon.
+
+What the switch gets back:
+
+| Falcon decision | SIP answer |
+| --- | --- |
+| `allow`, `flag` | `503 Service Unavailable` before any answer. The switch routes to the next vendor |
+| `reject` in enforce mode | `603 Decline` |
+| `challenge`, or `reject` in monitor mode | Falcon sends the call back to the switch as the customer and relays the answer, the audio, and the hangup |
+| A call the bridge cannot carry | `503`, with `X-Falcon-Bridge` naming why, for example `full` or `no-sdp` |
+
+The bridge relays ringing and early media. It answers the caller only
+after the far end answers. A hangup on either side ends both legs. A call
+with no audio in either direction for `FALCON_RTP_TIMEOUT` ends. Falcon
+marks the call it sends with `X-Falcon-Leg` and refuses that call if the
+switch routes it back, so a routing mistake cannot loop.
+
+For a vendor check by tech prefix, add the prefix on the switch route to
+that vendor and route the prefix to Falcon. In Falcon, open Threats,
+Vendors and add the prefix with "Strip prefix" on. "Carry: Every call"
+carries all of that vendor's calls, so the FAS guard hears every answer.
+
+Test the bridge from any host:
+
+```bash
+go run ./adapters/e2e/sipsend -to falcon:5060 -from +13125550199
+# 503 for a clean caller
+```
+
 ## Asterisk
 
 AGI is the default path. It uses the Python standard library only.
@@ -278,82 +332,9 @@ The profile turns the per-IP and per-CLI velocity rules off and raises the
 challenge and reject thresholds above the score cap. Scores can only flag.
 Hard blocks still reject: an operator deny rule, a spam feed hit, an IP
 intel `block` row, and a caller id a registered customer does not own. Each
-variable the profile sets can still be overridden by name. The Traffic view
-shows what a lower threshold would have done to your traffic before you
+variable the profile sets can still be overridden by name. In monitor mode
+the Calls page shows what the lower threshold would have stopped before you
 lower it.
-
-## ConnexCS
-
-ConnexCS runs in the cloud, so Falcon needs a public HTTPS URL and a token.
-Two parts: screening at INVITE, and live voice.
-
-### Screening at INVITE (ScriptForge)
-
-1. Developer > ScriptForge. Add a script of type App. Name it Falcon.
-2. Paste `connexcs/falcon.js`. Set `FALCON_URL` and `FALCON_TOKEN` at the
-   top. Leave `DIRECTION` at `outbound` for a customer Route. Set it to
-   `inbound` for a DID.
-3. Leave `MODE` at `monitor`. Nothing is rejected. Every call is screened
-   and recorded, and the Traffic view shows what enforce would have done.
-4. Save. The script reads these Raw Data fields: `params.si` and
-   `params.sp` (the address the INVITE came from), `params.userAgent`,
-   `cli`, `dest_number`, `callid`, `account_id`, and `stir_shaken`.
-5. Management > Customer > Routing > [Route] > ScriptForge. Select Falcon.
-   Set Timeout to `3000`. Set Timeout Action to `200 OK`, so a slow Falcon
-   lets the call through.
-6. For inbound: Management > Customer > DID > [DID] > ScriptForge.
-7. After a week in monitor, set `MODE` to `enforce`. Only hard blocks
-   reject: the deny list, the spam feed, IP intel `block`, and a caller
-   id the customer does not own. Set `ENFORCE_HARD_BLOCKS_ONLY` to false
-   only after the Traffic view shows the thresholds fit your traffic.
-
-A reject throws `603 Decline` and ConnexCS answers the caller with it.
-Allow and flag return the routing object unchanged. `ADD_HEADERS` puts
-the `X-Falcon-*` headers on the egress INVITEs once you have confirmed the
-header shape on your build.
-
-ConnexCS signs with your STIR/SHAKEN certificate on the INVITE it sends to
-the carrier, after the script returns. The script sends `stir_shaken` as
-`signing`. The certificate URL is
-`https://cdn.cnxcdn.com/shaken/<cert_id>.crt`, the x5u ConnexCS puts in the
-PASSporT. Set `FALCON_CERT_BASE` if yours differs. The event shows
-`switch signs · A` and the signer from the certificate.
-
-The Raw Data has no SDP body, so `invite_no_sdp` (+5) stays on every call.
-
-The e2e harness runs all three postures against a live Falcon: monitor
-never throws, enforce with hard blocks only throws on the deny list and
-not on a scanner score, full enforce throws on both.
-
-### Transcription
-
-Open Plugins and choose AI voice firewall after the account is granted
-that plugin. The plugin is a catalog row. Falcon calls the core API it
-names. Falcon does not run plugin code, and a new plugin that uses an
-existing core API does not need a new Falcon release. Secrets stay on
-this host.
-
-The route ScriptForge slot stays on `falcon.js`. Do not replace it and do
-not change it to App+. That app screens the INVITE and returns before
-anyone speaks. ConnexCS does not put the transcript in `data.routing`.
-
-CallerAPI does not hear the audio on a carrier route. The 1 credit per
-minute filter needs a Class 5 app, and this route does not enter one.
-
-1. On the route, turn Transcription on. Save. Leave ScriptForge on Falcon.
-2. IDE > Script Forge > Add Script. App Type App+. Paste
-   `connexcs/falcon-transcript.js`. Do not select this script on the route.
-3. Setup > Integrations > Opaque Tokens. Create an Access Token.
-4. On the plugin page, enter the script id and the token. Save.
-
-`CALLERAPI_API_KEY` must be set. A scan is 1 credit per started minute of speech. A scam verdict adds
-`voice_scam` as evidence. The INVITE score does not change. Falcon joins
-the row by Call-ID (`routing.callid`). ConnexCS does not document the
-transcription field names.
-
-`connexcs/falcon-live.xml` is a Class 5 app. It does not attach to a
-carrier route. Do not point a route at an extension, and do not prefix
-the number the customer dials.
 
 ## curl
 
@@ -373,9 +354,14 @@ ASTERISK_E2E=1 FREESWITCH_IMAGE=safarov/freeswitch:latest \
   bash adapters/e2e/run.sh
 ```
 
-The script starts a Falcon with a token and one deny rule, then drives the
-SIP listener, the AGI, the Lua script, the ScriptForge app, and with Docker
-a real Asterisk, a real FreeSWITCH, a real Kamailio (sync and async), and a
-real OpenSIPS (sync and async). Each adapter must reject the denied number
-and pass the clean one, and must send the token. Works on Linux and on
-Docker Desktop for macOS.
+The script starts two Falcons with a token and one deny rule: one with the
+redirect listener and one with the call bridge. It drives both SIP
+listeners, the AGI, and the Lua script, and with Docker a real Asterisk, a
+real FreeSWITCH, a real Kamailio (sync and async), and a real OpenSIPS
+(sync and async). Each adapter must reject the denied number and pass the
+clean one, and must send the token. The bridge must answer `603` and
+`503`. Works on Linux and on Docker Desktop for macOS.
+
+The bridge itself has end-to-end tests in `internal/bridge` with a SIP
+switch, a far end, and real RTP: hangups on both sides, cancel, timeouts,
+the loop guard, vendor routes, recordings, and the FAS guard.

@@ -60,25 +60,31 @@ listener has no token: a `FALCON_SIP_LISTEN` off loopback with an empty
 `FALCON_SIP_PEERS` stops startup, and a request from a peer outside the
 list gets no reply at all, so Falcon cannot be used as a reflector.
 
+**The call bridge.** The bridge answers the same peer list only. It opens
+RTP ports for a call it carries and closes them when the call ends. A
+recording is served only to an authenticated operator, and a stored path
+that leaves the recordings folder is refused.
+
 **SQL injection.** Every query is parameterised. Column names in aggregate
 queries come from a fixed list.
 
 ## What leaves the host
 
-The System view lists the live destinations. In full:
+Settings shows which add-ons are on. In full:
 
 | Destination | When | What |
 | --- | --- | --- |
 | `authenticate-api.iconectiv.com` | Every 6 hours (roots), every hour (CRL) | A GET. Nothing about your traffic. Off with `FALCON_SHAKEN_CA_URL=off` and a PEM file. |
 | The `x5u` host of each signer | On the first sight of a certificate URL, then hourly | A GET for the certificate. The signer learns that some verifier fetched their certificate. This is inherent to STIR/SHAKEN verification and every verification service does it. Nothing about the called party is sent. |
 | `api.callerapi.com` (feed) | Hourly | A signed GET for the network reputation feed. Nothing about your traffic; the signature carries the install id and a timestamp. Off with `FALCON_REPUTATION=false`. |
-| Your voice provider | Per sampled clip, within the budget | The first seconds of audio and the calling number. Only with `FALCON_VOICE_PROVIDER` set. The transcript comes back and stays here. |
+| Your voice provider | Per sampled clip, within the budget, and per bridged recording | The audio and the calling number. Only with `FALCON_VOICE_PROVIDER` set. The transcript comes back and stays here. |
+| `api.callerapi.com` (number check) | When the operator opens the list, imports a file, or saves the schedule | The file the operator imports and the schedule. Only with a key. |
 | Your alert webhook | When an alert fires | The alert title, detail, install id, and version. Only if you set one. |
 | Your IP intel URL | On the refresh timer | A GET. Only if you set one. |
 | `api.callerapi.com` (feed) | On the refresh timer | A GET for the spam list. Only with a key and `FALCON_SPAM_FEED=true`. |
 | `api.callerapi.com` (live lookup) | Per screened INVITE | The calling number. Only with a key and `FALCON_VOICE_FIREWALL=true`. |
 | `api.callerapi.com` (BCID verify) | Per screened INVITE | The calling number, the called number, and an optional in-band assertion. Only with a key and `FALCON_BCID=true` (the default). Off with `FALCON_BCID=false`. |
-| `api.callerapi.com` (telemetry) | Every 30 seconds | Redacted screening events: decision, score, reasons, calling number, source IP, User-Agent, signer, verification result, SIP headers with the called party replaced by `REDACTED`, no `Identity` header, no SDP. On by default. Off with `FALCON_SHARE=false` or the System view. See the README section "Telemetry". |
+| `api.callerapi.com` (telemetry) | Every 30 seconds | Redacted screening events: decision, score, reasons, calling number, source IP, User-Agent, signer, verification result, SIP headers with the called party replaced by `REDACTED`, no `Identity` header, no SDP, no recordings, no transcripts. On by default. Off with `FALCON_SHARE=false`. Never in demo mode. See the README section "Telemetry". |
 | Your S3 endpoint | Every 30 seconds | Screened events as JSONL, unredacted. Only with your credentials. |
 
 An optional release check GETs `https://api.github.com/repos/CallerAPI/Falcon/releases/latest`.

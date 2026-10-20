@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 # Adapter end-to-end tests. Starts a Falcon with a token, one deny rule,
-# and the SIP redirect listener, then drives each adapter against it.
-# Host parts need python3, curl, lua5.4, node, and Go. The Kamailio and
-# OpenSIPS parts need Docker and run only when KAMAILIO_IMAGE or
-# OPENSIPS_IMAGE is set.
+# and the SIP redirect listener, plus a second Falcon in bridge mode, then
+# drives each adapter against them. Host parts need python3, curl, lua5.4,
+# and Go. The Kamailio and OpenSIPS parts need Docker and run only when
+# KAMAILIO_IMAGE or OPENSIPS_IMAGE is set.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 PORT="${FALCON_E2E_PORT:-8090}"
 SIP_PORT="${FALCON_E2E_SIP_PORT:-5062}"
+BRIDGE_PORT="${FALCON_E2E_BRIDGE_PORT:-8091}"
+BRIDGE_SIP_PORT="${FALCON_E2E_BRIDGE_SIP_PORT:-5064}"
 TOKEN="e2e-token"
 DENY="+13125550188"
 CLEAN="+13125550199"
 DB="$(mktemp -d)/e2e.db"
+BRIDGE_DB="$(mktemp -d)/bridge.db"
 export FALCON_TOKEN="$TOKEN"
 
 go build -o /tmp/falcon-e2e ./cmd/falcon
@@ -21,18 +24,24 @@ FALCON_LISTEN="127.0.0.1:${PORT}" FALCON_SIP_LISTEN="127.0.0.1:${SIP_PORT}" FALC
   FALCON_SHAKEN=false FALCON_SHARE=false FALCON_REPUTATION=false FALCON_TOKEN="$TOKEN" \
   /tmp/falcon-e2e >/tmp/falcon-e2e.log 2>&1 &
 FALCON_PID=$!
+FALCON_LISTEN="127.0.0.1:${BRIDGE_PORT}" FALCON_SIP_LISTEN="127.0.0.1:${BRIDGE_SIP_PORT}" FALCON_SIP_MODE=bridge \
+  FALCON_DB_PATH="$BRIDGE_DB" FALCON_SHAKEN=false FALCON_SHARE=false FALCON_REPUTATION=false FALCON_TOKEN="$TOKEN" \
+  /tmp/falcon-e2e >/tmp/falcon-e2e-bridge.log 2>&1 &
+BRIDGE_PID=$!
 cleanup() {
-  kill "$FALCON_PID" 2>/dev/null || true
+  kill "$FALCON_PID" "$BRIDGE_PID" 2>/dev/null || true
   docker rm -f falcon-e2e-kamailio falcon-e2e-opensips falcon-e2e-asterisk falcon-e2e-freeswitch >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
-for _ in $(seq 1 30); do
-  curl -sf "http://127.0.0.1:${PORT}/v1/health" >/dev/null && break
-  sleep 0.5
+for port in "$PORT" "$BRIDGE_PORT"; do
+  for _ in $(seq 1 30); do
+    curl -sf "http://127.0.0.1:${port}/v1/health" >/dev/null && break
+    sleep 0.5
+  done
+  curl -sf -X POST -H 'Content-Type: application/json' -H "X-Falcon-Token: $TOKEN" \
+    -d "{\"kind\":\"deny\",\"subject\":\"number\",\"value\":\"${DENY}\",\"note\":\"e2e\"}" \
+    "http://127.0.0.1:${port}/v1/rules" >/dev/null
 done
-curl -sf -X POST -H 'Content-Type: application/json' -H "X-Falcon-Token: $TOKEN" \
-  -d "{\"kind\":\"deny\",\"subject\":\"number\",\"value\":\"${DENY}\",\"note\":\"e2e\"}" \
-  "http://127.0.0.1:${PORT}/v1/rules" >/dev/null
 
 fail=0
 
@@ -48,6 +57,21 @@ else
   echo "sip redirect: FAIL"; fail=1
 fi
 
+# The bridge rejects a denied caller with 603 and fails a clean call with
+# 503 before any answer, so the switch routes it to the next vendor.
+echo "== sip bridge (udp ${BRIDGE_SIP_PORT})"
+set +e
+denied=$(/tmp/sipsend -to "127.0.0.1:${BRIDGE_SIP_PORT}" -from "$DENY")
+allowed=$(/tmp/sipsend -to "127.0.0.1:${BRIDGE_SIP_PORT}" -from "$CLEAN")
+set -e
+echo "denied=${denied} allowed=${allowed}"
+if [ "$denied" = "603" ] && [ "$allowed" = "503" ]; then
+  echo "sip bridge: PASS"
+else
+  echo "sip bridge: FAIL"; fail=1
+  tail -n 40 /tmp/falcon-e2e-bridge.log
+fi
+
 echo "== asterisk agi"
 python3 adapters/e2e/agi_harness.py "http://127.0.0.1:${PORT}/v1/screen" "$DENY" "$CLEAN" || fail=1
 
@@ -56,13 +80,6 @@ if command -v lua5.4 >/dev/null; then
   lua5.4 adapters/e2e/fs_harness.lua "http://127.0.0.1:${PORT}/v1/screen" "$DENY" "$CLEAN" || fail=1
 else
   echo "lua5.4 not installed, skipped"
-fi
-
-echo "== connexcs scriptforge"
-if command -v node >/dev/null; then
-  node adapters/e2e/connexcs_harness.js "http://127.0.0.1:${PORT}/v1/screen" "$DENY" "$CLEAN" || fail=1
-else
-  echo "node not installed, skipped"
 fi
 
 # Docker on Linux shares the host network, so the proxy reaches Falcon on

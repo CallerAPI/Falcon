@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/callerapi/falcon/internal/alerts"
+	"github.com/callerapi/falcon/internal/bridge"
 	"github.com/callerapi/falcon/internal/config"
 	"github.com/callerapi/falcon/internal/demo"
 	"github.com/callerapi/falcon/internal/export"
@@ -26,7 +28,7 @@ import (
 	"github.com/callerapi/falcon/internal/httpapi"
 	"github.com/callerapi/falcon/internal/identity"
 	"github.com/callerapi/falcon/internal/ipintel"
-	"github.com/callerapi/falcon/internal/plugin"
+	"github.com/callerapi/falcon/internal/numbercheck"
 	"github.com/callerapi/falcon/internal/reputation"
 	"github.com/callerapi/falcon/internal/score"
 	"github.com/callerapi/falcon/internal/shaken"
@@ -48,8 +50,8 @@ func main() {
 	}
 	httpapi.Version = version
 	cfg := config.Load()
-	if cfg.Mode != config.ModeEnforce && cfg.Mode != config.ModeMonitor {
-		log.Fatalf("falcon: FALCON_MODE must be enforce or monitor, got %q", cfg.Mode)
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("falcon: %v", err)
 	}
 	if cfg.FleetHub && strings.TrimSpace(cfg.FleetToken) == "" {
 		log.Fatalf("falcon: FALCON_FLEET_HUB requires FALCON_FLEET_TOKEN")
@@ -139,16 +141,17 @@ func main() {
 	}
 
 	api := &httpapi.Server{
-		Cfg:       cfg,
-		Engine:    engine,
-		Store:     db,
-		Feed:      spam,
-		Live:      live,
-		IPIntel:   ipTable,
-		Verifier:  verifier,
-		Trust:     trust,
-		Web:       webFS,
-		InstallID: installID,
+		Cfg:         cfg,
+		Engine:      engine,
+		Store:       db,
+		Feed:        spam,
+		Live:        live,
+		IPIntel:     ipTable,
+		Verifier:    verifier,
+		Trust:       trust,
+		Web:         webFS,
+		InstallID:   installID,
+		NumberCheck: numbercheck.New(cfg.CallerAPIBase, cfg.CallerAPIKey),
 	}
 	if err := api.Init(ctx); err != nil {
 		log.Fatalf("falcon rules: %v", err)
@@ -268,20 +271,13 @@ func main() {
 	if cfg.FleetHub {
 		log.Printf("falcon fleet: hub on /v1/fleet")
 	}
-	if cfg.Plugins && cfg.CallerAPIKey != "" {
-		plugins := plugin.New(cfg.CallerAPIBase, cfg.CallerAPIKey, cfg.PluginRefresh, cfg.PluginBudget)
-		api.Plugins = plugins
-		go plugins.Run(ctx)
-		go api.RunBridges(ctx)
-		log.Printf("falcon plugins: catalog from %s every %s, live budget %s", cfg.CallerAPIBase, cfg.PluginRefresh, cfg.PluginBudget)
-	}
 	if cfg.UpdateCheck {
 		go (&update.Checker{
 			Version: version, Interval: cfg.UpdateInterval, Alerts: api.Alerts, Store: db,
 			OnStatus: api.SetRelease,
 		}).Run(ctx)
 	}
-	logSharing(ctx, api)
+	logSharing(api)
 	go q.Run(ctx)
 	go store.Janitor(ctx, db, api.Retention)
 
@@ -311,20 +307,29 @@ func main() {
 		}
 	}()
 
+	sipDone := make(chan struct{})
 	if cfg.SIPEnabled() {
-		startSIP(ctx, cfg, api)
+		startSIP(ctx, cfg, api, db, sipDone)
+	} else {
+		close(sipDone)
 	}
 
 	<-ctx.Done()
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdown)
+	// The bridge hangs up its calls on both legs before the process exits.
+	select {
+	case <-sipDone:
+	case <-time.After(10 * time.Second):
+	}
 }
 
-// startSIP binds the SIP redirect listener. A non-loopback listen with no
+// startSIP binds the SIP listener: a redirect server, or the bridge that
+// carries suspicious calls with their audio. A non-loopback listen with no
 // peer allowlist is refused: SIP has no token, so the allowlist is the
 // only gate.
-func startSIP(ctx context.Context, cfg config.Config, api *httpapi.Server) {
+func startSIP(ctx context.Context, cfg config.Config, api *httpapi.Server, db *store.SQLite, done chan struct{}) {
 	peers, err := sipserver.ParsePeers(cfg.SIPPeers)
 	if err != nil {
 		log.Fatalf("falcon sip: %v", err)
@@ -332,6 +337,11 @@ func startSIP(ctx context.Context, cfg config.Config, api *httpapi.Server) {
 	if len(peers) == 0 && !cfg.SIPListensOnLoopback() {
 		log.Fatalf("falcon sip: FALCON_SIP_LISTEN=%s is not loopback and FALCON_SIP_PEERS is empty. List the switch IPs or CIDRs that may send INVITEs.", cfg.SIPListen)
 	}
+	if cfg.BridgeEnabled() {
+		startBridge(ctx, cfg, api, db, peers, done)
+		return
+	}
+	defer close(done)
 	sip, err := sipserver.New(sipserver.Config{
 		Listen:       cfg.SIPListen,
 		Peers:        peers,
@@ -348,18 +358,45 @@ func startSIP(ctx context.Context, cfg config.Config, api *httpapi.Server) {
 	}()
 }
 
+// startBridge runs the SIP bridge. Recordings land in their own folder.
+func startBridge(ctx context.Context, cfg config.Config, api *httpapi.Server, db *store.SQLite, peers []netip.Prefix, done chan struct{}) {
+	dir := cfg.RecordingsPath()
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		log.Printf("falcon bridge: recordings off, cannot create %s: %v", dir, err)
+		dir = ""
+	}
+	br, err := bridge.New(bridge.Config{
+		Listen: cfg.SIPListen, Peers: peers, MediaIP: cfg.MediaIP,
+		RTPPortMin: cfg.RTPPortMin, RTPPortMax: cfg.RTPPortMax,
+		MaxCalls: cfg.BridgeMaxCalls, MaxDuration: cfg.BridgeMaxDuration, RTPTimeout: cfg.RTPTimeout,
+		ScreenTimeout: cfg.SIPTimeout, RecordingsDir: dir, RecordMax: cfg.RecordMaxSeconds,
+		FASHold: cfg.FASHold, FASMaxRingback: cfg.FASMaxRingback, PassStatus: 503,
+		Version: version, InstallID: api.InstallID,
+	}, api, api, api, db)
+	if err != nil {
+		log.Fatalf("falcon bridge: %v", err)
+	}
+	api.Media = br
+	go func() {
+		defer close(done)
+		log.Printf("falcon sip bridge listening on %s (udp+tcp, peers=%d, rtp %d-%d, 503 pass / bridge suspicious calls, recordings %s, fas %s)",
+			cfg.SIPListen, len(peers), cfg.RTPPortMin, cfg.RTPPortMax, dir, api.FASMode(ctx))
+		_ = br.Serve(ctx)
+	}()
+}
+
 // logSharing prints the telemetry state on every boot so nobody learns
 // about it from a network capture.
-func logSharing(ctx context.Context, api *httpapi.Server) {
-	st := api.Settings(ctx)
-	switch {
-	case !api.Cfg.Share:
-		log.Printf("falcon telemetry: off (FALCON_SHARE=false)")
-	case !st.ShareTelemetry:
-		log.Printf("falcon telemetry: off (opted out in the dashboard)")
-	default:
-		log.Printf("falcon telemetry: on. Redacted screening events go to %s every 30s. Called numbers, forwarding numbers, the PASSporT, and SDP are removed before send. Opt out with FALCON_SHARE=false or in the System view.", api.Cfg.CallerAPIBase+export.Endpoint)
+func logSharing(api *httpapi.Server) {
+	if api.Cfg.Demo {
+		log.Printf("falcon telemetry: off in demo mode. Demo calls are synthetic and never leave this host.")
+		return
 	}
+	if !api.Cfg.Share {
+		log.Printf("falcon telemetry: off (FALCON_SHARE=false)")
+		return
+	}
+	log.Printf("falcon telemetry: on. Redacted screening events go to %s every 30s. Called numbers, forwarding numbers, the PASSporT, SDP, recordings, and transcripts never leave this host. Opt out with FALCON_SHARE=false.", api.Cfg.CallerAPIBase+export.Endpoint)
 }
 
 // ensureSecret returns a stored random secret, creating it on first use.
@@ -379,6 +416,8 @@ func ensureSecret(ctx context.Context, db store.Store, key string) ([]byte, erro
 }
 
 func prepareDemo(cfg *config.Config) error {
+	// Synthetic calls must never reach the network feed or signer reputation.
+	cfg.Share = false
 	dir := demo.Dir(cfg.DemoDir)
 	cfg.DemoDir = dir
 	profile, err := demo.Normalize(cfg.DemoProfile)
@@ -394,6 +433,9 @@ func prepareDemo(cfg *config.Config) error {
 	}
 	if cfg.IPIntelFile == "" {
 		cfg.IPIntelFile = demo.IntelPath(dir, profile)
+	}
+	if cfg.RecordingsDir == "" {
+		cfg.RecordingsDir = demo.RecordingsDir(dir)
 	}
 	if _, err := os.Stat(cfg.DBPath); err != nil {
 		if _, err := demo.Swap(dir, cfg.DBPath, profile); err != nil {

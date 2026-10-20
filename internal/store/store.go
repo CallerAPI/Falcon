@@ -52,7 +52,21 @@ type Event struct {
 	// the row was copied to a fleet hub. Empty on the node that screened it.
 	Peer     string `json:"peer,omitempty"`
 	Exported bool   `json:"exported"`
+	// LatencyUS is how long Falcon held the INVITE before it answered,
+	// in microseconds. Held is true when monitor mode told the switch to
+	// continue a call Falcon would have rejected or challenged.
+	LatencyUS int64 `json:"latency_us,omitempty"`
+	Held      bool  `json:"held,omitempty"`
 }
+
+// Verdicts group actions the way an operator reads them. Stopped is
+// blocked plus flagged: every call that was not a plain allow.
+const (
+	VerdictBlocked = "blocked"
+	VerdictFlagged = "flagged"
+	VerdictAllowed = "allowed"
+	VerdictStopped = "stopped"
+)
 
 // Filter narrows an event query. Zero values mean no constraint. BeforeID is
 // a cursor: rows with a smaller id, newest first.
@@ -69,8 +83,15 @@ type Filter struct {
 	Customer    string
 	Number      string
 	Q           string
-	BeforeID    int64
-	Limit       int
+	// Verdict is blocked, flagged, allowed, or stopped. Recorded keeps calls with
+	// audio or a transcript. FAS keeps bridged calls with a false answer.
+	// Bridged keeps calls Falcon carried.
+	Verdict  string
+	Recorded bool
+	FAS      bool
+	Bridged  bool
+	BeforeID int64
+	Limit    int
 }
 
 // Stats is dashboard aggregation for one window.
@@ -134,8 +155,10 @@ type ReasonHit struct {
 	Calls  int    `json:"calls"`
 }
 
-// Suspect is one calling number worth acting on in a window.
-// Held is flag plus challenge. Destinations is how many different numbers it reached.
+// Suspect is one calling number worth acting on in a window. Held is flag
+// plus challenge: suspicious calls that got through. Numbers with the most
+// held calls rank first, because a number Falcon rejects on every call
+// needs nothing. Destinations is how many different numbers it reached.
 // Reasons are the codes that added score, heaviest first.
 type Suspect struct {
 	Number       string      `json:"number"`
@@ -176,6 +199,7 @@ type Alert struct {
 }
 
 type Store interface {
+	MediaStore
 	Insert(ctx context.Context, ev Event) (int64, error)
 	Recent(ctx context.Context, limit int) ([]Event, error)
 	Query(ctx context.Context, f Filter) ([]Event, error)
@@ -219,7 +243,14 @@ type Store interface {
 	VoiceSamples(ctx context.Context, limit int) ([]VoiceSample, error)
 	VoiceSampleByCallID(ctx context.Context, callID string) (VoiceSample, bool, error)
 	VoiceSampleForEvent(ctx context.Context, eventID int64) (VoiceSample, bool, error)
+	VoiceSample(ctx context.Context, id int64) (VoiceSample, bool, error)
+	ExpiredVoiceAudio(ctx context.Context, before time.Time, limit int) ([]VoiceSample, error)
+	ClearVoiceAudio(ctx context.Context, id int64) error
 	NoteVoiceScam(ctx context.Context, eventID int64, category string, score float64, summary string) error
+	NoteReason(ctx context.Context, eventID int64, reason score.Reason) error
+	HeldCount(ctx context.Context, from, to time.Time) (int, error)
+	LastEventAt(ctx context.Context) (time.Time, error)
+	VoiceSamplesSince(ctx context.Context, from, to time.Time, limit int) ([]VoiceSample, error)
 	RecentPHashes(ctx context.Context, since time.Time, limit int) ([]string, error)
 	SamplesSince(ctx context.Context, since time.Time, customer string) (int, error)
 	Close() error

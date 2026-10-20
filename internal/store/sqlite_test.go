@@ -122,11 +122,13 @@ func TestSuspectsRanksHeldCallers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Number != "+18005550199" || got[0].MaxScore != 80 || got[1].Number != "+15125758227" || got[1].Destinations != 2 || got[1].Outbound != 2 {
+	// The caller whose flagged calls got through ranks above the one Falcon already rejects.
+	if len(got) != 2 || got[0].Number != "+15125758227" || got[0].Destinations != 2 || got[0].Outbound != 2 || got[0].Held != 2 ||
+		got[1].Number != "+18005550199" || got[1].MaxScore != 80 || got[1].Held != 0 {
 		t.Fatalf("rank %+v", got)
 	}
-	if len(got[1].Reasons) < 2 || got[1].Reasons[0].Code != "caller_fanout" || got[1].Reasons[0].Weight != 80 || got[1].Reasons[1].Code != "invite_no_sdp" {
-		t.Fatalf("reasons %+v", got[1].Reasons)
+	if len(got[0].Reasons) < 2 || got[0].Reasons[0].Code != "caller_fanout" || got[0].Reasons[0].Weight != 80 || got[0].Reasons[1].Code != "invite_no_sdp" {
+		t.Fatalf("reasons %+v", got[0].Reasons)
 	}
 	out, err := s.Suspects(ctx, now.Add(-time.Hour), now.Add(time.Hour), "outbound", 10)
 	if err != nil || len(out) != 1 || out[0].Number != "+15125758227" {

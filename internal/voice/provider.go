@@ -13,20 +13,24 @@ import (
 	"time"
 )
 
-// Verdict is what a provider makes of a clip.
+// Verdict is what a provider makes of a clip. Turns is set when the clip
+// had the caller and the callee on separate channels.
 type Verdict struct {
 	Transcript string  `json:"transcript"`
+	Turns      []Turn  `json:"turns,omitempty"`
 	Category   string  `json:"category"`
 	Score      float64 `json:"score"`
 	Summary    string  `json:"summary"`
 	Provider   string  `json:"provider"`
 }
 
-// Meta travels with the clip. The called number never does.
+// Meta travels with the clip. The called number never does. CallID lets
+// the CallerAPI provider bill the pieces of one recording once.
 type Meta struct {
 	From     string
 	Customer string
 	Language string
+	CallID   string
 	Report   bool
 }
 
@@ -88,31 +92,54 @@ func (o *OpenAICompat) client() *http.Client {
 	return &http.Client{Timeout: 90 * time.Second}
 }
 
+// Analyse transcribes and classifies. A two-channel clip is transcribed
+// one channel at a time with timestamps, so the transcript says who spoke.
 func (o *OpenAICompat) Analyse(ctx context.Context, wav []byte, meta Meta) (Verdict, error) {
-	text, err := o.transcribe(ctx, wav, meta.Language)
+	if left, right, ok := SplitStereo(wav); ok {
+		caller, err := o.transcribe(ctx, left, meta.Language)
+		if err != nil {
+			return Verdict{Provider: o.Name()}, err
+		}
+		callee, err := o.transcribe(ctx, right, meta.Language)
+		if err != nil {
+			return Verdict{Provider: o.Name()}, err
+		}
+		turns := MergeTurns(caller.Segments, callee.Segments)
+		text := LabeledTranscript(turns)
+		v, err := o.classify(ctx, text)
+		v.Transcript, v.Turns, v.Provider = text, turns, o.Name()
+		return v, err
+	}
+	res, err := o.transcribe(ctx, wav, meta.Language)
 	if err != nil {
 		return Verdict{Provider: o.Name()}, err
 	}
-	v, err := o.classify(ctx, text)
-	v.Transcript = text
+	v, err := o.classify(ctx, res.Text)
+	v.Transcript = res.Text
 	v.Provider = o.Name()
 	return v, err
 }
 
-func (o *OpenAICompat) transcribe(ctx context.Context, wav []byte, language string) (string, error) {
+type transcription struct {
+	Text     string
+	Segments []Segment
+}
+
+func (o *OpenAICompat) transcribe(ctx context.Context, wav []byte, language string) (transcription, error) {
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	fw, _ := mw.CreateFormFile("file", "clip.wav")
 	_, _ = fw.Write(wav)
 	_ = mw.WriteField("model", firstNonEmpty(o.STTModel, "whisper-1"))
-	_ = mw.WriteField("response_format", "json")
+	_ = mw.WriteField("response_format", "verbose_json")
+	_ = mw.WriteField("timestamp_granularities[]", "segment")
 	if language != "" {
 		_ = mw.WriteField("language", language)
 	}
 	_ = mw.Close()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(o.STTBaseURL, "/")+"/audio/transcriptions", &body)
 	if err != nil {
-		return "", err
+		return transcription{}, err
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	if o.STTAPIKey != "" {
@@ -120,20 +147,38 @@ func (o *OpenAICompat) transcribe(ctx context.Context, wav []byte, language stri
 	}
 	resp, err := o.client().Do(req)
 	if err != nil {
-		return "", err
+		return transcription{}, err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode >= 300 {
-		return "", fmt.Errorf("stt %s: %s", resp.Status, trim(raw))
+		return transcription{}, fmt.Errorf("stt %s: %s", resp.Status, trim(raw))
 	}
 	var out struct {
-		Text string `json:"text"`
+		Text     string `json:"text"`
+		Segments []struct {
+			Start        float64 `json:"start"`
+			End          float64 `json:"end"`
+			Text         string  `json:"text"`
+			NoSpeechProb float64 `json:"no_speech_prob"`
+		} `json:"segments"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return "", fmt.Errorf("stt: %w", err)
+		return transcription{}, fmt.Errorf("stt: %w", err)
 	}
-	return strings.TrimSpace(out.Text), nil
+	res := transcription{Text: strings.TrimSpace(out.Text)}
+	for _, s := range out.Segments {
+		if s.NoSpeechProb > 0.8 {
+			continue
+		}
+		res.Segments = append(res.Segments, Segment{Start: s.Start, End: s.End, Text: strings.TrimSpace(s.Text)})
+	}
+	if len(res.Segments) == 0 && res.Text != "" && len(out.Segments) == 0 {
+		// A server without verbose_json returns text only. One segment
+		// keeps the words, without a time inside the clip.
+		res.Segments = []Segment{{Start: 0, End: 0, Text: res.Text}}
+	}
+	return res, nil
 }
 
 const classifyPrompt = `You classify the opening of a phone call for a telephone carrier's fraud desk.
@@ -207,19 +252,26 @@ type CallerAPI struct {
 
 func (c *CallerAPI) Name() string { return "callerapi" }
 
+// StereoPieceSeconds bounds one stereo upload. CallerAPI splits each
+// channel by speech on its side, so the piece can be long.
+const StereoPieceSeconds = 300
+
+// Analyse sends a two-channel recording whole, in pieces of up to five
+// minutes, and gets the caller and callee turns back. A mono clip is sent
+// in short pieces and joined.
 func (c *CallerAPI) Analyse(ctx context.Context, wav []byte, meta Meta) (Verdict, error) {
+	if clip, err := DecodeWAV(wav); err == nil && len(clip.Channels) == 2 {
+		return c.analyseStereo(ctx, clip, meta)
+	}
 	chunks, err := SplitWAV(wav, ScanSeconds)
 	if err != nil || len(chunks) == 0 {
 		chunks = [][]byte{wav}
 	}
-	report := meta.Report
 	var texts []string
 	var best Verdict
 	var have bool
 	for i, chunk := range chunks {
-		piece := meta
-		piece.Report = report && i == len(chunks)-1
-		v, err := c.scanChunk(ctx, chunk, piece)
+		v, err := c.scanChunk(ctx, chunk, pieceMeta(meta, i, len(chunks)))
 		if err != nil {
 			return Verdict{}, err
 		}
@@ -236,7 +288,58 @@ func (c *CallerAPI) Analyse(ctx context.Context, wav []byte, meta Meta) (Verdict
 	return best, nil
 }
 
+// analyseStereo keeps the channels apart so CallerAPI can say who spoke.
+// Each piece's turns are moved onto the call's timeline.
+func (c *CallerAPI) analyseStereo(ctx context.Context, clip Clip, meta Meta) (Verdict, error) {
+	pieces := clip.Pieces(StereoPieceSeconds)
+	var turns []Turn
+	var texts []string
+	var best Verdict
+	have := false
+	for i, p := range pieces {
+		v, err := c.scan(ctx, encodeWAV(p.Clip), pieceMeta(meta, i, len(pieces)), true)
+		if err != nil {
+			return Verdict{}, err
+		}
+		for _, t := range v.Turns {
+			t.Start += p.Offset
+			t.End += p.Offset
+			turns = append(turns, t)
+		}
+		if t := strings.TrimSpace(v.Transcript); t != "" {
+			texts = append(texts, t)
+		}
+		if !have || v.Score >= best.Score {
+			best, have = v, true
+		}
+	}
+	best.Turns = turns
+	if len(turns) > 0 {
+		best.Transcript = LabeledTranscript(turns)
+	} else {
+		best.Transcript = strings.Join(texts, "\n")
+	}
+	best.Provider = "callerapi"
+	return best, nil
+}
+
+// pieceMeta is the metadata for piece i of n. Only the first piece names
+// the call: CallerAPI bills a scan for a call it has seen as the minutes
+// past the last scan, so a later piece that named it would be free. Only
+// the last piece files a report.
+func pieceMeta(meta Meta, i, n int) Meta {
+	if i > 0 {
+		meta.CallID = ""
+	}
+	meta.Report = meta.Report && i == n-1
+	return meta
+}
+
 func (c *CallerAPI) scanChunk(ctx context.Context, wav []byte, meta Meta) (Verdict, error) {
+	return c.scan(ctx, wav, meta, false)
+}
+
+func (c *CallerAPI) scan(ctx context.Context, wav []byte, meta Meta, split bool) (Verdict, error) {
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	fw, _ := mw.CreateFormFile("audio", "clip.wav")
@@ -248,8 +351,14 @@ func (c *CallerAPI) scanChunk(ctx context.Context, wav []byte, meta Meta) (Verdi
 	if meta.Language != "" {
 		_ = mw.WriteField("language", meta.Language)
 	}
+	if meta.CallID != "" {
+		_ = mw.WriteField("call_id", meta.CallID)
+	}
 	if meta.Report {
 		_ = mw.WriteField("report", "true")
+	}
+	if split {
+		_ = mw.WriteField("split_channels", "true")
 	}
 	_ = mw.Close()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/api/voice/scan", &body)
@@ -273,6 +382,7 @@ func (c *CallerAPI) scanChunk(ctx context.Context, wav []byte, meta Meta) (Verdi
 	}
 	var out struct {
 		Transcript string `json:"transcript"`
+		Turns      []Turn `json:"turns"`
 		Verdict    struct {
 			Score    float64 `json:"score"`
 			Category string  `json:"category"`
@@ -282,7 +392,16 @@ func (c *CallerAPI) scanChunk(ctx context.Context, wav []byte, meta Meta) (Verdi
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return Verdict{}, err
 	}
-	return Verdict{Transcript: out.Transcript, Category: canonical(out.Verdict.Category), Score: clamp(out.Verdict.Score), Summary: out.Verdict.Summary, Provider: "callerapi"}, nil
+	turns := make([]Turn, 0, len(out.Turns))
+	for _, t := range out.Turns {
+		if t.Speaker != SpeakerCaller && t.Speaker != SpeakerCallee {
+			continue
+		}
+		if t.Text = strings.TrimSpace(t.Text); t.Text != "" {
+			turns = append(turns, t)
+		}
+	}
+	return Verdict{Transcript: out.Transcript, Turns: turns, Category: canonical(out.Verdict.Category), Score: clamp(out.Verdict.Score), Summary: out.Verdict.Summary, Provider: "callerapi"}, nil
 }
 
 func canonical(c string) string {

@@ -7,16 +7,10 @@ package httpapi
 import (
 	"context"
 	"crypto/subtle"
-	"encoding/csv"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
 	"io/fs"
-	"log"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,19 +18,16 @@ import (
 	"github.com/callerapi/falcon/internal/alerts"
 	"github.com/callerapi/falcon/internal/config"
 	"github.com/callerapi/falcon/internal/feed"
-	"github.com/callerapi/falcon/internal/fingerprint"
 	"github.com/callerapi/falcon/internal/fleet"
 	"github.com/callerapi/falcon/internal/ipintel"
 	"github.com/callerapi/falcon/internal/lists"
-	"github.com/callerapi/falcon/internal/plugin"
+	"github.com/callerapi/falcon/internal/numbercheck"
 	"github.com/callerapi/falcon/internal/reputation"
 	"github.com/callerapi/falcon/internal/score"
 	"github.com/callerapi/falcon/internal/shaken"
-	"github.com/callerapi/falcon/internal/sipmsg"
 	"github.com/callerapi/falcon/internal/store"
 	"github.com/callerapi/falcon/internal/update"
 	"github.com/callerapi/falcon/internal/voice"
-	"github.com/callerapi/falcon/sdk"
 )
 
 // MaxBody caps a screened SIP message. Configurable at start.
@@ -44,6 +35,14 @@ var MaxBody int64 = 64 * 1024
 
 // Version is set by the build. The dashboard and /metrics show it.
 var Version = "dev"
+
+// MediaBridge is what the dashboard reads from the SIP bridge. Nil when
+// the SIP listener does not bridge calls.
+type MediaBridge interface {
+	Active() int
+	Capacity() int
+	ReloadRoutes(ctx context.Context) error
+}
 
 // Server is the switch-facing API and the local dashboard.
 type Server struct {
@@ -60,8 +59,12 @@ type Server struct {
 	Alerts *alerts.Watcher
 	// Fleet is the cached caller counts from the other switches. Nil when
 	// this process is not a fleet member.
-	Fleet   *fleet.Cache
-	Plugins *plugin.Runtime
+	Fleet *fleet.Cache
+	// NumberCheck keeps the operator's own numbers on CallerAPI and
+	// rechecks them. Nil without a CallerAPI key.
+	NumberCheck *numbercheck.Client
+	// Media is the SIP bridge. Nil unless FALCON_SIP_MODE is bridge.
+	Media MediaBridge
 	// Release is the last public-version comparison.
 	releaseMu sync.RWMutex
 	release   update.Status
@@ -71,7 +74,7 @@ type Server struct {
 	VoiceProvider voice.Provider
 	// VoiceReport asks the CallerAPI provider to file scam verdicts.
 	VoiceReport bool
-	// Assistant backs "Ask Falcon". Provider empty means value card only.
+	// Assistant backs "Ask Falcon". Provider empty means no chat.
 	Assistant AssistantConfig
 	Trust     *shaken.TrustStore
 	Web       fs.FS
@@ -81,8 +84,11 @@ type Server struct {
 	rulesMu sync.RWMutex
 	rules   *lists.Index
 
+	settingsMu sync.Mutex
+	settings   *Settings
+	settingsAt time.Time
+
 	hub     *hub
-	bridges *bridgeHost
 	metrics *metrics
 }
 
@@ -93,7 +99,6 @@ func (s *Server) Init(ctx context.Context) error {
 	if s.StartedAt.IsZero() {
 		s.StartedAt = time.Now().UTC()
 	}
-	s.startBridges()
 	return s.ReloadRules(ctx)
 }
 
@@ -130,13 +135,21 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/fleet/rules", s.withAuth(s.handleFleetRules))
 	mux.HandleFunc("/v1/fleet/behaviour", s.withAuth(s.handleFleetBehaviour))
 	mux.HandleFunc("/v1/screen", s.withAuth(s.handleScreen))
+	mux.HandleFunc("/v1/overview", s.withAuth(s.handleOverview))
+	mux.HandleFunc("/v1/insights/dismiss", s.withAuth(s.handleDismissInsight))
 	mux.HandleFunc("/v1/events", s.withAuth(s.handleEvents))
 	mux.HandleFunc("/v1/events.csv", s.withAuth(s.handleEventsCSV))
 	mux.HandleFunc("/v1/events/", s.withAuth(s.handleEvent))
+	mux.HandleFunc("/v1/recordings/", s.withAuth(s.handleRecording))
 	mux.HandleFunc("/v1/stats", s.withAuth(s.handleStats))
 	mux.HandleFunc("/v1/histogram", s.withAuth(s.handleHistogram))
 	mux.HandleFunc("/v1/parties", s.withAuth(s.handleParties))
 	mux.HandleFunc("/v1/suspects", s.withAuth(s.handleSuspects))
+	mux.HandleFunc("/v1/vendors", s.withAuth(s.handleVendors))
+	mux.HandleFunc("/v1/routes", s.withAuth(s.handleRoutes))
+	mux.HandleFunc("/v1/routes/", s.withAuth(s.handleRoute))
+	mux.HandleFunc("/v1/modules", s.withAuth(s.handleModules))
+	mux.HandleFunc("/v1/numbercheck/", s.withAuth(s.handleNumberCheck))
 	mux.HandleFunc("/v1/status", s.withAuth(s.handleStatus))
 	mux.HandleFunc("/v1/config", s.withAuth(s.handleConfig))
 	mux.HandleFunc("/v1/rules", s.withAuth(s.handleRules))
@@ -161,8 +174,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/voice/transcript", s.withAuth(s.handleVoiceTranscript))
 	mux.HandleFunc("/v1/customers", s.withAuth(s.handleCustomers))
 	mux.HandleFunc("/v1/customers/", s.withAuth(s.handleCustomer))
-	mux.HandleFunc("/v1/plugins", s.withAuth(s.handlePlugins))
-	mux.HandleFunc("/v1/plugins/", s.withAuth(s.handlePluginView))
 
 	if s.Web != nil {
 		fileServer := http.FileServer(http.FS(s.Web))
@@ -179,18 +190,15 @@ func (s *Server) Handler() http.Handler {
 			fileServer.ServeHTTP(w, r)
 		})
 	}
-	return securityHeaders(mux, sdk.FrameOrigin(s.Cfg.CallerAPIBase))
+	return securityHeaders(mux)
 }
 
 // securityHeaders is applied to every response. The dashboard has no inline
 // scripts, so script-src is 'self'. Inline style attributes set bar widths,
-// so style-src allows them. Nothing may frame the dashboard. No referrer
-// leaves the host. frameSrc is the CallerAPI origin a plugin page may use.
-func securityHeaders(next http.Handler, frameSrc string) http.Handler {
-	csp := "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
-	if frameSrc != "" {
-		csp += "; frame-src " + frameSrc
-	}
+// so style-src allows them. Recordings play from this origin. Nothing may
+// frame the dashboard. No referrer leaves the host.
+func securityHeaders(next http.Handler) http.Handler {
+	const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
@@ -227,43 +235,42 @@ func formCapable(r *http.Request) bool {
 		strings.HasPrefix(ct, "text/plain")
 }
 
+// uploadPath names the endpoints that take a file body.
+func uploadPath(r *http.Request) bool {
+	return r.URL.Path == "/v1/audio" || r.URL.Path == "/v1/numbercheck/import"
+}
+
+// crossSiteSafe reports whether the request carries a header a cross-site
+// form cannot set. The dashboard sends X-Falcon-Request on every call.
+func crossSiteSafe(r *http.Request) bool {
+	return r.Header.Get("X-Falcon-Token") != "" || strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || r.Header.Get("X-Falcon-Request") != ""
+}
+
 func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.authenticated(r) {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
-		if isMutation(r) && formCapable(r) && r.URL.Path != "/v1/audio" && !pluginFileUpload(r) {
-			writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "send application/json or application/sip"})
-			return
-		}
-		if r.URL.Path == "/v1/audio" && r.Header.Get("X-Falcon-Token") == "" && !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") && s.Cfg.Token != "" {
-			// A clip upload is form-capable, so it must carry the token in
-			// a header a cross-site form cannot set.
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "audio upload needs X-Falcon-Token"})
-			return
+		if isMutation(r) && formCapable(r) {
+			if !uploadPath(r) {
+				writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "send application/json or application/sip"})
+				return
+			}
+			// A file post is form-capable, so a protected install needs a
+			// header a cross-site form cannot set.
+			if (s.Cfg.Token != "" || s.Cfg.DashboardPassword != "") && !crossSiteSafe(r) {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "file upload needs X-Falcon-Token"})
+				return
+			}
 		}
 		next(w, r)
 	}
 }
 
-// pluginFileUpload is a file post from the dashboard. A cross-site form
-// cannot set X-Falcon-Token or a Bearer header, so those requests are allowed
-// to use multipart or plain text.
-func pluginFileUpload(r *http.Request) bool {
-	path := r.URL.Path
-	if !strings.HasPrefix(path, "/v1/plugins/") || !strings.HasSuffix(path, "/import") {
-		return false
-	}
-	if r.Header.Get("X-Falcon-Token") != "" {
-		return true
-	}
-	return strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ")
-}
-
-// authenticated accepts the token in X-Falcon-Token or a Bearer header on
-// any request, the token in the query on reads only (EventSource and
-// download links cannot set headers), and the dashboard Basic credentials.
+// credential reads the token from X-Falcon-Token or a Bearer header on any
+// request, and from the query on reads only: EventSource, download links,
+// and the audio player cannot set headers.
 func (s *Server) credential(r *http.Request) string {
 	got := strings.TrimSpace(r.Header.Get("X-Falcon-Token"))
 	if got == "" {
@@ -321,825 +328,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"install_id": s.InstallID,
 		"uptime_s":   int(time.Since(s.StartedAt).Seconds()),
 	})
-}
-
-// ScreenRequest is one SIP request to score. Every transport builds one:
-// the HTTP API from JSON or a raw body, the SIP listener from the wire.
-type ScreenRequest struct {
-	RawSIP     string `json:"raw_sip"`
-	SourceIP   string `json:"source_ip"`
-	SourcePort int    `json:"source_port"`
-	Switch     string `json:"switch"`
-	// Direction is "outbound" when the operator's own customer is
-	// calling out; Customer names that account. Both optional.
-	Direction  string            `json:"direction"`
-	Customer   string            `json:"customer"`
-	Method     string            `json:"method"`
-	RequestURI string            `json:"request_uri"`
-	Headers    map[string]string `json:"headers"`
-	Body       string            `json:"body"`
-	// Signing is what the switch adds when it signs the call on the way
-	// out, after the screen. Ignored when the INVITE has an Identity header.
-	Signing *Signing `json:"signing,omitempty"`
-}
-
-// Signing is the attestation a switch applies and the certificate it
-// signs with.
-type Signing struct {
-	Attest string `json:"attest"`
-	OrigID string `json:"origid"`
-	X5U    string `json:"x5u"`
-}
-
-// ErrParse means the request was not a SIP message Falcon can read. The
-// caller fails open.
-var ErrParse = errors.New("parse sip")
-
-func (s *Server) handleScreen(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
-		return
-	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, MaxBody+1))
-	if err != nil {
-		s.failOpen(w, "read body")
-		return
-	}
-	if int64(len(raw)) > MaxBody {
-		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "SIP message too large"})
-		return
-	}
-
-	var req ScreenRequest
-	ct := r.Header.Get("Content-Type")
-	if strings.Contains(ct, "application/json") || looksJSON(raw) {
-		if err := json.Unmarshal(raw, &req); err != nil {
-			s.failOpen(w, "invalid json")
-			return
-		}
-	} else {
-		req.RawSIP = string(raw)
-		req.SourceIP = r.Header.Get("X-Source-IP")
-		req.Switch = r.Header.Get("X-Switch")
-		req.Direction = r.Header.Get("X-Direction")
-		req.Customer = r.Header.Get("X-Customer")
-	}
-	if req.SourceIP == "" {
-		req.SourceIP = headerOr(r, "X-Source-IP", clientIP(r))
-	}
-
-	result, err := s.Screen(r.Context(), req)
-	if err != nil {
-		s.failOpen(w, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-
-// Screen scores one request, records the event, and fans out alerts and
-// the live stream. The HTTP API and the SIP listener both end here.
-func (s *Server) Screen(ctx context.Context, req ScreenRequest) (score.Result, error) {
-	started := time.Now()
-	msg, err := buildMessage(req)
-	if err != nil {
-		return score.Result{}, ErrParse
-	}
-	snap := sipmsg.SnapshotFrom(msg, req.SourceIP)
-	en, verification := s.enrich(ctx, snap)
-	signed := s.switchSigning(ctx, snap, req.Signing)
-	en.SwitchSigns = signed != nil
-	en.Network = s.network(en, fingerprint.Compute(msg))
-	s.behaviour(ctx, req, snap, &en)
-	result := s.Engine.Score(snap, en)
-	if s.Plugins != nil {
-		result = s.Plugins.Apply(ctx, plugin.View(
-			result.Signals.From, snap.SourceIP, snap.UserAgent, snap.CallID, snap.Identity.Attest,
-			result.Signals.Verstat, result.Signals.SignerSPC, result.Signals.SignerName, result.Signals.IPProvider,
-			fingerprint.Compute(msg), en.Direction, snap.Method, result.RiskScore, string(result.Action), result.Reasons,
-		), result, s.Engine.Thresholds())
-	}
-	decision := result
-	result = s.hold(result)
-	sample, trigger := s.Sampler.Decide(ctx, result, strings.TrimSpace(req.Customer))
-	if sample {
-		result.Sample = true
-		result.Headers["X-Falcon-Sample"] = "1"
-		result.Headers["X-Falcon-Sample-Seconds"] = strconv.Itoa(s.Sampler.Budget.ClipSeconds)
-		result.Headers["X-Falcon-Sample-Reason"] = string(trigger)
-	}
-
-	ev := store.Event{
-		ReceivedAt:  time.Now().UTC(),
-		Action:      decision.Action,
-		RiskScore:   result.RiskScore,
-		SourceIP:    snap.SourceIP,
-		From:        result.Signals.From,
-		To:          result.Signals.To,
-		CallID:      snap.CallID,
-		UserAgent:   snap.UserAgent,
-		Attest:      snap.Identity.Attest,
-		Verstat:     result.Signals.Verstat,
-		SignerSPC:   result.Signals.SignerSPC,
-		SignerName:  result.Signals.SignerName,
-		Provider:    result.Signals.IPProvider,
-		Fingerprint: fingerprint.Compute(msg),
-		Reasons:     result.Reasons,
-		Switch:      req.Switch,
-		Direction:   en.Direction,
-		Customer:    strings.TrimSpace(req.Customer),
-		Honeypot:    en.Honeypot,
-		Sampled:     result.Sample,
-	}
-	if s.Cfg.StoreRawSIP {
-		ev.RawSIP = msg.Raw
-	}
-	if verification != nil {
-		if b, err := json.Marshal(verification); err == nil {
-			ev.Shaken = b
-		}
-	}
-	if signed != nil {
-		ev.Attest = signed.Attest
-		ev.SignerSPC = signed.Signer.SPC
-		ev.SignerName = firstNonEmpty(signed.Signer.Org, signed.Signer.CN)
-		if b, err := json.Marshal(signed); err == nil {
-			ev.Shaken = b
-		}
-	}
-	if s.metrics != nil {
-		s.metrics.observe(result, verification, time.Since(started))
-		if decision.Action != result.Action {
-			s.metrics.hold()
-		}
-	}
-	go s.spoofAlert(ev, decision)
-	go func(ev store.Event) {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		id, err := s.Store.Insert(ctx, ev)
-		if err != nil {
-			log.Printf("falcon store: %v", err)
-			return
-		}
-		ev.ID = id
-		ev.RawSIP = ""
-		if b, err := json.Marshal(ev); err == nil {
-			s.hub.publish(b)
-		}
-	}(ev)
-
-	return result, nil
-}
-
-// hold turns a reject or a challenge into an allow while monitor mode is
-// on. The stored event keeps the real decision. The switch is told to
-// continue, and X-Falcon-Monitor names what would have happened.
-func (s *Server) hold(res score.Result) score.Result {
-	if s.Cfg.Mode != config.ModeMonitor {
-		return res
-	}
-	if res.Action != score.ActionReject && res.Action != score.ActionChallenge {
-		return res
-	}
-	would := string(res.Action)
-	res.Action = score.ActionAllow
-	headers := make(map[string]string, len(res.Headers)+2)
-	for k, v := range res.Headers {
-		if k == "X-Falcon-Block" {
-			continue
-		}
-		headers[k] = v
-	}
-	headers["X-Falcon-Monitor"] = would
-	headers["X-Falcon-Action"] = string(score.ActionAllow)
-	res.Headers = headers
-	res.SIPStatus, res.SIPReason = score.ActionAllow.SIP()
-	res.SwitchHints = score.ActionAllow.Hints()
-	return res
-}
-
-// enrich gathers everything outside the SIP message: verification, operator
-// rules, IP intel, and the paid CallerAPI signals.
-func (s *Server) enrich(ctx context.Context, snap sipmsg.Snapshot) (score.Enrichment, *shaken.Result) {
-	en := score.Enrichment{
-		FeedEnabled: s.Cfg.FeedEnabled(),
-		FirewallOn:  s.Cfg.FirewallEnabled(),
-		FeedURL:     s.Cfg.UpsellFeedURL,
-		FirewallURL: s.Cfg.UpsellFirewallURL,
-	}
-	var verification *shaken.Result
-	if s.Verifier != nil && snap.Identity.Raw != "" {
-		from := snap.PAIUser
-		if from == "" {
-			from = snap.FromUser
-		}
-		res := s.Verifier.Verify(ctx, snap.Identity.Raw, from, snap.ToUser)
-		verification = &res
-		en.Shaken = &score.Shaken{
-			Verstat:    res.Verstat,
-			Pending:    res.Pending,
-			Revoked:    res.Revoked,
-			SignerSPC:  res.Signer.SPC,
-			SignerName: firstNonEmpty(res.Signer.Org, res.Signer.CN),
-			Errors:     res.Errors,
-		}
-	}
-	spc := ""
-	if en.Shaken != nil {
-		spc = en.Shaken.SignerSPC
-	}
-	if idx := s.ruleIndex(); idx != nil {
-		if hit, ok := idx.Match(snap.FromUser, snap.SourceIP, spc); ok {
-			en.List = &score.ListHit{Kind: string(hit.Kind), Subject: string(hit.Subject), Value: hit.Value, Note: hit.Note, RuleID: hit.ID}
-		}
-	}
-	if s.IPIntel != nil && snap.SourceIP != "" {
-		if m, ok := s.IPIntel.Lookup(snap.SourceIP); ok {
-			en.IP = &score.IPIntel{Provider: m.Provider, Risk: string(m.Risk), Tags: m.Tags}
-		}
-	}
-	if s.Feed != nil && s.Cfg.FeedEnabled() {
-		en.FeedHit = s.Feed.Contains(snap.FromUser)
-	}
-	if s.Live != nil && s.Cfg.FirewallEnabled() && snap.FromUser != "" {
-		fctx, fcancel := context.WithTimeout(ctx, 1500*time.Millisecond)
-		if lu, err := s.Live.Lookup(fctx, snap.FromUser); err == nil {
-			en.FirewallSpam = lu.IsSpam || lu.SpamScore >= 70
-		}
-		fcancel()
-	}
-	if s.Live != nil && s.Cfg.BCIDEnabled() && snap.FromUser != "" && snap.ToUser != "" {
-		vctx, vcancel := context.WithTimeout(ctx, 800*time.Millisecond)
-		if v, err := s.Live.Verify(vctx, snap.FromUser, snap.ToUser, snap.BCIDAssertion); err == nil && v.Verdict != "" {
-			row := &score.BCID{Verdict: v.Verdict, Action: v.Action, Reason: v.Reason}
-			if v.Identity != nil {
-				row.Name = v.Identity.Name
-				row.Verified = v.Identity.Verified
-				logo := v.Identity.LogoURL
-				if strings.HasPrefix(logo, "/") {
-					logo = strings.TrimRight(s.Cfg.CallerAPIBase, "/") + logo
-				}
-				row.LogoURL = logo
-			}
-			en.BCID = row
-		}
-		vcancel()
-	}
-	return en, verification
-}
-
-// switchSigning reads the certificate the switch reported it signs this
-// call with. A PASSporT on the INVITE itself always wins.
-func (s *Server) switchSigning(ctx context.Context, snap sipmsg.Snapshot, sg *Signing) *shaken.Result {
-	if sg == nil || snap.Identity.Raw != "" {
-		return nil
-	}
-	switch strings.ToUpper(strings.TrimSpace(sg.Attest)) {
-	case "A", "B", "C":
-	default:
-		return nil
-	}
-	res := s.Verifier.Describe(ctx, sg.Attest, sg.OrigID, sg.X5U)
-	return &res
-}
-
-// network reads the CallerAPI feed for the signer and the sending tool.
-func (s *Server) network(en score.Enrichment, fp string) *score.Network {
-	if s.Reputation == nil {
-		return nil
-	}
-	var n score.Network
-	n.Enforce = s.Cfg.ReputationEnforce
-	if en.Shaken != nil {
-		if sg, ok := s.Reputation.Signer(en.Shaken.SignerSPC); ok {
-			n.SignerScore, n.SignerInstalls = sg.Score, sg.Installs
-		}
-	}
-	if f, ok := s.Reputation.Fingerprint(fp); ok {
-		n.FingerprintScore, n.FingerprintInstalls = f.Score, f.Installs
-	}
-	if n.SignerScore == 0 && n.FingerprintScore == 0 {
-		return nil
-	}
-	return &n
-}
-
-func (s *Server) failOpen(w http.ResponseWriter, why string) {
-	if !s.Cfg.FailOpen {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
-		return
-	}
-	writeJSON(w, http.StatusOK, score.Result{
-		Action:    score.ActionAllow,
-		RiskScore: 0,
-		RiskBand:  "low",
-		Reasons:   []score.Reason{{Code: "fail_open", Weight: 0, Detail: why, Category: "system"}},
-		Headers:   map[string]string{"X-Falcon-Action": "allow", "X-Falcon-Score": "0"},
-	})
-}
-
-func filterFrom(r *http.Request) store.Filter {
-	q := r.URL.Query()
-	from, to := parseRange(r)
-	f := store.Filter{
-		From:        from,
-		To:          to,
-		Action:      q.Get("action"),
-		Verstat:     q.Get("verstat"),
-		IP:          q.Get("ip"),
-		SPC:         q.Get("spc"),
-		Provider:    q.Get("provider"),
-		Fingerprint: q.Get("fingerprint"),
-		Direction:   q.Get("direction"),
-		Customer:    q.Get("customer"),
-		Number:      q.Get("number"),
-		Q:           q.Get("q"),
-	}
-	f.Limit, _ = strconv.Atoi(q.Get("limit"))
-	f.BeforeID, _ = strconv.ParseInt(q.Get("before"), 10, 64)
-	return f
-}
-
-// parseRange reads range=15m|1h|6h|24h|7d|30d or from and to as RFC3339.
-// Without either the window is the last 24 hours. Event lists with no
-// range at all return every row, so an explicit empty window is honoured.
-func parseRange(r *http.Request) (time.Time, time.Time) {
-	q := r.URL.Query()
-	// Upper bounds are exclusive and the store keeps whole seconds, so the
-	// open end sits one second ahead to include the second in progress.
-	now := time.Now().UTC().Add(time.Second)
-	if v := q.Get("range"); v != "" {
-		if d, ok := rangeDuration(v); ok {
-			return now.Add(-d), now
-		}
-	}
-	var from, to time.Time
-	if v := q.Get("from"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			from = t
-		}
-	}
-	if v := q.Get("to"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			to = t
-		}
-	}
-	return from, to
-}
-
-func rangeDuration(v string) (time.Duration, bool) {
-	switch strings.ToLower(v) {
-	case "15m":
-		return 15 * time.Minute, true
-	case "1h":
-		return time.Hour, true
-	case "6h":
-		return 6 * time.Hour, true
-	case "24h", "1d":
-		return 24 * time.Hour, true
-	case "7d":
-		return 7 * 24 * time.Hour, true
-	case "30d":
-		return 30 * 24 * time.Hour, true
-	}
-	if d, err := time.ParseDuration(v); err == nil && d > 0 {
-		return d, true
-	}
-	return 0, false
-}
-
-func windowFrom(r *http.Request) (time.Time, time.Time) {
-	from, to := parseRange(r)
-	now := time.Now().UTC().Add(time.Second)
-	if to.IsZero() {
-		to = now
-	}
-	if from.IsZero() {
-		from = to.Add(-24 * time.Hour)
-	}
-	return from, to
-}
-
-func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	events, err := s.Store.Query(r.Context(), filterFrom(r))
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if events == nil {
-		events = []store.Event{}
-	}
-	var next int64
-	if n := len(events); n > 0 {
-		next = events[n-1].ID
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": events, "next_before": next})
-}
-
-func (s *Server) handleEventsCSV(w http.ResponseWriter, r *http.Request) {
-	f := filterFrom(r)
-	f.Limit = 500
-	w.Header().Set("Content-Type", "text/csv")
-	w.Header().Set("Content-Disposition", `attachment; filename="falcon-events.csv"`)
-	cw := csv.NewWriter(w)
-	_ = cw.Write([]string{"received_at", "action", "risk_score", "from", "to", "source_ip", "provider", "attest", "verstat", "signer_spc", "signer_name", "user_agent", "call_id", "switch", "reasons"})
-	written := 0
-	for written < 50000 {
-		events, err := s.Store.Query(r.Context(), f)
-		if err != nil || len(events) == 0 {
-			break
-		}
-		for _, ev := range events {
-			codes := make([]string, 0, len(ev.Reasons))
-			for _, rs := range ev.Reasons {
-				codes = append(codes, rs.Code)
-			}
-			_ = cw.Write([]string{
-				ev.ReceivedAt.UTC().Format(time.RFC3339), string(ev.Action), strconv.Itoa(ev.RiskScore), ev.From, ev.To,
-				ev.SourceIP, ev.Provider, ev.Attest, ev.Verstat, ev.SignerSPC, ev.SignerName, ev.UserAgent, ev.CallID, ev.Switch,
-				strings.Join(codes, "|"),
-			})
-			written++
-		}
-		f.BeforeID = events[len(events)-1].ID
-		if len(events) < f.Limit {
-			break
-		}
-	}
-	cw.Flush()
-}
-
-func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
-	idStr := strings.TrimPrefix(r.URL.Path, "/v1/events/")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
-		return
-	}
-	ev, err := s.Store.Get(r.Context(), id)
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-		return
-	}
-	// The event stays at the top level for the drawer; extras sit beside it.
-	out := map[string]any{}
-	if b, err := json.Marshal(ev); err == nil {
-		_ = json.Unmarshal(b, &out)
-	}
-	if ev.RawSIP != "" {
-		if m, perr := sipmsg.Parse(ev.RawSIP); perr == nil {
-			out["fingerprint_parts"] = fingerprint.Describe(m)
-		}
-	}
-	if s.Reputation != nil {
-		if sg, ok := s.Reputation.Signer(ev.SignerSPC); ok {
-			out["network_signer"] = sg
-		}
-		if f, ok := s.Reputation.Fingerprint(ev.Fingerprint); ok {
-			out["network_fingerprint"] = f
-		}
-	}
-	if v, ok := s.voiceForEvent(r.Context(), ev); ok {
-		out["voice"] = v
-	}
-	out["listen"] = map[string]any{
-		"clips":    s.Sampler != nil && s.Sampler.Enabled,
-		"live_key": s.Cfg.CallerAPIKey != "",
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
-	from, to := windowFrom(r)
-	st, err := s.Store.Stats(r.Context(), from, to)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, st)
-}
-
-func (s *Server) handleHistogram(w http.ResponseWriter, r *http.Request) {
-	from, to := windowFrom(r)
-	h, err := s.Store.Histogram(r.Context(), from, to)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"buckets":    h,
-		"thresholds": thresholdMap(s.Engine.Thresholds()),
-		"from":       from,
-		"to":         to,
-	})
-}
-
-func (s *Server) handleParties(w http.ResponseWriter, r *http.Request) {
-	from, to := windowFrom(r)
-	by := r.URL.Query().Get("by")
-	if by == "" {
-		by = "signer"
-	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	parties, err := s.Store.Parties(r.Context(), by, from, to, limit)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	if parties == nil {
-		parties = []store.Party{}
-	}
-	if s.Reputation != nil {
-		for i := range parties {
-			switch by {
-			case "signer":
-				if sg, ok := s.Reputation.Signer(parties[i].Name); ok {
-					parties[i].NetworkScore, parties[i].NetworkInstalls = sg.Score, sg.Installs
-				}
-			case "fingerprint":
-				if f, ok := s.Reputation.Fingerprint(parties[i].Name); ok {
-					parties[i].NetworkScore, parties[i].NetworkInstalls = f.Score, f.Installs
-				}
-			}
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"by": by, "data": parties, "from": from, "to": to})
-}
-
-func (s *Server) handleSuspects(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method"})
-		return
-	}
-	from, to := windowFrom(r)
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	rows, err := s.Store.Suspects(r.Context(), from, to, r.URL.Query().Get("direction"), limit)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": rows, "from": from, "to": to})
-}
-
-func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	settings := s.Settings(r.Context())
-	feedCount, feedAt, feedErr := 0, time.Time{}, ""
-	if s.Feed != nil {
-		feedCount, feedAt, feedErr = s.Feed.Status()
-	}
-	ipCount, ipAt, ipErr := 0, time.Time{}, ""
-	if s.IPIntel != nil {
-		ipCount, ipAt, ipErr = s.IPIntel.Status()
-	}
-	var trust shaken.Status
-	var repStatus reputation.Status
-	if s.Reputation != nil {
-		repStatus = s.Reputation.Status()
-	}
-	certs, inflight := 0, 0
-	if s.Trust != nil {
-		trust = s.Trust.Status()
-	}
-	if s.Verifier != nil {
-		certs, inflight = s.Verifier.CacheStats()
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"version":    Version,
-		"install_id": s.InstallID,
-		"mode":       s.Cfg.Mode,
-		"release":    s.currentRelease(),
-		"fleet":      map[string]any{"hub": s.Cfg.FleetHub, "member": s.Cfg.FleetURL != ""},
-		"plugins":    s.Plugins.Count(),
-		"listen":     s.Cfg.Listen,
-		"started_at": s.StartedAt,
-		"s3":         s.Cfg.S3Enabled(),
-		"rules":      s.ruleIndex().Count(),
-		"retention":  settings,
-		"share": map[string]any{
-			"configured": s.Cfg.Share,
-			"effective":  settings.ShareTelemetry,
-			"endpoint":   s.Cfg.CallerAPIBase + "/api/falcon/v1/telemetry",
-			"credited":   s.Cfg.CallerAPIKey != "",
-			"redacted":   []string{"called number", "called display name", "forwarding numbers", "PASSporT", "SDP body"},
-		},
-		"reputation": map[string]any{
-			"configured": s.Cfg.Reputation && s.Cfg.Share,
-			"enforce":    s.Cfg.ReputationEnforce,
-			"status":     repStatus,
-		},
-		"voice": map[string]any{
-			"provider": providerName(s.VoiceProvider),
-			"budget":   s.voiceBudget(),
-			"report":   s.VoiceReport,
-		},
-		"assistant": map[string]any{
-			"provider": s.Assistant.Provider,
-			"model":    s.Assistant.Model,
-		},
-		"raw_sip_stored": s.Cfg.StoreRawSIP,
-		"thresholds":     thresholdMap(s.Engine.Thresholds()),
-		"spam_feed": map[string]any{
-			"configured": s.Cfg.FeedEnabled() || (s.Cfg.Demo && s.Cfg.DemoProfile == "paid" && feedCount > 0),
-			"count":      feedCount,
-			"loaded_at":  feedAt,
-			"error":      feedErr,
-			"upsell_url": s.Cfg.UpsellFeedURL,
-		},
-		"demo": map[string]any{
-			"enabled": s.Cfg.Demo,
-			"profile": s.Cfg.DemoProfile,
-		},
-		"voice_firewall": map[string]any{
-			"configured": s.Cfg.FirewallEnabled(),
-			"upsell_url": s.Cfg.UpsellFirewallURL,
-		},
-		"ip_intel": map[string]any{
-			"configured": s.Cfg.IPIntelEnabled(),
-			"count":      ipCount,
-			"loaded_at":  ipAt,
-			"error":      ipErr,
-			"file":       s.Cfg.IPIntelFile,
-			"url":        s.Cfg.IPIntelSource(),
-		},
-		"shaken": map[string]any{
-			"enabled":       s.Verifier != nil,
-			"trust":         trust,
-			"cached_chains": certs,
-			"inflight":      inflight,
-			"budget_ms":     s.Cfg.ShakenBudget.Milliseconds(),
-		},
-	})
-}
-
-// handleConfig shows the effective configuration with secrets redacted.
-func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.Cfg.Redacted())
-}
-
-func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		rules, err := s.Store.Rules(r.Context())
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		if rules == nil {
-			rules = []lists.Rule{}
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": rules})
-	case http.MethodPost:
-		var body struct {
-			Kind    string `json:"kind"`
-			Subject string `json:"subject"`
-			Value   string `json:"value"`
-			Note    string `json:"note"`
-			TTL     string `json:"ttl"`
-		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
-			return
-		}
-		rule := lists.Rule{Kind: lists.Kind(strings.ToLower(body.Kind)), Subject: lists.Subject(strings.ToLower(body.Subject)), Value: body.Value, Note: strings.TrimSpace(body.Note)}
-		if body.TTL != "" {
-			d, err := time.ParseDuration(body.TTL)
-			if err != nil || d <= 0 {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ttl must be a duration such as 24h"})
-				return
-			}
-			rule.ExpiresAt = time.Now().UTC().Add(d)
-		}
-		saved, err := s.Store.AddRule(r.Context(), rule)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		if err := s.ReloadRules(r.Context()); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		s.audit(r, "rule.add", fmt.Sprintf("%s %s %s", saved.Kind, saved.Subject, saved.Value), fmt.Sprintf("#%d %s", saved.ID, saved.Note))
-		writeJSON(w, http.StatusCreated, saved)
-	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "GET or POST"})
-	}
-}
-
-func (s *Server) handleRule(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "DELETE required"})
-		return
-	}
-	id, err := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/v1/rules/"), 10, 64)
-	if err != nil || id <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
-		return
-	}
-	if err := s.Store.DeleteRule(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if err := s.ReloadRules(r.Context()); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	s.audit(r, "rule.delete", fmt.Sprintf("#%d", id), "")
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
-}
-
-// handleStream is server-sent events: one "event" message per screened
-// request, plus a comment every 15 seconds to keep proxies awake.
-func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "streaming unsupported"})
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no")
-	w.WriteHeader(http.StatusOK)
-	_, _ = fmt.Fprintf(w, "retry: 3000\n\n")
-	flusher.Flush()
-
-	ch, unsubscribe := s.hub.subscribe()
-	defer unsubscribe()
-	ping := time.NewTicker(15 * time.Second)
-	defer ping.Stop()
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case msg := <-ch:
-			_, _ = fmt.Fprintf(w, "event: screen\ndata: %s\n\n", msg)
-			flusher.Flush()
-		case <-ping.C:
-			_, _ = fmt.Fprint(w, ": ping\n\n")
-			flusher.Flush()
-		}
-	}
-}
-
-func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
-	defer cancel()
-	done := map[string]bool{}
-	if s.IPIntel != nil {
-		s.IPIntel.Load(ctx)
-		done["ip_intel"] = true
-	}
-	if s.Trust != nil && s.Trust.Enabled() {
-		s.Trust.LoadRoots(ctx)
-		s.Trust.LoadCRL(ctx)
-		done["shaken_trust"] = true
-	}
-	if err := s.ReloadRules(ctx); err == nil {
-		done["rules"] = true
-	}
-	s.audit(r, "reload", "feeds", fmt.Sprint(done))
-	writeJSON(w, http.StatusOK, map[string]any{"reloaded": done})
-}
-
-func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	s.metrics.write(w, s)
-}
-
-func buildMessage(req ScreenRequest) (*sipmsg.Message, error) {
-	if strings.TrimSpace(req.RawSIP) != "" {
-		return sipmsg.Parse(req.RawSIP)
-	}
-	var b strings.Builder
-	method := req.Method
-	if method == "" {
-		method = "INVITE"
-	}
-	uri := req.RequestURI
-	if uri == "" {
-		uri = "sip:unknown@localhost"
-	}
-	b.WriteString(method)
-	b.WriteByte(' ')
-	b.WriteString(uri)
-	b.WriteString(" SIP/2.0\n")
-	for k, v := range req.Headers {
-		b.WriteString(k)
-		b.WriteString(": ")
-		b.WriteString(v)
-		b.WriteByte('\n')
-	}
-	b.WriteByte('\n')
-	b.WriteString(req.Body)
-	return sipmsg.Parse(b.String())
-}
-
-func looksJSON(b []byte) bool {
-	t := strings.TrimSpace(string(b))
-	return strings.HasPrefix(t, "{")
 }
 
 func headerOr(r *http.Request, name, fallback string) string {

@@ -11,22 +11,27 @@ import (
 	"github.com/callerapi/falcon/internal/store"
 )
 
-func TestShareTelemetryDefaultsOnAndOptsOut(t *testing.T) {
-	srv, _ := newTestServer(t)
+func TestTelemetryFollowsTheEnvironmentOnly(t *testing.T) {
+	srv, db := newTestServer(t)
 	srv.Cfg.Share = true
 	ctx := context.Background()
 
 	if !srv.Sharing(ctx) {
-		t.Fatal("sharing must default to on when FALCON_SHARE is true")
+		t.Fatal("sharing must be on when FALCON_SHARE is true")
 	}
-	w := do(t, srv, http.MethodPut, "/v1/settings", map[string]bool{"share_telemetry": false})
-	if w.Code != 200 {
-		t.Fatalf("opt out: %d %s", w.Code, w.Body.String())
+	// An install that opted out in an older dashboard shares again.
+	_ = db.KVSet(ctx, "share_opt_out", "1")
+	if !srv.Sharing(ctx) {
+		t.Fatal("an old dashboard opt-out turned telemetry off")
 	}
-	if srv.Sharing(ctx) {
-		t.Fatal("opt-out did not stick")
+	// A dashboard client cannot turn it off.
+	if w := do(t, srv, http.MethodPut, "/v1/settings", map[string]bool{"share_telemetry": false}); w.Code != 200 {
+		t.Fatalf("settings put: %d %s", w.Code, w.Body.String())
 	}
-	w = do(t, srv, http.MethodGet, "/v1/status", nil)
+	if !srv.Sharing(ctx) {
+		t.Fatal("a settings call turned telemetry off")
+	}
+	w := do(t, srv, http.MethodGet, "/v1/status", nil)
 	var st struct {
 		Share struct {
 			Configured bool     `json:"configured"`
@@ -35,20 +40,30 @@ func TestShareTelemetryDefaultsOnAndOptsOut(t *testing.T) {
 		} `json:"share"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &st)
-	if !st.Share.Configured || st.Share.Effective || len(st.Share.Redacted) == 0 {
+	if !st.Share.Configured || !st.Share.Effective || len(st.Share.Redacted) == 0 {
 		t.Fatalf("status share = %+v", st.Share)
 	}
-	w = do(t, srv, http.MethodPut, "/v1/settings", map[string]bool{"share_telemetry": true})
-	if w.Code != 200 || !srv.Sharing(ctx) {
-		t.Fatalf("opt back in: %d", w.Code)
-	}
-
 	srv.Cfg.Share = false
 	if srv.Sharing(ctx) {
-		t.Fatal("FALCON_SHARE=false must win over a saved opt-in")
+		t.Fatal("FALCON_SHARE=false must turn telemetry off")
 	}
-	if w := do(t, srv, http.MethodPut, "/v1/settings", map[string]bool{"share_telemetry": true}); w.Code != http.StatusBadRequest {
-		t.Fatalf("dashboard turned sharing on against the environment: %d", w.Code)
+}
+
+func TestModeAndFASModeChangeAtRuntime(t *testing.T) {
+	srv, _ := newTestServer(t)
+	srv.Cfg.Mode, srv.Cfg.FASMode = "enforce", "monitor"
+	ctx := context.Background()
+	if srv.Mode(ctx) != "enforce" || srv.FASMode(ctx) != "monitor" {
+		t.Fatalf("defaults %s %s", srv.Mode(ctx), srv.FASMode(ctx))
+	}
+	if w := do(t, srv, http.MethodPut, "/v1/settings", map[string]string{"mode": "monitor", "fas_mode": "enforce"}); w.Code != 200 {
+		t.Fatalf("put: %d %s", w.Code, w.Body.String())
+	}
+	if srv.Mode(ctx) != "monitor" || srv.FASMode(ctx) != "enforce" {
+		t.Fatalf("after save %s %s", srv.Mode(ctx), srv.FASMode(ctx))
+	}
+	if w := do(t, srv, http.MethodPut, "/v1/settings", map[string]string{"mode": "off"}); w.Code != http.StatusBadRequest {
+		t.Fatalf("bad mode accepted: %d", w.Code)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -285,28 +286,58 @@ func seedProfile(dir, profile string, calls []rawCall, spam []string, end time.T
 	if err := addRules(ctx, db, paid); err != nil {
 		return err
 	}
+	rows := make([]row, 0, len(calls)+100)
 	for i, raw := range calls {
-		ev := enrich(raw, paid, spamSet, i)
-		id, err := db.Insert(ctx, ev)
-		if err != nil {
-			return err
-		}
-		if ev.Action == score.ActionAllow && i%3 == 0 {
+		r := row{ev: enrich(raw, paid, spamSet, i)}
+		if r.ev.Action == score.ActionAllow && i%3 == 0 {
 			ans := i%5 != 0
 			dur := 8 + i%90
 			if !ans {
 				dur = 0
 			}
-			if _, err := db.SetOutcome(ctx, ev.CallID, store.Outcome{Answered: ans, DurationS: dur, HangupCause: hangup(ans)}); err != nil {
-				_ = id
+			callID := r.ev.CallID
+			r.after = func(ctx context.Context, db *store.SQLite, _ int64) error {
+				_, err := db.SetOutcome(ctx, callID, store.Outcome{Answered: ans, DurationS: dur, HangupCause: hangup(ans)})
 				return err
 			}
 		}
+		rows = append(rows, r)
+	}
+	bridge, err := bridgeRows(ctx, db, dir, end)
+	if err != nil {
+		return err
+	}
+	if err := insertInOrder(ctx, db, append(rows, bridge...)); err != nil {
+		return err
 	}
 	if err := addAlerts(ctx, db, paid, end); err != nil {
 		return err
 	}
 	return db.Checkpoint()
+}
+
+// row is one demo call and what to store once it has an id.
+type row struct {
+	ev    store.Event
+	after func(ctx context.Context, db *store.SQLite, id int64) error
+}
+
+// insertInOrder writes the calls oldest first, so ids follow time the way
+// they do on a live install.
+func insertInOrder(ctx context.Context, db *store.SQLite, rows []row) error {
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].ev.ReceivedAt.Before(rows[j].ev.ReceivedAt) })
+	for _, r := range rows {
+		id, err := db.Insert(ctx, r.ev)
+		if err != nil {
+			return err
+		}
+		if r.after != nil {
+			if err := r.after(ctx, db, id); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func hangup(answered bool) string {
@@ -370,12 +401,13 @@ func enrich(raw rawCall, paid bool, spam map[string]struct{}, i int) store.Event
 		Direction:   "inbound",
 		Fingerprint: "ua:" + strings.ToLower(strings.ReplaceAll(raw.UA, " ", "")),
 		Honeypot:    raw.To == "+15551119999",
+		LatencyUS:   int64(900 + (i*37)%2400),
 	}
 	switch raw.Kind {
 	case "scanner":
 		ev.Action = score.ActionReject
 		ev.RiskScore = 96
-		ev.Reasons = []score.Reason{{Code: "scanner_ua", Category: "fingerprint", Weight: 80, Detail: "Known SIP scanner user-agent"}}
+		ev.Reasons = []score.Reason{{Code: "scanner_user_agent", Category: "ua", Weight: 90, Detail: "User-Agent matches a known SIP scanner"}}
 	case "cpaas-8x8":
 		if paid {
 			ev.Provider = "8x8, Inc."
@@ -386,14 +418,10 @@ func enrich(raw rawCall, paid bool, spam map[string]struct{}, i int) store.Event
 			if listed {
 				ev.Action = score.ActionReject
 				ev.RiskScore = 100
-				ev.Reasons = []score.Reason{
-					{Code: "spam_feed_hit", Category: "feed", Weight: 100, Detail: "Calling number is on the CallerAPI spam feed"},
-					{Code: "ip_intel_named", Category: "ipintel", Weight: 0, Detail: "Source IP belongs to 8x8, Inc., listed as trusted"},
-				}
+				ev.Reasons = []score.Reason{{Code: "spam_feed_hit", Category: "feed", Weight: 100, Detail: "Calling number is on the CallerAPI spam feed"}}
 			} else {
 				ev.Action = score.ActionAllow
 				ev.RiskScore = 6
-				ev.Reasons = []score.Reason{{Code: "ip_intel_named", Category: "ipintel", Weight: 0, Detail: "Source IP belongs to 8x8, Inc., listed as trusted"}}
 			}
 		} else {
 			ev.Provider = "Datacenter"
@@ -410,7 +438,6 @@ func enrich(raw rawCall, paid bool, spam map[string]struct{}, i int) store.Event
 			ev.SignerName = "Zoom Voice Communications, Inc."
 			ev.Action = score.ActionAllow
 			ev.RiskScore = 4
-			ev.Reasons = []score.Reason{{Code: "ip_intel_named", Category: "ipintel", Weight: 0, Detail: "Source IP belongs to Zoom Voice Communications, Inc., listed as trusted"}}
 		} else {
 			ev.Provider = "Datacenter"
 			ev.Action = score.ActionFlag
@@ -431,12 +458,12 @@ func enrich(raw rawCall, paid bool, spam map[string]struct{}, i int) store.Event
 			} else {
 				ev.Action = score.ActionFlag
 				ev.RiskScore = 38
-				ev.Reasons = []score.Reason{{Code: "ip_intel_named", Category: "ipintel", Weight: 0, Detail: "Source IP belongs to Piratel llc, listed as neutral"}}
+				ev.Reasons = []score.Reason{{Code: "shaken_attest_c", Category: "shaken", Weight: 20, Detail: "STIR/SHAKEN attestation C (gateway)"}}
 			}
 		} else {
 			ev.Action = score.ActionAllow
 			ev.RiskScore = 12
-			ev.Reasons = []score.Reason{{Code: "unsigned", Category: "shaken", Weight: 10, Detail: "No STIR/SHAKEN on the INVITE"}}
+			ev.Reasons = []score.Reason{{Code: "missing_identity", Category: "shaken", Weight: 15, Detail: "Identity header is missing (no STIR/SHAKEN)"}}
 		}
 	case "wholesale":
 		if paid {
@@ -459,7 +486,6 @@ func enrich(raw rawCall, paid bool, spam map[string]struct{}, i int) store.Event
 			ev.SignerName = "Versatel LLC"
 			ev.Action = score.ActionAllow
 			ev.RiskScore = 14
-			ev.Reasons = []score.Reason{{Code: "ip_intel_named", Category: "ipintel", Weight: 0, Detail: "Source IP belongs to Versatel LLC, listed as neutral"}}
 		} else {
 			ev.Action = score.ActionAllow
 			ev.RiskScore = 10
@@ -483,7 +509,7 @@ func enrich(raw rawCall, paid bool, spam map[string]struct{}, i int) store.Event
 		} else {
 			ev.Action = score.ActionAllow
 			ev.RiskScore = 18
-			ev.Reasons = []score.Reason{{Code: "unsigned", Category: "shaken", Weight: 10, Detail: "No STIR/SHAKEN on the INVITE"}}
+			ev.Reasons = []score.Reason{{Code: "missing_identity", Category: "shaken", Weight: 15, Detail: "Identity header is missing (no STIR/SHAKEN)"}}
 		}
 	default:
 		ev.Action = score.ActionAllow
@@ -492,7 +518,7 @@ func enrich(raw rawCall, paid bool, spam map[string]struct{}, i int) store.Event
 	if ev.Honeypot && ev.Action == score.ActionAllow {
 		ev.Action = score.ActionFlag
 		ev.RiskScore = 70
-		ev.Reasons = append(ev.Reasons, score.Reason{Code: "honeypot", Category: "list", Weight: 60, Detail: "Called an unassigned number"})
+		ev.Reasons = append(ev.Reasons, score.Reason{Code: "honeypot_target", Category: "behaviour", Weight: 70, Detail: "Called number " + raw.To + " is listed as unassigned; nobody legitimate dials it"})
 	}
 	return ev
 }

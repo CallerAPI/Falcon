@@ -15,10 +15,12 @@ import (
 	"github.com/callerapi/falcon/internal/voice"
 )
 
-const transcriptProvider = "connexcs"
+// transcriptProvider marks text a switch or a speech service posted to
+// POST /v1/voice/transcript. Falcon did not record that audio.
+const transcriptProvider = "external"
 
-// transcriptLine is the text Falcon could find in one bus message.
-// ConnexCS does not document the payload, so several names are tried.
+// transcriptLine is the text Falcon could find in one posted message.
+// Speech services name the fields differently, so several names are tried.
 type transcriptLine struct {
 	CallID string
 	From   string
@@ -116,26 +118,6 @@ func (t *transcriptScore) due(callID, text string, final bool) bool {
 	}
 	t.last[callID] = transcriptMark{at: now, n: len(text)}
 	return true
-}
-
-func (s *Server) acceptTranscript(body []byte) {
-	line := readTranscript(body)
-	text := line.Text
-	if text == "" {
-		text = line.Raw
-	}
-	if strings.TrimSpace(text) == "" {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	sample, err := s.saveTranscript(ctx, line, text)
-	if err != nil {
-		return
-	}
-	if line.Text != "" && s.Cfg.CallerAPIKey != "" && transcriptMarks.due(sample.CallID, line.Text, line.Final) {
-		go s.scoreTranscript(sample, line)
-	}
 }
 
 func (s *Server) handleVoiceTranscript(w http.ResponseWriter, r *http.Request) {

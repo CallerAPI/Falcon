@@ -18,7 +18,7 @@ import (
 // A wholesale ingress: one customer IP, one CLI, a call center working a
 // lead list. On the trunk profile this traffic is rejected within the first
 // minute. On the carrier profile it is only flagged, and hard blocks still
-// reject. The ConnexCS, Kamailio, and OpenSIPS adapters all send this shape.
+// reject. The Kamailio and OpenSIPS adapters send this shape.
 
 func carrierServer(t *testing.T, th score.Thresholds, lim score.Limits) *Server {
 	t.Helper()
@@ -28,7 +28,7 @@ func carrierServer(t *testing.T, th score.Thresholds, lim score.Limits) *Server 
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	srv := &Server{
-		Cfg:       config.Config{FailOpen: true, Token: "secret", RetentionDays: 30},
+		Cfg:       config.Config{FailOpen: true, Token: "secret", RetentionDays: 30, RecordingsDir: t.TempDir()},
 		Engine:    score.NewEngine(th, lim),
 		Store:     db,
 		InstallID: "test",
@@ -40,13 +40,13 @@ func carrierServer(t *testing.T, th score.Thresholds, lim score.Limits) *Server 
 	return srv
 }
 
-func connexcsScreen(t *testing.T, srv *Server, cli, dest, ua string) score.Result {
+func headerScreen(t *testing.T, srv *Server, cli, dest, ua string) score.Result {
 	t.Helper()
 	body := map[string]any{
-		"switch": "connexcs", "direction": "outbound", "customer": "4242", "method": "INVITE",
-		"request_uri": "sip:" + dest + "@connexcs.invalid", "source_ip": "203.0.113.9",
+		"switch": "class4", "direction": "outbound", "customer": "4242", "method": "INVITE",
+		"request_uri": "sip:" + dest + "@switch.invalid", "source_ip": "203.0.113.9",
 		"headers": map[string]string{
-			"From": "<sip:" + cli + "@203.0.113.9>;tag=cx", "To": "<sip:" + dest + "@connexcs.invalid>",
+			"From": "<sip:" + cli + "@203.0.113.9>;tag=cx", "To": "<sip:" + dest + "@switch.invalid>",
 			"Call-ID": "cx-" + cli + "-" + dest, "User-Agent": ua,
 		},
 	}
@@ -57,7 +57,7 @@ func dialer(t *testing.T, srv *Server, cli string, calls int) score.Result {
 	t.Helper()
 	var last score.Result
 	for i := 0; i < calls; i++ {
-		last = connexcsScreen(t, srv, cli, fmt.Sprintf("+1415555%04d", 1000+i*7), "Acme Dialer/2.1")
+		last = headerScreen(t, srv, cli, fmt.Sprintf("+1415555%04d", 1000+i*7), "Acme Dialer/2.1")
 	}
 	return last
 }
@@ -87,7 +87,7 @@ func TestCarrierProfileOnlyFlagsACallCenter(t *testing.T) {
 	}
 
 	// A scanner score alone stays a flag too. Only hard blocks reject.
-	res = connexcsScreen(t, srv, "+13125550201", "+14155550100", "friendly-scanner")
+	res = headerScreen(t, srv, "+13125550201", "+14155550100", "friendly-scanner")
 	if res.Action != score.ActionFlag || res.RiskScore < 90 {
 		t.Fatalf("scanner on carrier profile: %s %d", res.Action, res.RiskScore)
 	}
@@ -102,7 +102,7 @@ func TestCarrierProfileStillRejectsHardBlocks(t *testing.T) {
 	if err := srv.ReloadRules(ctx); err != nil {
 		t.Fatal(err)
 	}
-	res := connexcsScreen(t, srv, "+13125550188", "+14155550100", "Acme Dialer/2.1")
+	res := headerScreen(t, srv, "+13125550188", "+14155550100", "Acme Dialer/2.1")
 	if res.Action != score.ActionReject || res.Headers["X-Falcon-Block"] != "denylist" || res.SIPStatus != 603 {
 		t.Fatalf("deny rule: %s %v %d", res.Action, res.Headers, res.SIPStatus)
 	}
@@ -113,7 +113,7 @@ func TestCarrierProfileStillRejectsHardBlocks(t *testing.T) {
 	if w.Code != 200 && w.Code != 201 {
 		t.Fatalf("customer: %d %s", w.Code, w.Body.String())
 	}
-	res = connexcsScreen(t, srv, "+18005551234", "+14155550100", "Acme Dialer/2.1")
+	res = headerScreen(t, srv, "+18005551234", "+14155550100", "Acme Dialer/2.1")
 	if res.Action != score.ActionReject || res.Headers["X-Falcon-Block"] != "caller_id" {
 		t.Fatalf("spoof: %s %v", res.Action, res.Headers)
 	}

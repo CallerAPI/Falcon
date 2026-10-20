@@ -148,6 +148,49 @@ func SplitWAV(b []byte, seconds int) ([][]byte, error) {
 	return parts, nil
 }
 
+// Piece is part of a clip and where it starts in the whole, in seconds.
+type Piece struct {
+	Clip   Clip
+	Offset float64
+}
+
+// Pieces cuts a clip into parts of at most seconds each, in order.
+func (c Clip) Pieces(seconds int) []Piece {
+	if seconds < 1 || len(c.Channels) == 0 {
+		return []Piece{{Clip: c}}
+	}
+	keep := c.Rate * seconds
+	total := len(c.Channels[0])
+	if total <= keep {
+		return []Piece{{Clip: c}}
+	}
+	var out []Piece
+	for start := 0; start < total; start += keep {
+		end := start + keep
+		if end > total {
+			end = total
+		}
+		part := Clip{Rate: c.Rate, Channels: make([][]int16, len(c.Channels))}
+		for i := range c.Channels {
+			part.Channels[i] = c.Channels[i][start:end]
+		}
+		out = append(out, Piece{Clip: part, Offset: float64(start) / float64(c.Rate)})
+	}
+	return out
+}
+
+// SplitStereo returns each channel of a two-channel WAV as its own mono
+// WAV: the caller first, then the callee. ok is false for any other file.
+func SplitStereo(wav []byte) (left, right []byte, ok bool) {
+	c, err := DecodeWAV(wav)
+	if err != nil || len(c.Channels) != 2 {
+		return nil, nil, false
+	}
+	left = encodeWAV(Clip{Rate: c.Rate, Channels: [][]int16{c.Channels[0]}})
+	right = encodeWAV(Clip{Rate: c.Rate, Channels: [][]int16{c.Channels[1]}})
+	return left, right, true
+}
+
 func encodeWAV(c Clip) []byte {
 	channels := len(c.Channels)
 	frames := 0

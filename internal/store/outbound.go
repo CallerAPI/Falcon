@@ -153,7 +153,15 @@ type VoiceSample struct {
 	Error        string    `json:"error,omitempty"`
 	Customer     string    `json:"customer,omitempty"`
 	From         string    `json:"from,omitempty"`
+	// AudioPath is the recording, relative to the recordings folder.
+	// Empty when Falcon only has text. Turns is the transcript split by
+	// speaker, as JSON written by the voice pipeline.
+	AudioPath string          `json:"-"`
+	Turns     json.RawMessage `json:"turns,omitempty"`
 }
+
+// HasAudio reports whether a recording is kept for this sample.
+func (v VoiceSample) HasAudio() bool { return v.AudioPath != "" }
 
 // EventByCallID returns the newest screened INVITE with this Call-ID.
 func (s *SQLite) EventByCallID(ctx context.Context, callID string) (Event, bool, error) {
@@ -320,10 +328,10 @@ func (s *SQLite) AddVoiceSample(ctx context.Context, v VoiceSample) (int64, erro
 		v.At = time.Now().UTC()
 	}
 	res, err := s.db.ExecContext(ctx, `INSERT INTO voice_samples
- (event_id, call_id, at_unix, seconds, channels, phash, caller_speech, callee_speech, repeat_count, transcript, category, score, summary, provider, error, customer, from_num)
- VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+ (event_id, call_id, at_unix, seconds, channels, phash, caller_speech, callee_speech, repeat_count, transcript, category, score, summary, provider, error, customer, from_num, audio_path, turns)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		v.EventID, v.CallID, v.At.Unix(), v.Seconds, v.Channels, v.PHash, v.CallerSpeech, v.CalleeSpeech, v.RepeatCount,
-		v.Transcript, v.Category, v.Score, v.Summary, v.Provider, v.Error, v.Customer, v.From)
+		v.Transcript, v.Category, v.Score, v.Summary, v.Provider, v.Error, v.Customer, v.From, v.AudioPath, rawText(v.Turns))
 	if err != nil {
 		return 0, err
 	}
@@ -360,23 +368,140 @@ func (s *SQLite) NoteVoiceScam(ctx context.Context, eventID int64, category stri
 	return err
 }
 
-// UpdateVoiceSample writes the provider's result onto a stored clip.
-func (s *SQLite) UpdateVoiceSample(ctx context.Context, v VoiceSample) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE voice_samples SET transcript = ?, category = ?, score = ?, summary = ?, provider = ?, error = ?, seconds = ?, event_id = CASE WHEN ? > 0 THEN ? ELSE event_id END WHERE id = ?`,
-		v.Transcript, v.Category, v.Score, v.Summary, v.Provider, v.Error, v.Seconds, v.EventID, v.EventID, v.ID)
+// NoteReason adds an evidence reason to a screened call once. The score
+// stays as it was. The FAS guard and the voice pipeline use it.
+func (s *SQLite) NoteReason(ctx context.Context, eventID int64, reason score.Reason) error {
+	if eventID == 0 || reason.Code == "" {
+		return nil
+	}
+	ev, err := s.Get(ctx, eventID)
+	if err != nil {
+		return err
+	}
+	for _, r := range ev.Reasons {
+		if r.Code == reason.Code {
+			return nil
+		}
+	}
+	if len(reason.Detail) > 180 {
+		reason.Detail = reason.Detail[:180]
+	}
+	ev.Reasons = append(ev.Reasons, reason)
+	_, err = s.db.ExecContext(ctx, `UPDATE events SET reasons = ? WHERE id = ?`, ReasonsJSON(ev.Reasons), eventID)
 	return err
 }
 
+// HeldCount is how many calls monitor mode let through that Falcon would
+// have rejected or challenged.
+func (s *SQLite) HeldCount(ctx context.Context, from, to time.Time) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE received_unix >= ? AND received_unix < ? AND held = 1`, from.Unix(), to.Unix()).Scan(&n)
+	return n, err
+}
+
+// LastEventAt is when the newest event was received. Zero when empty.
+func (s *SQLite) LastEventAt(ctx context.Context) (time.Time, error) {
+	var at sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(received_unix) FROM events`).Scan(&at); err != nil {
+		return time.Time{}, err
+	}
+	if !at.Valid {
+		return time.Time{}, nil
+	}
+	return time.Unix(at.Int64, 0).UTC(), nil
+}
+
+// VoiceSamplesSince lists samples in a window, newest first.
+func (s *SQLite) VoiceSamplesSince(ctx context.Context, from, to time.Time, limit int) ([]VoiceSample, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+voiceColumns+` FROM voice_samples WHERE at_unix >= ? AND at_unix < ? ORDER BY id DESC LIMIT ?`, from.Unix(), to.Unix(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []VoiceSample{}
+	for rows.Next() {
+		v, err := scanVoice(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// UpdateVoiceSample writes the provider's result onto a stored clip.
+func (s *SQLite) UpdateVoiceSample(ctx context.Context, v VoiceSample) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE voice_samples SET transcript = ?, category = ?, score = ?, summary = ?, provider = ?, error = ?, seconds = ?,
+ turns = CASE WHEN ? != '' THEN ? ELSE turns END,
+ audio_path = CASE WHEN ? != '' THEN ? ELSE audio_path END,
+ event_id = CASE WHEN ? > 0 THEN ? ELSE event_id END WHERE id = ?`,
+		v.Transcript, v.Category, v.Score, v.Summary, v.Provider, v.Error, v.Seconds,
+		rawText(v.Turns), rawText(v.Turns), v.AudioPath, v.AudioPath, v.EventID, v.EventID, v.ID)
+	return err
+}
+
+// ClearVoiceAudio forgets the recording path once the file is deleted.
+// The transcript and verdict stay.
+func (s *SQLite) ClearVoiceAudio(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE voice_samples SET audio_path = '' WHERE id = ?`, id)
+	return err
+}
+
+// ExpiredVoiceAudio lists samples whose recording is older than before.
+func (s *SQLite) ExpiredVoiceAudio(ctx context.Context, before time.Time, limit int) ([]VoiceSample, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+voiceColumns+` FROM voice_samples WHERE COALESCE(audio_path, '') != '' AND at_unix < ? ORDER BY id ASC LIMIT ?`, before.Unix(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []VoiceSample{}
+	for rows.Next() {
+		v, err := scanVoice(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// VoiceSample returns one sample by id.
+func (s *SQLite) VoiceSample(ctx context.Context, id int64) (VoiceSample, bool, error) {
+	v, err := scanVoice(s.db.QueryRowContext(ctx, `SELECT `+voiceColumns+` FROM voice_samples WHERE id = ?`, id))
+	if err == sql.ErrNoRows {
+		return v, false, nil
+	}
+	return v, err == nil, err
+}
+
 const voiceColumns = `id, event_id, call_id, at_unix, seconds, channels, COALESCE(phash, ''), caller_speech, callee_speech, repeat_count,
- COALESCE(transcript, ''), COALESCE(category, ''), score, COALESCE(summary, ''), COALESCE(provider, ''), COALESCE(error, ''), COALESCE(customer, ''), COALESCE(from_num, '')`
+ COALESCE(transcript, ''), COALESCE(category, ''), score, COALESCE(summary, ''), COALESCE(provider, ''), COALESCE(error, ''), COALESCE(customer, ''), COALESCE(from_num, ''),
+ COALESCE(audio_path, ''), COALESCE(turns, '')`
 
 func scanVoice(row rowScanner) (VoiceSample, error) {
 	var v VoiceSample
 	var at int64
+	var turns string
 	err := row.Scan(&v.ID, &v.EventID, &v.CallID, &at, &v.Seconds, &v.Channels, &v.PHash, &v.CallerSpeech, &v.CalleeSpeech, &v.RepeatCount,
-		&v.Transcript, &v.Category, &v.Score, &v.Summary, &v.Provider, &v.Error, &v.Customer, &v.From)
+		&v.Transcript, &v.Category, &v.Score, &v.Summary, &v.Provider, &v.Error, &v.Customer, &v.From, &v.AudioPath, &turns)
 	v.At = time.Unix(at, 0).UTC()
+	if strings.HasPrefix(strings.TrimSpace(turns), "[") {
+		v.Turns = json.RawMessage(turns)
+	}
 	return v, err
+}
+
+func rawText(b json.RawMessage) string {
+	if len(b) == 0 {
+		return ""
+	}
+	return string(b)
 }
 
 // VoiceSamples lists the newest clips.
