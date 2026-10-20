@@ -106,14 +106,22 @@ type Server struct {
 	tcp net.Listener
 
 	mu      sync.Mutex
+	closing bool
 	byID    map[string]*call
 	pending map[string]time.Time
 	active  atomic.Int64
 	dropped atomic.Uint64
 	local   sync.Map
 	ctx     context.Context
-	wg      sync.WaitGroup
+	// wg counts calls until their row is stored. setups counts INVITE
+	// handlers, which end after a ringing far end answers its CANCEL.
+	wg     sync.WaitGroup
+	setups sync.WaitGroup
 }
+
+// setupDrain bounds how long shutdown waits for ringing legs to be
+// cancelled before the SIP stack closes.
+const setupDrain = 3 * time.Second
 
 // New binds the SIP sockets so a bad address fails at start.
 func New(cfg Config, screen Screener, ctl Controls, sink Sink, calls CallLog) (*Server, error) {
@@ -212,6 +220,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	go s.sweep(ctx)
 	<-ctx.Done()
 	s.mu.Lock()
+	s.closing = true
 	calls := make([]*call, 0, len(s.byID))
 	seen := map[*call]bool{}
 	for _, c := range s.byID {
@@ -225,9 +234,27 @@ func (s *Server) Serve(ctx context.Context) error {
 		c.hangup("shutdown")
 	}
 	s.wg.Wait()
+	drained := make(chan struct{})
+	go func() { s.setups.Wait(); close(drained) }()
+	select {
+	case <-drained:
+	case <-time.After(setupDrain):
+	}
 	s.closeSockets()
 	_ = s.ua.Close()
 	return nil
+}
+
+// track adds one to the counter unless shutdown has started. Shutdown
+// sets closing under the same lock before it waits, so no Add races a Wait.
+func (s *Server) track(wg *sync.WaitGroup) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing {
+		return false
+	}
+	wg.Add(1)
+	return true
 }
 
 // Active is how many calls are bridged now.

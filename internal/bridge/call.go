@@ -104,6 +104,12 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 		s: s, id: callIDOf(req), peer: peer, host: s.mediaHost(peer.Addr()), started: received,
 		route: route, reason: d.Reason, aReq: req, aTx: tx, aOffer: offer, done: make(chan struct{}),
 	}
+	if !s.track(&s.setups) {
+		res.Headers["X-Falcon-Bridge"] = "stopping"
+		respond(req, tx, s.cfg.PassStatus, reasonPhrase(s.cfg.PassStatus), res.Headers)
+		return
+	}
+	defer s.setups.Done()
 	c.run()
 }
 
@@ -154,6 +160,7 @@ type call struct {
 	status     int
 	endedBy    string
 	fasAction  string
+	stopRing   context.CancelFunc
 	torn       sync.Once
 	done       chan struct{}
 	finalizing sync.WaitGroup
@@ -181,8 +188,13 @@ func (c *call) run() {
 		c.finalA(s.cfg.PassStatus, map[string]string{"X-Falcon-Bridge": "no-ports"})
 		return
 	}
+	if !s.track(&s.wg) {
+		s.ports.Release(c.sockA)
+		s.ports.Release(c.sockB)
+		c.finalA(s.cfg.PassStatus, map[string]string{"X-Falcon-Bridge": "stopping"})
+		return
+	}
 	s.active.Add(1)
-	s.wg.Add(1)
 	c.det = fas.NewDetector(c.started)
 	taps := media.Taps{fasTap{c.det}}
 	if s.cfg.RecordingsDir != "" {
@@ -235,6 +247,9 @@ func (c *call) run() {
 	s.register(c, c.bID)
 
 	wait, stopWait := context.WithTimeout(context.Background(), ringTimeout)
+	c.mu.Lock()
+	c.stopRing = stopWait
+	c.mu.Unlock()
 	callerGone := make(chan struct{})
 	go func() {
 		select {
@@ -262,6 +277,20 @@ func (c *call) run() {
 		}
 		c.status = 487
 		c.teardown(endCaller)
+		return
+	case <-c.done:
+		// Falcon ended the call while the far end rang: a shutdown or a
+		// limit. Teardown cancelled the outbound leg. A far end that
+		// answered at the same moment is hung up, not left up.
+		if err == nil {
+			c.mu.Lock()
+			c.answered, c.answerAt = true, time.Now()
+			c.mu.Unlock()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = b.Ack(ctx)
+			cancel()
+			c.hangupB()
+		}
 		return
 	default:
 	}
@@ -503,7 +532,9 @@ func (c *call) failAnswered(status int) {
 	c.teardown(endFalcon)
 }
 
-// finalA sends one final failure to an unanswered caller.
+// finalA sends one final failure to an unanswered caller. It writes before
+// it returns: sipgo ends an INVITE transaction that has no final response
+// when the INVITE handler returns, and the response would be lost.
 func (c *call) finalA(status int, headers map[string]string) {
 	c.mu.Lock()
 	if c.finalSent {
@@ -516,11 +547,9 @@ func (c *call) finalA(status int, headers map[string]string) {
 	for k, v := range headers {
 		res.AppendHeader(sip.NewHeader(k, v))
 	}
-	if c.a != nil {
-		go func() { _ = c.a.WriteResponse(res) }()
-		return
+	if err := c.aTx.Respond(res); err != nil {
+		log.Printf("falcon bridge: %d to caller for %s: %v", status, c.id, err)
 	}
-	_ = c.aTx.Respond(res)
 }
 
 func (c *call) isAnswered() bool {
@@ -632,8 +661,13 @@ func (c *call) teardown(why string) {
 		if c.endedBy == "" {
 			c.endedBy = why
 		}
+		stopRing := c.stopRing
 		c.mu.Unlock()
 		close(c.done)
+		// A far end that still rings gets a CANCEL.
+		if stopRing != nil {
+			stopRing()
+		}
 		if c.relay != nil {
 			c.relay.Close()
 		}

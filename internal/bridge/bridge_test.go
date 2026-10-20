@@ -630,17 +630,37 @@ func TestBridgeRefusesItsOwnLegComingBack(t *testing.T) {
 	}
 }
 
+// The INVITE goes out as one raw datagram. A sipgo client would keep
+// retransmitting, and force-cancelling its transaction races sipgo's
+// retransmit timer.
 func TestBridgeIgnoresAddressesOutsideThePeerList(t *testing.T) {
 	h := newHarness(t, options{action: score.ActionChallenge, peers: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}})
-	ctx, cancel := context.WithCancelCause(context.Background())
-	time.AfterFunc(1500*time.Millisecond, func() { cancel(sipgo.WaitAnswerForceCancelErr) })
-	_, codes, err := h.sw.call(ctx, h.bridgeAddr(), 30000)
-	if err == nil || len(codes) != 0 {
-		t.Fatalf("a stranger got an answer: %v %v", codes, err)
+	conn, err := net.DialUDP("udp", nil, h.br.UDPAddr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if h.br.Dropped() == 0 {
-		t.Fatal("drop not counted")
+	defer conn.Close()
+	local := conn.LocalAddr().String()
+	body := string(sdpFor(30000))
+	invite := "INVITE sip:+14155550100@" + h.bridgeAddr() + " SIP/2.0\r\n" +
+		"Via: SIP/2.0/UDP " + local + ";branch=z9hG4bKstranger1;rport\r\n" +
+		"Max-Forwards: 70\r\n" +
+		"From: <sip:+13125550188@" + local + ">;tag=s1\r\n" +
+		"To: <sip:+14155550100@" + h.bridgeAddr() + ">\r\n" +
+		"Call-ID: stranger-1@" + local + "\r\n" +
+		"CSeq: 1 INVITE\r\n" +
+		"Contact: <sip:+13125550188@" + local + ">\r\n" +
+		"Content-Type: application/sdp\r\n" +
+		"Content-Length: " + strconv.Itoa(len(body)) + "\r\n\r\n" + body
+	if _, err := conn.Write([]byte(invite)); err != nil {
+		t.Fatal(err)
 	}
+	_ = conn.SetReadDeadline(time.Now().Add(1500 * time.Millisecond))
+	buf := make([]byte, 4096)
+	if n, err := conn.Read(buf); err == nil {
+		t.Fatalf("a stranger got an answer: %q", buf[:n])
+	}
+	waitFor(t, "drop counted", 2*time.Second, func() bool { return h.br.Dropped() > 0 })
 }
 
 func TestVendorRouteLabelsStripsAndCarriesCleanCalls(t *testing.T) {
@@ -698,6 +718,42 @@ func TestShutdownHangsUpBothLegs(t *testing.T) {
 		case <-timeout:
 			t.Fatalf("shutdown left a leg up: %v", legs)
 		}
+	}
+}
+
+// A shutdown while the far end rings answers the caller with 503 and
+// cancels the far end, so no leg is left to answer into nothing.
+func TestShutdownCancelsARingingFarEnd(t *testing.T) {
+	h := newHarness(t, options{action: score.ActionChallenge})
+	cancelled := make(chan struct{}, 1)
+	h.sw.onB = func(in *inbound) {
+		_ = in.dlg.Respond(180, "Ringing", nil)
+		<-in.dlg.Context().Done()
+		cancelled <- struct{}{}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := h.sw.call(ctx, h.bridgeAddr(), 30000)
+		result <- err
+	}()
+	<-h.sw.legBs
+	time.Sleep(200 * time.Millisecond)
+	h.cancel()
+	select {
+	case err := <-result:
+		var dr *sipgo.ErrDialogResponse
+		if !errors.As(err, &dr) || dr.Res.StatusCode != 503 {
+			t.Fatalf("caller: want 503, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the caller got no final answer")
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the ringing far end was not cancelled")
 	}
 }
 
