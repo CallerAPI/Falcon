@@ -31,7 +31,17 @@ const (
 	CarryFanout    = "fanout_sample"
 	CarryClean     = "fas_sample"
 	CarryRoute     = "route"
+	CarryEvery     = "all"
 )
+
+// Rules are the runtime settings a plan depends on.
+type Rules struct {
+	Mode        string
+	FanoutEvery int
+	CleanEvery  int
+	// CarryAll carries every call that is not a hard block.
+	CarryAll bool
+}
 
 // Decision is the plan and, for Carry, why.
 type Decision struct {
@@ -57,13 +67,13 @@ type Policy struct {
 
 // Decide reads the real decision, which monitor mode moves into
 // X-Falcon-Monitor, and the route's carry rule.
-func (p *Policy) Decide(res score.Result, mode string, route *store.Route, fanoutEvery, cleanEvery int) Decision {
+func (p *Policy) Decide(res score.Result, rules Rules, route *store.Route) Decision {
 	real := res.Action
 	if held := res.Headers["X-Falcon-Monitor"]; held != "" {
 		real = score.Action(held)
 	}
 	switch {
-	case real == score.ActionReject && mode == config.ModeEnforce:
+	case real == score.ActionReject && rules.Mode == config.ModeEnforce:
 		return Decision{Plan: Reject}
 	case route != nil && route.Carry == store.CarryAll:
 		return Decision{Plan: Carry, Reason: CarryRoute}
@@ -71,10 +81,12 @@ func (p *Policy) Decide(res score.Result, mode string, route *store.Route, fanou
 		return Decision{Plan: Carry, Reason: CarryReject}
 	case real == score.ActionChallenge:
 		return Decision{Plan: Carry, Reason: CarryChallenge}
-	case real == score.ActionFlag && fanoutOnly(res) && p.fanout.take(fanoutEvery):
+	case real == score.ActionFlag && fanoutOnly(res) && p.fanout.take(rules.FanoutEvery):
 		return Decision{Plan: Carry, Reason: CarryFanout}
-	case real == score.ActionAllow && p.clean.take(cleanEvery):
+	case real == score.ActionAllow && p.clean.take(rules.CleanEvery):
 		return Decision{Plan: Carry, Reason: CarryClean}
+	case rules.CarryAll:
+		return Decision{Plan: Carry, Reason: CarryEvery}
 	}
 	return Decision{Plan: Pass}
 }

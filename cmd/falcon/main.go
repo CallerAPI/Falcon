@@ -380,16 +380,20 @@ func startBridge(ctx context.Context, cfg config.Config, api *httpapi.Server, db
 		MaxCalls: cfg.BridgeMaxCalls, MaxDuration: cfg.BridgeMaxDuration, RTPTimeout: cfg.RTPTimeout,
 		ScreenTimeout: cfg.SIPTimeout, RecordingsDir: dir, RecordMax: cfg.RecordMaxSeconds,
 		FASHold: cfg.FASHold, FASMaxRingback: cfg.FASMaxRingback, PassStatus: 503,
-		Version: version, InstallID: api.InstallID,
+		Direction: cfg.SIPDirection, Version: version, InstallID: api.InstallID,
 	}, api, api, api, db)
 	if err != nil {
 		log.Fatalf("falcon bridge: %v", err)
 	}
 	api.Media = br
+	carry := "503 pass / bridge suspicious calls"
+	if api.CarryAll(ctx) {
+		carry = "carries every call that is not a hard block"
+	}
 	go func() {
 		defer close(done)
-		log.Printf("falcon sip bridge listening on %s (udp+tcp, peers=%d, rtp %d-%d, 503 pass / bridge suspicious calls, recordings %s, fas %s)",
-			cfg.SIPListen, len(peers), cfg.RTPPortMin, cfg.RTPPortMax, dir, api.FASMode(ctx))
+		log.Printf("falcon sip bridge listening on %s (udp+tcp, peers=%d, rtp %d-%d, %s, %s calls, recordings %s, fas %s)",
+			cfg.SIPListen, len(peers), cfg.RTPPortMin, cfg.RTPPortMax, carry, cfg.SIPDirection, dir, api.FASMode(ctx))
 		_ = br.Serve(ctx)
 	}()
 }

@@ -68,6 +68,7 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 	res, err := s.screen.Screen(sctx, httpapi.ScreenRequest{
 		RawSIP: req.String(), SourceIP: sourceIP(req, peer), SourcePort: int(peer.Port()),
 		Switch: "sip/" + peer.Addr().Unmap().String(), Received: received,
+		Direction: s.cfg.Direction, Customer: customerOf(req),
 	})
 	cancel()
 	if err != nil {
@@ -75,7 +76,7 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 	}
 	route := s.routes.match(req.Recipient.User)
 	fanoutEvery, cleanEvery := s.ctl.Sampling(base)
-	d := s.policy.Decide(res, s.ctl.Mode(base), route, fanoutEvery, cleanEvery)
+	d := s.policy.Decide(res, Rules{Mode: s.ctl.Mode(base), FanoutEvery: fanoutEvery, CleanEvery: cleanEvery, CarryAll: s.ctl.CarryAll(base)}, route)
 	switch d.Plan {
 	case Reject:
 		status, reason := res.SIPStatus, res.SIPReason
@@ -799,6 +800,20 @@ func (t fasTap) Audio(side media.Side, _, _ uint32, pcm []int16, at time.Time) {
 	if side == media.SideB {
 		t.det.Feed(pcm, at)
 	}
+}
+
+// customerOf is the account the switch names in X-Falcon-Customer, for the
+// outbound checks. Most switches can add a header to a carrier route.
+func customerOf(req *sip.Request) string {
+	h := req.GetHeader("X-Falcon-Customer")
+	if h == nil {
+		return ""
+	}
+	v := strings.TrimSpace(h.Value())
+	if len(v) > 64 {
+		v = v[:64]
+	}
+	return v
 }
 
 // sourceIP is the address the switch reports: X-Source-IP, else the hop

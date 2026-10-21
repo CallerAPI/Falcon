@@ -29,9 +29,14 @@ type fakeScreen struct {
 	db     *store.SQLite
 	action score.Action
 	held   string
+	mu     sync.Mutex
+	last   httpapi.ScreenRequest
 }
 
 func (f *fakeScreen) Screen(ctx context.Context, req httpapi.ScreenRequest) (score.Result, error) {
+	f.mu.Lock()
+	f.last = req
+	f.mu.Unlock()
 	callID := ""
 	for _, line := range strings.Split(req.RawSIP, "\n") {
 		if name, val, ok := strings.Cut(line, ":"); ok && strings.EqualFold(strings.TrimSpace(name), "call-id") {
@@ -52,11 +57,13 @@ func (f *fakeScreen) Screen(ctx context.Context, req httpapi.ScreenRequest) (sco
 
 type fakeControls struct {
 	mode, fasMode string
+	carryAll      bool
 }
 
 func (c fakeControls) Mode(context.Context) string         { return c.mode }
 func (c fakeControls) FASMode(context.Context) string      { return c.fasMode }
 func (c fakeControls) Sampling(context.Context) (int, int) { return 0, 0 }
+func (c fakeControls) CarryAll(context.Context) bool       { return c.carryAll }
 
 type captureSink struct {
 	mu   sync.Mutex
@@ -88,6 +95,8 @@ type options struct {
 	fasMode    string
 	rtpTimeout time.Duration
 	peers      []netip.Prefix
+	carryAll   bool
+	direction  string
 }
 
 var portBase = 43000
@@ -119,8 +128,8 @@ func newHarness(t *testing.T, o options) *harness {
 		RTPPortMin: portBase, RTPPortMax: portBase + 199, MaxCalls: 20,
 		MaxDuration: time.Hour, RTPTimeout: o.rtpTimeout, ScreenTimeout: time.Second,
 		RecordingsDir: h.dir, RecordMax: 120, FASHold: 1500 * time.Millisecond, FASMaxRingback: 2 * time.Second,
-		PassStatus: 503, Version: "test", InstallID: "0123456789abcdef",
-	}, h.screen, fakeControls{mode: o.mode, fasMode: o.fasMode}, h.sink, db)
+		PassStatus: 503, Direction: o.direction, Version: "test", InstallID: "0123456789abcdef",
+	}, h.screen, fakeControls{mode: o.mode, fasMode: o.fasMode, carryAll: o.carryAll}, h.sink, db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -880,5 +889,56 @@ func TestFASEnforcePassesARealAnswerWhenThePersonSpeaks(t *testing.T) {
 	waitFor(t, "row", 5*time.Second, func() bool { return h.mediaRow(callID).EndMS > 0 })
 	if row := h.mediaRow(callID); row.FAS != "" || row.Status != 200 {
 		t.Fatalf("row %+v", row)
+	}
+}
+
+// In PBX mode a clean call is carried, not passed back with 503, and the
+// bridge tells the screen the direction it was set up with.
+func TestBridgeCarriesEveryCallWhenCarryAllIsOn(t *testing.T) {
+	h := newHarness(t, options{action: score.ActionAllow, carryAll: true, direction: "outbound"})
+	caller, callee := newEndpoint(t), newEndpoint(t)
+	h.sw.onB = answerWith(callee.port(), true)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	dlgA, codes, err := h.sw.call(ctx, h.bridgeAddr(), caller.port())
+	if err != nil {
+		t.Fatalf("a clean call must be carried: %v (codes %v)", err, codes)
+	}
+	_ = dlgA.Ack(ctx)
+	select {
+	case <-h.sw.legBs:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no leg B for a clean call")
+	}
+	_ = dlgA.Bye(ctx)
+	callID := callIDOf(dlgA.InviteRequest)
+	waitFor(t, "row", 5*time.Second, func() bool { return h.mediaRow(callID).Carry == CarryEvery })
+	h.screen.mu.Lock()
+	dir := h.screen.last.Direction
+	h.screen.mu.Unlock()
+	if dir != "outbound" {
+		t.Fatalf("direction %q", dir)
+	}
+}
+
+func TestBridgeStillRejectsHardBlocksWhenCarryAllIsOn(t *testing.T) {
+	h := newHarness(t, options{action: score.ActionReject, carryAll: true})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _, err := h.sw.call(ctx, h.bridgeAddr(), 30000)
+	var dr *sipgo.ErrDialogResponse
+	if !errors.As(err, &dr) || dr.Res.StatusCode != 603 {
+		t.Fatalf("want 603, got %v", err)
+	}
+}
+
+func TestCustomerOfReadsTheSwitchHeader(t *testing.T) {
+	req := sip.NewRequest(sip.INVITE, sip.Uri{User: "+14155550100", Host: "127.0.0.1"})
+	if got := customerOf(req); got != "" {
+		t.Fatalf("no header gave %q", got)
+	}
+	req.AppendHeader(sip.NewHeader("X-Falcon-Customer", "  acme-wholesale "))
+	if got := customerOf(req); got != "acme-wholesale" {
+		t.Fatalf("customer %q", got)
 	}
 }

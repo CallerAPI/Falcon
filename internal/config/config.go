@@ -184,6 +184,14 @@ type Config struct {
 	// FAS guard hears normal routes too. Zero turns either off.
 	BridgeFanoutEvery int
 	BridgeCleanEvery  int
+	// BridgeCarry is suspicious or all. Suspicious carries the calls worth
+	// hearing and answers 503 to the rest. All carries every call that is
+	// not a hard block, so Falcon is in the audio of every call, like a
+	// PBX. Editable at runtime.
+	BridgeCarry string
+	// SIPDirection is inbound or outbound for every call the bridge
+	// screens. Outbound is traffic the operator's own customers place.
+	SIPDirection string
 	// RecordingsDir holds the call recordings. Empty is a recordings
 	// folder next to the database. RecordMaxSeconds caps one recording.
 	// RecordingRetentionDays is the default window, editable at runtime.
@@ -229,6 +237,12 @@ const (
 
 	SIPRedirect = "redirect"
 	SIPBridge   = "bridge"
+
+	CarrySuspicious = "suspicious"
+	CarryAll        = "all"
+
+	DirectionInbound  = "inbound"
+	DirectionOutbound = "outbound"
 
 	FASOff     = "off"
 	FASMonitor = "monitor"
@@ -351,6 +365,8 @@ func Load() Config {
 		RTPTimeout:             envDuration("FALCON_RTP_TIMEOUT", 30*time.Second),
 		BridgeFanoutEvery:      envInt("FALCON_BRIDGE_FANOUT_EVERY", 20),
 		BridgeCleanEvery:       envInt("FALCON_BRIDGE_CLEAN_EVERY", 0),
+		BridgeCarry:            strings.ToLower(env("FALCON_BRIDGE_CARRY", CarrySuspicious)),
+		SIPDirection:           strings.ToLower(env("FALCON_SIP_DIRECTION", DirectionInbound)),
 		RecordingsDir:          env("FALCON_RECORDINGS_DIR", ""),
 		RecordMaxSeconds:       envInt("FALCON_RECORD_MAX_SECONDS", 1800),
 		RecordingRetentionDays: envInt("FALCON_RECORDING_RETENTION_DAYS", 7),
@@ -446,6 +462,12 @@ func (c Config) Validate() error {
 	if c.FCCMode != ModeMonitor && c.FCCMode != ModeEnforce {
 		return fmt.Errorf("FALCON_FCC_MODE must be monitor or enforce, got %q", c.FCCMode)
 	}
+	if c.BridgeCarry != CarrySuspicious && c.BridgeCarry != CarryAll {
+		return fmt.Errorf("FALCON_BRIDGE_CARRY must be suspicious or all, got %q", c.BridgeCarry)
+	}
+	if c.SIPDirection != DirectionInbound && c.SIPDirection != DirectionOutbound {
+		return fmt.Errorf("FALCON_SIP_DIRECTION must be inbound or outbound, got %q", c.SIPDirection)
+	}
 	if c.BridgeEnabled() {
 		if c.RTPPortMin < 1024 || c.RTPPortMax > 65534 || c.RTPPortMax-c.RTPPortMin < 8 {
 			return fmt.Errorf("FALCON_RTP_PORT_MIN and FALCON_RTP_PORT_MAX must span at least 8 ports between 1024 and 65534")
@@ -507,7 +529,7 @@ func (c Config) Redacted() map[string]any {
 		"sip":            map[string]any{"enabled": c.SIPEnabled(), "mode": c.SIPMode, "listen": c.SIPListen, "peers": c.SIPPeers, "redirect_host": c.SIPRedirectHost, "timeout": c.SIPTimeout.String()},
 		"bridge": map[string]any{"enabled": c.BridgeEnabled(), "media_ip": c.MediaIP, "rtp_ports": fmt.Sprintf("%d-%d", c.RTPPortMin, c.RTPPortMax),
 			"max_calls": c.BridgeMaxCalls, "max_duration": c.BridgeMaxDuration.String(), "rtp_timeout": c.RTPTimeout.String(),
-			"fanout_every": c.BridgeFanoutEvery, "clean_every": c.BridgeCleanEvery, "recordings": c.RecordingsPath(), "record_max_seconds": c.RecordMaxSeconds},
+			"fanout_every": c.BridgeFanoutEvery, "clean_every": c.BridgeCleanEvery, "carry": c.BridgeCarry, "direction": c.SIPDirection, "recordings": c.RecordingsPath(), "record_max_seconds": c.RecordMaxSeconds},
 		"fas": map[string]any{"mode": c.FASMode, "hold": c.FASHold.String(), "max_ringback": c.FASMaxRingback.String()},
 		"fcc": map[string]any{"enabled": c.FCC, "mode": c.FCCMode, "refresh": c.FCCRefresh.String(), "file": c.FCCFile},
 	}

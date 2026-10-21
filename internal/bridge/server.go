@@ -47,6 +47,7 @@ type Controls interface {
 	Mode(ctx context.Context) string
 	FASMode(ctx context.Context) string
 	Sampling(ctx context.Context) (fanoutEvery, cleanEvery int)
+	CarryAll(ctx context.Context) bool
 }
 
 // Sink takes a finished recording into the voice pipeline.
@@ -82,8 +83,10 @@ type Config struct {
 	// PassStatus is the answer to a call Falcon does not carry. 503 makes
 	// every switch move to the next vendor.
 	PassStatus int
-	Version    string
-	InstallID  string
+	// Direction is inbound or outbound for every call screened here.
+	Direction string
+	Version   string
+	InstallID string
 }
 
 // Server is the bridge.

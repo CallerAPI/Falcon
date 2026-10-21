@@ -123,3 +123,20 @@ func TestScrubKeepsDecisionAndDropsRawSIP(t *testing.T) {
 		t.Fatalf("second scrub touched %d rows", n)
 	}
 }
+
+func TestBridgeCarryChangesAtRuntime(t *testing.T) {
+	srv, _ := newTestServer(t)
+	ctx := context.Background()
+	if srv.CarryAll(ctx) {
+		t.Fatal("the default must carry suspicious calls only")
+	}
+	if w := do(t, srv, http.MethodPut, "/v1/settings", map[string]string{"bridge_carry": "all"}); w.Code != 200 {
+		t.Fatalf("put: %d %s", w.Code, w.Body.String())
+	}
+	if !srv.CarryAll(ctx) {
+		t.Fatal("bridge_carry all did not stick")
+	}
+	if w := do(t, srv, http.MethodPut, "/v1/settings", map[string]string{"bridge_carry": "everything"}); w.Code != http.StatusBadRequest {
+		t.Fatalf("bad carry accepted: %d", w.Code)
+	}
+}

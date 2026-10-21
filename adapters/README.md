@@ -234,6 +234,11 @@ What the switch gets back:
 | `reject` in enforce mode | `603 Decline` |
 | `challenge`, or `reject` in monitor mode | Falcon sends the call back to the switch as the customer and relays the answer, the audio, and the hangup |
 | A call the bridge cannot carry | `503`, with `X-Falcon-Bridge` naming why, for example `full` or `no-sdp` |
+| Any call that is not a hard block, with `FALCON_BRIDGE_CARRY=all` | Falcon carries it like a PBX and records it |
+
+For calls your own customers place, set `FALCON_SIP_DIRECTION=outbound`.
+To have Falcon check the caller ID against a customer's number list, add
+`X-Falcon-Customer: <account id>` on the carrier route to Falcon.
 
 The bridge relays ringing and early media. It answers the caller only
 after the far end answers. A hangup on either side ends both legs. A call

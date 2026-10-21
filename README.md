@@ -478,6 +478,20 @@ What Falcon does with each INVITE:
 | Flag from `caller_fanout` | One call in `FALCON_BRIDGE_FANOUT_EVERY` (20) is carried and recorded. The rest get `503` |
 | Allow | One call in `FALCON_BRIDGE_CLEAN_EVERY` (0, off) is carried, so the FAS guard also checks ordinary traffic |
 
+Every call, like a PBX: `FALCON_BRIDGE_CARRY=all` (or Settings, Call
+bridge, Carry: Every call) carries every call that is not a hard block.
+Falcon hears, records, and checks the answer of each one. A hard block in
+enforce mode still gets `603`. This puts Falcon in the audio of all
+traffic, so size `FALCON_BRIDGE_MAX_CALLS` and the RTP ports for your peak.
+Past the capacity a call gets `503` and the switch routes it as before. A
+call Falcon carries ends if Falcon stops.
+
+Direction: `FALCON_SIP_DIRECTION=outbound` marks every call the bridge
+screens as placed by your own customers. The switch can name the customer
+in an `X-Falcon-Customer` header on the carrier route. Falcon then checks
+the caller ID against the numbers listed for that customer and rejects one
+the customer does not own.
+
 The bridge does not create FAS of its own:
 
 - It never answers the caller before the far end answers. Ringing and early

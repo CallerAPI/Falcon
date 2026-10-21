@@ -25,6 +25,7 @@ type Settings struct {
 	RecordingRetentionDays int    `json:"recording_retention_days"`
 	BridgeFanoutEvery      int    `json:"bridge_fanout_every"`
 	BridgeCleanEvery       int    `json:"bridge_clean_every"`
+	BridgeCarry            string `json:"bridge_carry"`
 	FlagScore              int    `json:"flag_score"`
 	ChallengeScore         int    `json:"challenge_score"`
 	RejectScore            int    `json:"reject_score"`
@@ -39,6 +40,7 @@ const (
 	kvRecRetention = "recording_retention_days"
 	kvFanoutEvery  = "bridge_fanout_every"
 	kvCleanEvery   = "bridge_clean_every"
+	kvBridgeCarry  = "bridge_carry"
 	kvFlagScore    = "threshold_flag"
 	kvChallenge    = "threshold_challenge"
 	kvRejectScore  = "threshold_reject"
@@ -51,7 +53,7 @@ func (s *Server) defaults() Settings {
 	out := Settings{
 		Mode: s.Cfg.Mode, FASMode: s.Cfg.FASMode, FCCMode: s.Cfg.FCCMode,
 		RetentionDays: s.Cfg.RetentionDays, RawSIPRetentionDays: s.Cfg.RawSIPRetentionDays, RecordingRetentionDays: s.Cfg.RecordingRetentionDays,
-		BridgeFanoutEvery: s.Cfg.BridgeFanoutEvery, BridgeCleanEvery: s.Cfg.BridgeCleanEvery,
+		BridgeFanoutEvery: s.Cfg.BridgeFanoutEvery, BridgeCleanEvery: s.Cfg.BridgeCleanEvery, BridgeCarry: s.Cfg.BridgeCarry,
 		FlagScore: s.Cfg.FlagScore, ChallengeScore: s.Cfg.ChallengeScore, RejectScore: s.Cfg.RejectScore,
 	}
 	if out.Mode == "" {
@@ -62,6 +64,9 @@ func (s *Server) defaults() Settings {
 	}
 	if out.FCCMode == "" {
 		out.FCCMode = config.ModeMonitor
+	}
+	if out.BridgeCarry == "" {
+		out.BridgeCarry = config.CarrySuspicious
 	}
 	if out.FlagScore == 0 && out.ChallengeScore == 0 && out.RejectScore == 0 && s.Engine != nil {
 		th := s.Engine.Thresholds()
@@ -111,6 +116,9 @@ func (s *Server) loadSettings(ctx context.Context) Settings {
 	if v, _ := s.Store.KVGet(ctx, kvFCCMode); v == config.ModeMonitor || v == config.ModeEnforce {
 		out.FCCMode = v
 	}
+	if v, _ := s.Store.KVGet(ctx, kvBridgeCarry); v == config.CarrySuspicious || v == config.CarryAll {
+		out.BridgeCarry = v
+	}
 	for _, kv := range []struct {
 		key  string
 		into *int
@@ -148,6 +156,12 @@ func (s *Server) FASMode(ctx context.Context) string { return s.Settings(ctx).FA
 
 // FCCMode is monitor or enforce right now.
 func (s *Server) FCCMode(ctx context.Context) string { return s.Settings(ctx).FCCMode }
+
+// CarryAll reports whether the bridge carries every call that is not a
+// hard block.
+func (s *Server) CarryAll(ctx context.Context) bool {
+	return s.Settings(ctx).BridgeCarry == config.CarryAll
+}
 
 // Sampling is how often the bridge carries a fan-out call and a clean call.
 func (s *Server) Sampling(ctx context.Context) (fanoutEvery, cleanEvery int) {
@@ -190,6 +204,7 @@ type settingsPatch struct {
 	RecordingRetentionDays *int    `json:"recording_retention_days"`
 	BridgeFanoutEvery      *int    `json:"bridge_fanout_every"`
 	BridgeCleanEvery       *int    `json:"bridge_clean_every"`
+	BridgeCarry            *string `json:"bridge_carry"`
 	FlagScore              *int    `json:"flag_score"`
 	ChallengeScore         *int    `json:"challenge_score"`
 	RejectScore            *int    `json:"reject_score"`
@@ -204,6 +219,9 @@ func (p settingsPatch) apply(cur *Settings) {
 	}
 	if p.FCCMode != nil {
 		cur.FCCMode = *p.FCCMode
+	}
+	if p.BridgeCarry != nil {
+		cur.BridgeCarry = *p.BridgeCarry
 	}
 	for _, f := range []struct {
 		in  *int
@@ -228,6 +246,8 @@ func validSettings(cur Settings) string {
 		return "fas_mode must be off, monitor, or enforce"
 	case cur.FCCMode != config.ModeMonitor && cur.FCCMode != config.ModeEnforce:
 		return "fcc_mode must be monitor or enforce"
+	case cur.BridgeCarry != config.CarrySuspicious && cur.BridgeCarry != config.CarryAll:
+		return "bridge_carry must be suspicious or all"
 	case cur.RetentionDays < 1 || cur.RetentionDays > maxRetention:
 		return "retention_days must be between 1 and 3650"
 	case cur.RawSIPRetentionDays < 0 || cur.RawSIPRetentionDays > cur.RetentionDays:
@@ -268,7 +288,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			kvMode: cur.Mode, kvFASMode: cur.FASMode, kvFCCMode: cur.FCCMode,
 			kvRetention: strconv.Itoa(cur.RetentionDays), kvRawRetention: strconv.Itoa(cur.RawSIPRetentionDays),
 			kvRecRetention: strconv.Itoa(cur.RecordingRetentionDays),
-			kvFanoutEvery:  strconv.Itoa(cur.BridgeFanoutEvery), kvCleanEvery: strconv.Itoa(cur.BridgeCleanEvery),
+			kvFanoutEvery:  strconv.Itoa(cur.BridgeFanoutEvery), kvCleanEvery: strconv.Itoa(cur.BridgeCleanEvery), kvBridgeCarry: cur.BridgeCarry,
 			kvFlagScore: strconv.Itoa(cur.FlagScore), kvChallenge: strconv.Itoa(cur.ChallengeScore), kvRejectScore: strconv.Itoa(cur.RejectScore),
 		}
 		for k, v := range pairs {

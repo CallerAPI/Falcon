@@ -4,6 +4,16 @@
 
 Added
 
+- Every-call mode for the bridge. `FALCON_BRIDGE_CARRY=all`, or Settings,
+  Call bridge, Carry: Every call, carries every call that is not a hard
+  block, like a PBX. Falcon hears and records each one. A hard block in
+  enforce mode still gets 603. Past the bridge capacity, a call gets 503
+  and the switch routes it as before.
+- `FALCON_SIP_DIRECTION=outbound` marks the calls the bridge screens as
+  placed by your own customers. An `X-Falcon-Customer` header from the
+  switch names the customer, so the caller ID check against that
+  customer's numbers applies to bridged calls.
+
 - Call bridge. `FALCON_SIP_MODE=bridge` makes the SIP listener a native
   back-to-back user agent. Add Falcon to the switch as a carrier and as a
   customer. A clean call gets 503 before any answer, so the switch routes
