@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"math/rand/v2"
 	"time"
 
+	"github.com/callerapi/falcon/internal/share"
 	"github.com/callerapi/falcon/internal/store"
 )
 
@@ -19,6 +21,9 @@ type Queue struct {
 	CallerAPI      *CallerAPI
 	CallerAPIReady func(context.Context) bool
 	Interval       time.Duration
+	// CleanEvery sends one clean inbound call in N in full as a sample.
+	// Zero sends none. Every clean call is counted in the hourly rollup.
+	CleanEvery int
 
 	apiFailures int
 	// pauseUntil holds the next CallerAPI attempt after a failure.
@@ -35,6 +40,18 @@ const (
 	maxBatchesPerTick = 50
 	maxBackoff        = 15 * time.Minute
 	defaultInterval   = 30 * time.Second
+)
+
+// An hour of clean calls is sent once, rollupDelay after it ends, so the
+// outcomes of calls that ended late are in. A caller needs minCallerCalls
+// clean calls in the hour to get its own row. CallerAPI takes at most
+// maxRollupsPerPost rows in one post and keeps 7 days.
+const (
+	rollupDelay       = 10 * time.Minute
+	minCallerCalls    = 3
+	maxRollupsPerPost = 5000
+	rollupMaxAge      = 7 * 24 * time.Hour
+	kvRollupNext      = "telemetry_rollup_next"
 )
 
 func (q *Queue) Run(ctx context.Context) {
@@ -55,8 +72,10 @@ func (q *Queue) Run(ctx context.Context) {
 }
 
 // drain flushes until the backlog is below one batch or the per-tick cap
-// is reached. A failed flush stops the tick; the next one retries.
+// is reached, then sends the hours of clean calls that are ready. A failed
+// post stops the tick; the next one retries.
 func (q *Queue) drain(ctx context.Context) {
+	defer q.sendRollups(ctx)
 	for i := 0; i < maxBatchesPerTick; i++ {
 		if n := q.flush(ctx); n < batchSize {
 			return
@@ -99,21 +118,12 @@ func (q *Queue) flush(ctx context.Context) int {
 				events[i].VoiceCategory, events[i].VoiceScore = v.Category, v.Score
 			}
 		}
-		if err := q.CallerAPI.Ingest(ctx, events); err != nil {
-			q.apiFailures++
-			wait := q.backoff(err)
-			q.pauseUntil = q.clock().Add(wait)
-			// An offline or air-gapped install would otherwise write this
-			// line on every attempt for the life of the process.
-			if q.apiFailures == 1 || q.apiFailures%20 == 0 {
-				log.Printf("falcon telemetry: %v (%d attempts, %d events in this batch, next attempt in %s)", err, q.apiFailures, len(events), wait.Round(time.Second))
-			}
+		b := q.classify(events)
+		if err := q.CallerAPI.Send(ctx, b); err != nil {
+			q.fail(err, fmt.Sprintf("%d events in this batch", len(b.Events)))
 			return 0
 		}
-		if q.apiFailures > 0 {
-			log.Printf("falcon telemetry: reachable again after %d attempts", q.apiFailures)
-			q.apiFailures = 0
-		}
+		q.recovered()
 	}
 	ids := make([]int64, len(events))
 	for i, ev := range events {
@@ -124,6 +134,97 @@ func (q *Queue) flush(ctx context.Context) int {
 		return 0
 	}
 	return len(events)
+}
+
+// classify keeps each call with a signal as an evidence row and one clean
+// inbound call in CleanEvery as a sample. The other clean calls travel in
+// the hourly rollup. A clean outbound call is never sent.
+func (q *Queue) classify(events []store.Event) Batch {
+	var b Batch
+	for _, ev := range events {
+		switch {
+		case share.Evidence(ev):
+			b.Events, b.Kinds = append(b.Events, ev), append(b.Kinds, share.KindEvidence)
+		case q.CleanEvery > 0 && ev.Direction != "outbound" && ev.ID%int64(q.CleanEvery) == 0:
+			b.Events, b.Kinds = append(b.Events, ev), append(b.Kinds, share.KindSample)
+		}
+	}
+	return b
+}
+
+// sendRollups sends every hour of clean calls that is ready and not sent.
+// A resent hour replaces the stored one, so a failure only means a retry.
+func (q *Queue) sendRollups(ctx context.Context) {
+	if q.CallerAPI == nil || !q.CallerAPI.Enabled() || (q.CallerAPIReady != nil && !q.CallerAPIReady(ctx)) || q.clock().Before(q.pauseUntil) {
+		return
+	}
+	now := q.clock().UTC()
+	ready := now.Add(-time.Hour - rollupDelay).Truncate(time.Hour)
+	next := ready
+	if v, _ := q.Store.KVGet(ctx, kvRollupNext); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			next = t.UTC()
+		}
+	}
+	if floor := now.Add(-rollupMaxAge).Truncate(time.Hour).Add(time.Hour); next.Before(floor) {
+		next = floor
+	}
+	for !next.After(ready) {
+		rows, err := q.Store.CleanRollups(ctx, next, next.Add(time.Hour), minCallerCalls)
+		if err != nil {
+			log.Printf("falcon telemetry: rollup %s: %v", next.Format(time.RFC3339), err)
+			return
+		}
+		wire := wireRollups(next, rows)
+		for start := 0; start < len(wire); start += maxRollupsPerPost {
+			if err := q.CallerAPI.Send(ctx, Batch{Rollups: wire[start:min(start+maxRollupsPerPost, len(wire))]}); err != nil {
+				q.fail(err, "rollup of "+next.Format("2006-01-02 15:00"))
+				return
+			}
+		}
+		q.recovered()
+		next = next.Add(time.Hour)
+		if err := q.Store.KVSet(ctx, kvRollupNext, next.Format(time.RFC3339)); err != nil {
+			log.Printf("falcon telemetry: rollup mark: %v", err)
+			return
+		}
+	}
+}
+
+func wireRollups(hour time.Time, rows []store.RollupRow) []share.Rollup {
+	out := make([]share.Rollup, 0, len(rows))
+	stamp := func(t time.Time) string {
+		if t.IsZero() {
+			return ""
+		}
+		return t.UTC().Format(time.RFC3339)
+	}
+	for _, r := range rows {
+		out = append(out, share.Rollup{
+			Hour: hour.UTC().Format(time.RFC3339), Dim: r.Dim, Key: r.Key, Label: share.SafeLabel(r.Label), SPC: r.SPC, Fingerprint: r.Fingerprint,
+			Calls: r.Calls, Verified: r.Verified, Completed: r.Completed, Answered: r.Answered, TalkSeconds: r.TalkSeconds, Callees: r.Callees,
+			FirstSeen: stamp(r.FirstSeen), LastSeen: stamp(r.LastSeen),
+		})
+	}
+	return out
+}
+
+// fail pauses CallerAPI posts. An offline or air-gapped install would
+// otherwise log on every attempt for the life of the process.
+func (q *Queue) fail(err error, what string) {
+	q.apiFailures++
+	wait := q.backoff(err)
+	q.pauseUntil = q.clock().Add(wait)
+	if q.apiFailures == 1 || q.apiFailures%20 == 0 {
+		log.Printf("falcon telemetry: %v (%d attempts, %s, next attempt in %s)", err, q.apiFailures, what, wait.Round(time.Second))
+	}
+}
+
+func (q *Queue) recovered() {
+	if q.apiFailures > 0 {
+		log.Printf("falcon telemetry: reachable again after %d attempts", q.apiFailures)
+		q.apiFailures = 0
+	}
 }
 
 // backoff is the wait before the next CallerAPI attempt. A Retry-After from

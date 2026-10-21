@@ -33,9 +33,17 @@ type CallerAPI struct {
 }
 
 type telemetryRequest struct {
-	InstallID string        `json:"install_id"`
-	Version   string        `json:"version"`
-	Events    []share.Event `json:"events"`
+	InstallID string         `json:"install_id"`
+	Version   string         `json:"version"`
+	Events    []share.Event  `json:"events"`
+	Rollups   []share.Rollup `json:"rollups,omitempty"`
+}
+
+// Batch is one telemetry post. Kinds runs parallel to Events.
+type Batch struct {
+	Events  []store.Event
+	Kinds   []string
+	Rollups []share.Rollup
 }
 
 func (c *CallerAPI) Enabled() bool {
@@ -45,13 +53,18 @@ func (c *CallerAPI) Enabled() bool {
 // Endpoint is the telemetry path relative to BaseURL.
 const Endpoint = "/api/falcon/v1/telemetry"
 
-func (c *CallerAPI) Ingest(ctx context.Context, events []store.Event) error {
-	if !c.Enabled() || len(events) == 0 {
+// Send redacts the events and posts them with the rollups.
+func (c *CallerAPI) Send(ctx context.Context, b Batch) error {
+	if !c.Enabled() || (len(b.Events) == 0 && len(b.Rollups) == 0) {
 		return nil
 	}
-	payload := telemetryRequest{InstallID: c.InstallID, Version: c.Version}
-	for _, ev := range events {
-		payload.Events = append(payload.Events, share.Redact(ev, c.HMACKey))
+	payload := telemetryRequest{InstallID: c.InstallID, Version: c.Version, Events: []share.Event{}, Rollups: b.Rollups}
+	for i, ev := range b.Events {
+		out := share.Redact(ev, c.HMACKey)
+		if i < len(b.Kinds) {
+			out.Kind = b.Kinds[i]
+		}
+		payload.Events = append(payload.Events, out)
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

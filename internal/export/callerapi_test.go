@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/callerapi/falcon/internal/score"
+	"github.com/callerapi/falcon/internal/share"
 	"github.com/callerapi/falcon/internal/store"
 )
 
@@ -34,7 +35,7 @@ func TestCallerAPITelemetryIsRedactedAndKeyless(t *testing.T) {
 		CallID:     "abc",
 		RawSIP:     "INVITE sip:+14155550123@x SIP/2.0\r\nTo: <sip:+14155550123@x>\r\nFrom: <sip:+13125550188@y>\r\n\r\nv=0\r\n",
 	}
-	if err := c.Ingest(context.Background(), []store.Event{ev}); err != nil {
+	if err := c.Send(context.Background(), Batch{Events: []store.Event{ev}, Kinds: []string{share.KindEvidence}}); err != nil {
 		t.Fatal(err)
 	}
 	if gotPath != Endpoint {
@@ -53,12 +54,12 @@ func TestCallerAPITelemetryIsRedactedAndKeyless(t *testing.T) {
 	if req.InstallID != "inst" || req.Version != "0.9.0" || len(req.Events) != 1 {
 		t.Fatalf("envelope: %+v", req)
 	}
-	if req.Events[0].To != "REDACTED" || req.Events[0].ToHMAC == "" || req.Events[0].From != "+13125550188" {
+	if req.Events[0].To != "REDACTED" || req.Events[0].ToHMAC == "" || req.Events[0].From != "+13125550188" || req.Events[0].Kind != share.KindEvidence {
 		t.Fatalf("event: %+v", req.Events[0])
 	}
 
 	c.APIKey = "k"
-	_ = c.Ingest(context.Background(), []store.Event{ev})
+	_ = c.Send(context.Background(), Batch{Events: []store.Event{ev}})
 	if gotAuth != "k" {
 		t.Fatalf("X-Auth with key = %q", gotAuth)
 	}

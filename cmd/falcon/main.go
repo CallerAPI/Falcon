@@ -170,6 +170,7 @@ func main() {
 			Prefix:    cfg.S3Prefix + "/" + installID,
 		},
 		CallerAPIReady: api.Sharing,
+		CleanEvery:     cfg.ShareCleanEvery,
 	}
 	installKey, err := identity.Load(ctx, db, installID)
 	if err != nil {

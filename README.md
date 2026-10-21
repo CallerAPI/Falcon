@@ -60,7 +60,9 @@ default. Every install that shares makes detection better for every other
 install, and it is how a free engine stays maintained. If you would rather
 not, one flag turns it off and nothing leaves the host.
 
-What is sent, every 30 seconds, in batches of up to 100:
+A call with a signal travels as an event, every 30 seconds, in batches of up
+to 100. A signal is a decision other than allow, a honeypot hit, a failed
+verification, or a voice category. An event carries:
 
 | Field | Sent |
 | --- | --- |
@@ -70,6 +72,15 @@ What is sent, every 30 seconds, in batches of up to 100:
 | Signer SPC and name, verification result | Yes |
 | SIP request line and headers | Yes, after redaction below |
 | Install id, Falcon version | Yes |
+
+A clean inbound call travels as a count. Once an hour Falcon sends the
+clean calls of the hour before, per verified signer, per sending tool, per
+calling number with 3 or more calls, and for the whole install: calls,
+verified calls, answered calls, and talk time. A calling number also gets
+the count of different numbers it called in 24 hours. The called numbers
+stay here. One clean call in 20 also travels as a full event, for header
+analytics (`FALCON_SHARE_CLEAN_EVERY`, 0 sends none). A clean outbound
+call is never sent, and neither is a caller that shows the called number.
 
 What is never sent:
 

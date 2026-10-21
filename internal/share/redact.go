@@ -25,7 +25,9 @@ const Redacted = "REDACTED"
 type Event struct {
 	// EventID is the local event id. CallerAPI stores an event once per
 	// install and id, so a resent batch is not counted twice.
-	EventID    int64  `json:"event_id,omitempty"`
+	EventID int64 `json:"event_id,omitempty"`
+	// Kind is KindEvidence or KindSample.
+	Kind       string `json:"kind,omitempty"`
 	ReceivedAt string `json:"received_at"`
 	Action     string `json:"action"`
 	RiskScore  int    `json:"risk_score"`

@@ -73,6 +73,12 @@ Changed
 - Telemetry waits as long as CallerAPI asks with `Retry-After`. After a
   failure with no `Retry-After`, the wait doubles from 30 seconds up to 15
   minutes, with jitter. Before, an install retried every 30 seconds.
+- Telemetry sends less. A call with a signal is still an event. A clean
+  inbound call is counted once an hour per verified signer, sending tool,
+  calling number with 3 or more calls, and install. One clean call in 20 is
+  still sent in full as a sample (`FALCON_SHARE_CLEAN_EVERY`). A clean
+  outbound call is never sent. On a carrier ingress most calls are clean,
+  so most of the traffic is gone.
 
 Removed
 
