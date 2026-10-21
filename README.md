@@ -103,6 +103,21 @@ What it is worth:
 - Each install makes every score sharper for the others. The more installs
   share, the fewer calls a campaign gets through before the network names it.
 
+How the network stays honest:
+
+- **Reporters, not installs.** All installs on one CallerAPI account count
+  as one reporter. An install without an account counts after 7 days, and
+  all such installs on one /24 count as one. An install on a key counts
+  from its first call.
+- **The middle opinion wins.** A signer or tool score is the median of the
+  reporters' own rates. A minority of reporters can not move it, whatever
+  volume they claim.
+- **Two accounts for a hard block.** A signer score high enough to block in
+  enforce mode needs two CallerAPI accounts that agree.
+- **Two reporters for a spam listing.** Telemetry adds a number to the
+  CallerAPI spam database only when two reporters saw it, and one of them
+  is on an account. Your deny list never lists a number for anyone else.
+
 `FALCON_SHARE=false` turns sharing off. Nothing leaves the host, and the
 engine still screens on its own.
 
