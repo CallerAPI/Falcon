@@ -47,6 +47,9 @@ Changed
   already rejects on every call is no longer suggested for a block.
 - The demo inserts its calls in time order and uses only the reason codes
   the engine emits.
+- The demo uses fictional carriers, addresses from the RFC 5737
+  documentation ranges, and fictional phone numbers. `examples/ipintel.csv`
+  and the demo IP intel tables hold only fictional rows.
 
 Removed
 
@@ -55,6 +58,17 @@ Removed
   or run code from a catalog.
 - The ConnexCS adapters, their harness, and their docs.
 - The telemetry checkbox in the dashboard.
+
+Fixed
+
+- The image starts on a `/data` volume. `/data` now belongs to `nonroot`,
+  and the image sets `FALCON_DB_PATH=/data/falcon.db`. Before, SQLite could
+  not create the database on a new volume, and `docker compose up`
+  restarted in a loop.
+- The README Docker steps set `FALCON_VERSION`, which `docker-compose.yml`
+  requires, and show how to run the published image.
+- `AGENTS.md` says which adapters report the outcome at hangup. It no
+  longer says that each adapter is under 100 lines.
 
 ## 0.9.x patches
 

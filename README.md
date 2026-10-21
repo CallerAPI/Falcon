@@ -194,8 +194,9 @@ curl -X POST -H 'X-Falcon-Token: ...' -H 'Content-Type: application/json' \
   http://127.0.0.1:8090/v1/outcome
 ```
 
-The adapters do this from the hangup hook. With outcomes, every screen
-sees the calling number's last hour: `caller_fanout` (30 different numbers,
+The Asterisk and FreeSWITCH adapters do this from the hangup hook. The
+Kamailio and OpenSIPS files show an optional hook in their comments. With
+outcomes, every screen sees the calling number's last hour: `caller_fanout` (30 different numbers,
 `FALCON_FANOUT_PER_HOUR`), `sequential_dialing` (5 consecutive numbers,
 `FALCON_SEQUENTIAL_N`), `caller_low_asr` (20 completed calls, at most 20%
 answered), `caller_short_calls` (10 answered, at most 12 seconds on
@@ -298,12 +299,25 @@ go test ./...
 go run ./cmd/falcon
 ```
 
-Docker:
+Docker, built from source:
 
 ```bash
 cp .env.example .env
-docker compose up --build
+FALCON_VERSION=0.9.26 docker compose up --build
 ```
+
+`FALCON_VERSION` is the release you build, such as `0.9.26`. The dashboard
+and the boot log show it.
+
+Docker, the published image:
+
+```bash
+docker run -d --name falcon -p 8090:8090 -v falcon-data:/data \
+  -e FALCON_LISTEN=0.0.0.0:8090 -e FALCON_TOKEN=change-me \
+  ghcr.io/callerapi/falcon:latest
+```
+
+The image keeps its database in `/data`. Pin a version tag in production.
 
 Open `http://127.0.0.1:8090`. Set `FALCON_LISTEN=0.0.0.0:8090` if the process
 runs in a container.
@@ -529,8 +543,8 @@ The table is a CSV of CIDR blocks:
 
 ```
 cidr,provider,risk,tags,source
-18.139.118.128/27,8x8 Inc,trusted,official|voice,provider
-4.150.191.0/24,Unregistered cloud voice,block,voip,fraud
+192.0.2.128/27,Northwind Voice,trusted,official|voice,provider
+198.51.100.64/27,Unregistered cloud voice,block,voip,fraud
 ```
 
 `risk` is `trusted`, `neutral`, `suspicious`, `hostile`, or `block`. A `block`

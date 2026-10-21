@@ -162,7 +162,7 @@ func buildCalls(end time.Time, spam []string) []rawCall {
 	rng := rand.New(rand.NewSource(42))
 	start := end.Add(-30 * 24 * time.Hour)
 	callees := []string{"+14155550100", "+12125550188", "+13125550120", "+16175550144", "+17205550102"}
-	cleanFrom := []string{"+14155550821", "+12125550833", "+13125550844", "+18005551212"}
+	cleanFrom := []string{"+14155550821", "+12125550833", "+13125550844", "+18665550110"}
 	switches := []string{"sbc-west-1", "sbc-east-1", "kamailio-eu"}
 	customers := []string{"healthco", "wholesale-eu", "retail-cx"}
 	out := make([]rawCall, 0, 5000)
@@ -189,47 +189,47 @@ func buildCalls(end time.Time, spam []string) []rawCall {
 			case attack && roll < 55:
 				c.Kind = "spam"
 				c.Campaign = "listed-did-burst"
-				c.IP = pick(rng, []string{"4.150.191.6", "5.62.61.170", "185.234.52.18"})
+				c.IP = pick(rng, []string{"198.51.100.66", "198.51.100.170", "203.0.113.70"})
 				c.From = spam[rng.Intn(len(spam))]
 				c.UA = pick(rng, []string{"sipcli/1.8", "friendly-scanner", "VaxSIPUserAgent/3.0"})
 			case roll < 12:
 				c.Kind = "scanner"
-				c.IP = pick(rng, []string{"185.234.52.18", "91.224.92.14"})
+				c.IP = pick(rng, []string{"203.0.113.70", "203.0.113.71"})
 				c.From = "+1555" + fmt.Sprintf("%07d", rng.Intn(9000000)+1000000)
 				c.UA = pick(rng, []string{"friendly-scanner", "sipvicious", "sipcli/1.8"})
 			case roll < 28:
-				c.Kind = "cpaas-8x8"
-				c.IP = "18.139.118.140"
+				c.Kind = "cpaas-northwind"
+				c.IP = "192.0.2.140"
 				c.From = pick(rng, append(cleanFrom, spam[rng.Intn(8)]))
-				c.UA = "8x8-UCaaS/4.2"
+				c.UA = "Northwind-UCaaS/4.2"
 			case roll < 42:
-				c.Kind = "cpaas-zoom"
-				c.IP = "121.244.203.200"
+				c.Kind = "cpaas-bluepeak"
+				c.IP = "192.0.2.200"
 				c.From = pick(rng, cleanFrom)
-				c.UA = "Zoom-Phone/6.1"
+				c.UA = "Bluepeak-Phone/6.1"
 			case roll < 50:
 				c.Kind = "gateway"
-				c.IP = "135.84.127.10"
+				c.IP = "192.0.2.10"
 				c.From = pick(rng, append(cleanFrom, spam[rng.Intn(len(spam))]))
 				c.UA = "Asterisk PBX 18.20.0"
 			case roll < 58:
 				c.Kind = "wholesale"
-				c.IP = "162.211.102.40"
+				c.IP = "198.51.100.40"
 				c.From = pick(rng, append(cleanFrom, spam[rng.Intn(len(spam))]))
-				c.UA = "voip.ms-gateway/2.0"
+				c.UA = "Lakeshore-GW/2.0"
 			case roll < 66:
 				c.Kind = "shared-gw"
-				c.IP = "23.167.192.20"
+				c.IP = "203.0.113.20"
 				c.From = pick(rng, cleanFrom)
-				c.UA = "46labs-SBC/1.9"
+				c.UA = "Harborline-SBC/1.9"
 			case roll < 78:
 				c.Kind = "junk"
-				c.IP = pick(rng, []string{"4.150.191.6", "5.62.61.170"})
+				c.IP = pick(rng, []string{"198.51.100.66", "198.51.100.170"})
 				c.From = spam[rng.Intn(len(spam))]
-				c.UA = pick(rng, []string{"sipcli/1.8", "Twilio Proxy/1.1"})
+				c.UA = pick(rng, []string{"sipcli/1.8", "CloudProxy/1.1"})
 			default:
 				c.Kind = "clean"
-				c.IP = pick(rng, []string{"73.162.10.40", "24.7.88.19"})
+				c.IP = pick(rng, []string{"192.0.2.73", "192.0.2.24"})
 				c.From = cleanFrom[rng.Intn(len(cleanFrom))]
 				c.UA = pick(rng, []string{"Cisco-CUCM/14.0", "PolycomVVX/6.4"})
 			}
@@ -275,7 +275,7 @@ func seedProfile(dir, profile string, calls []rawCall, spam []string, end time.T
 	}
 	customers := []store.Customer{
 		{ID: "healthco", Name: "HealthCo UCaaS", DIDs: []string{"+14155550100", "+1415555*"}},
-		{ID: "wholesale-eu", Name: "EU Wholesale", DIDs: []string{"+442071234000", "+44*"}},
+		{ID: "wholesale-eu", Name: "EU Wholesale", DIDs: []string{"+442079460000", "+44*"}},
 		{ID: "retail-cx", Name: "Retail CX", DIDs: []string{"+12125550188"}},
 	}
 	for _, c := range customers {
@@ -353,7 +353,7 @@ func addRules(ctx context.Context, db store.Store, paid bool) error {
 	}
 	if paid {
 		rules = append(rules,
-			lists.Rule{Kind: lists.Deny, Subject: lists.IP, Value: "5.62.61.0/24", Note: "repeat voip abuse"},
+			lists.Rule{Kind: lists.Deny, Subject: lists.IP, Value: "198.51.100.160/27", Note: "repeat voip abuse"},
 			lists.Rule{Kind: lists.Deny, Subject: lists.SPC, Value: "9999", Note: "unsigned mill under traceback"},
 		)
 	}
@@ -367,16 +367,16 @@ func addRules(ctx context.Context, db store.Store, paid bool) error {
 
 func addAlerts(ctx context.Context, db store.Store, paid bool, end time.Time) error {
 	items := []store.Alert{
-		{At: end.Add(-6 * 24 * time.Hour), Key: "scan-burst", Severity: "high", Title: "SIP scanner burst", Detail: "friendly-scanner from 185.234.52.18", Delivered: true},
+		{At: end.Add(-6 * 24 * time.Hour), Key: "scan-burst", Severity: "high", Title: "SIP scanner burst", Detail: "friendly-scanner from 203.0.113.70", Delivered: true},
 	}
 	if paid {
 		items = append(items,
-			store.Alert{At: end.Add(-4 * 24 * time.Hour), Key: "spam-feed", Severity: "high", Title: "Listed spam DIDs on cloud voice", Detail: "Azure and Avast source IPs with feed hits", Delivered: true},
-			store.Alert{At: end.Add(-19 * 24 * time.Hour), Key: "cpaas-keep", Severity: "info", Title: "Official 8x8 and Zoom allowed", Detail: "Same AWS and Tata ranges that free intel flags as datacenter", Delivered: true},
+			store.Alert{At: end.Add(-4 * 24 * time.Hour), Key: "spam-feed", Severity: "high", Title: "Listed spam DIDs on cloud voice", Detail: "Cloud source addresses with feed hits", Delivered: true},
+			store.Alert{At: end.Add(-19 * 24 * time.Hour), Key: "cpaas-keep", Severity: "info", Title: "Official CPaaS traffic allowed", Detail: "Same cloud ranges that free intel flags as datacenter", Delivered: true},
 		)
 	} else {
 		items = append(items,
-			store.Alert{At: end.Add(-4 * 24 * time.Hour), Key: "dc-false", Severity: "medium", Title: "Datacenter flags on live CPaaS", Detail: "8x8 and Zoom look like cloud. No provider overlay.", Delivered: true},
+			store.Alert{At: end.Add(-4 * 24 * time.Hour), Key: "dc-false", Severity: "medium", Title: "Datacenter flags on live CPaaS", Detail: "Two CPaaS providers look like cloud. No provider overlay.", Delivered: true},
 		)
 	}
 	for _, a := range items {
@@ -408,13 +408,13 @@ func enrich(raw rawCall, paid bool, spam map[string]struct{}, i int) store.Event
 		ev.Action = score.ActionReject
 		ev.RiskScore = 96
 		ev.Reasons = []score.Reason{{Code: "scanner_user_agent", Category: "ua", Weight: 90, Detail: "User-Agent matches a known SIP scanner"}}
-	case "cpaas-8x8":
+	case "cpaas-northwind":
 		if paid {
-			ev.Provider = "8x8, Inc."
+			ev.Provider = "Northwind Voice, Inc."
 			ev.Attest = "A"
 			ev.Verstat = "TN-Validation-Passed"
-			ev.SignerSPC = "1186"
-			ev.SignerName = "8x8, Inc."
+			ev.SignerSPC = "9101"
+			ev.SignerName = "Northwind Voice, Inc."
 			if listed {
 				ev.Action = score.ActionReject
 				ev.RiskScore = 100
@@ -429,13 +429,13 @@ func enrich(raw rawCall, paid bool, spam map[string]struct{}, i int) store.Event
 			ev.RiskScore = 48
 			ev.Reasons = []score.Reason{{Code: "ip_intel_suspicious", Category: "ipintel", Weight: 30, Detail: "Source IP belongs to Datacenter, listed as suspicious"}}
 		}
-	case "cpaas-zoom":
+	case "cpaas-bluepeak":
 		if paid {
-			ev.Provider = "Zoom Voice Communications, Inc."
+			ev.Provider = "Bluepeak Communications, Inc."
 			ev.Attest = "A"
 			ev.Verstat = "TN-Validation-Passed"
-			ev.SignerSPC = "1170"
-			ev.SignerName = "Zoom Voice Communications, Inc."
+			ev.SignerSPC = "9102"
+			ev.SignerName = "Bluepeak Communications, Inc."
 			ev.Action = score.ActionAllow
 			ev.RiskScore = 4
 		} else {
@@ -446,11 +446,11 @@ func enrich(raw rawCall, paid bool, spam map[string]struct{}, i int) store.Event
 		}
 	case "gateway":
 		if paid {
-			ev.Provider = "Piratel llc"
+			ev.Provider = "Graystone Gateway LLC"
 			ev.Attest = "C"
 			ev.Verstat = "TN-Validation-Passed"
-			ev.SignerSPC = "1410"
-			ev.SignerName = "Piratel llc"
+			ev.SignerSPC = "9104"
+			ev.SignerName = "Graystone Gateway LLC"
 			if listed {
 				ev.Action = score.ActionReject
 				ev.RiskScore = 100
@@ -467,10 +467,10 @@ func enrich(raw rawCall, paid bool, spam map[string]struct{}, i int) store.Event
 		}
 	case "wholesale":
 		if paid {
-			ev.Provider = "9171-5573 Quebec Inc"
+			ev.Provider = "Lakeshore Wholesale Inc."
 			ev.Action = score.ActionFlag
 			ev.RiskScore = 42
-			ev.Reasons = []score.Reason{{Code: "ip_intel_suspicious", Category: "ipintel", Weight: 30, Detail: "Source IP belongs to 9171-5573 Quebec Inc, listed as suspicious"}}
+			ev.Reasons = []score.Reason{{Code: "ip_intel_suspicious", Category: "ipintel", Weight: 30, Detail: "Source IP belongs to Lakeshore Wholesale Inc., listed as suspicious"}}
 		} else {
 			ev.Provider = "Datacenter"
 			ev.Action = score.ActionFlag
@@ -479,11 +479,11 @@ func enrich(raw rawCall, paid bool, spam map[string]struct{}, i int) store.Event
 		}
 	case "shared-gw":
 		if paid {
-			ev.Provider = "Versatel LLC"
+			ev.Provider = "Harborline Telecom LLC"
 			ev.Attest = "B"
 			ev.Verstat = "TN-Validation-Passed"
-			ev.SignerSPC = "1654"
-			ev.SignerName = "Versatel LLC"
+			ev.SignerSPC = "9103"
+			ev.SignerName = "Harborline Telecom LLC"
 			ev.Action = score.ActionAllow
 			ev.RiskScore = 14
 		} else {

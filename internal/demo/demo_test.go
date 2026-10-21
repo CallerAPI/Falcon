@@ -57,10 +57,10 @@ func TestSeedAndSwapDistinguishFreeAndPaid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hasProvider(freeProv, "8x8, Inc.") || hasProvider(freeProv, "Zoom Voice Communications, Inc.") {
+	if hasProvider(freeProv, "Northwind Voice, Inc.") || hasProvider(freeProv, "Bluepeak Communications, Inc.") {
 		t.Fatal("free overlay must not name official CPaaS")
 	}
-	if !hasProvider(paidProv, "8x8, Inc.") || !hasProvider(paidProv, "Zoom Voice Communications, Inc.") {
+	if !hasProvider(paidProv, "Northwind Voice, Inc.") || !hasProvider(paidProv, "Bluepeak Communications, Inc.") {
 		t.Fatalf("paid overlay missing CPaaS names: %#v", names(paidProv))
 	}
 	if !hasProvider(freeProv, "Datacenter") {

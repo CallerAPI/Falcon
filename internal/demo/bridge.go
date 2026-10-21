@@ -109,8 +109,8 @@ func bridgeRows(ctx context.Context, db *store.SQLite, dir string, end time.Time
 		rows = append(rows, r)
 	}
 	for i := 0; i < 64; i++ {
-		rows = append(rows, row{ev: store.Event{ReceivedAt: end.Add(-time.Duration(i*4) * time.Minute), Action: score.ActionFlag, RiskScore: 48, SourceIP: "23.167.192.20",
-			From: "+19295550133", To: fmt.Sprintf("+1718555%04d", 1000+i), CallID: fmt.Sprintf("demo-fan-%d", i), UserAgent: "46labs-SBC/1.9",
+		rows = append(rows, row{ev: store.Event{ReceivedAt: end.Add(-time.Duration(i*4) * time.Minute), Action: score.ActionFlag, RiskScore: 48, SourceIP: "203.0.113.20",
+			From: "+19295550133", To: fmt.Sprintf("+1718555%04d", 1000+i), CallID: fmt.Sprintf("demo-fan-%d", i), UserAgent: "Harborline-SBC/1.9",
 			Direction: "inbound", Switch: "sip/10.0.0.5", LatencyUS: int64(1800 + i*7),
 			Reasons: []score.Reason{{Code: "caller_fanout", Weight: 25, Detail: fmt.Sprintf("Called %d different numbers in the last hour", 30+i/2)}, {Code: "sequential_dialing", Weight: 20, Detail: "Five numbers in a row, one apart"}}}})
 	}
@@ -121,9 +121,9 @@ func bridgeRows(ctx context.Context, db *store.SQLite, dir string, end time.Time
 func fasRow(i int, fc fasCall, end time.Time, rng *rand.Rand) row {
 	at := end.Add(-time.Duration(50+i*80) * time.Minute)
 	callID := fmt.Sprintf("demo-bridge-%d", i)
-	ev := store.Event{ReceivedAt: at, Action: score.ActionChallenge, RiskScore: 62, SourceIP: "162.211.102.40",
+	ev := store.Event{ReceivedAt: at, Action: score.ActionChallenge, RiskScore: 62, SourceIP: "198.51.100.40",
 		From: fmt.Sprintf("+1312555%04d", 2000+i), To: fmt.Sprintf("+1415555%04d", 3000+i), CallID: callID,
-		UserAgent: "voip.ms-gateway/2.0", Direction: "inbound", Switch: "sip/10.0.0.5", LatencyUS: int64(2600 + rng.Intn(900)),
+		UserAgent: "Lakeshore-GW/2.0", Direction: "inbound", Switch: "sip/10.0.0.5", LatencyUS: int64(2600 + rng.Intn(900)),
 		Reasons: []score.Reason{{Code: "missing_identity", Weight: 15, Detail: "Identity header is missing"}, {Code: "caller_short_calls", Weight: 30, Detail: "Answered calls average 6 s"}}}
 	answer := 2200 + rng.Intn(1500)
 	return row{ev: ev, after: func(ctx context.Context, db *store.SQLite, id int64) error {
@@ -189,7 +189,7 @@ func voiceRow(i int, sc demoCall, end time.Time, recDir string) (row, error) {
 		text += label + t.text
 	}
 	tb, _ := json.Marshal(turns)
-	ev := store.Event{ReceivedAt: at, Action: action, RiskScore: risk, SourceIP: "135.84.127.10", From: sc.from, To: sc.to,
+	ev := store.Event{ReceivedAt: at, Action: action, RiskScore: risk, SourceIP: "192.0.2.10", From: sc.from, To: sc.to,
 		CallID: callID, UserAgent: "Asterisk PBX 18.20.0", Direction: "inbound", Switch: "sip/10.0.0.5", LatencyUS: 3100, Reasons: reasons}
 	return row{ev: ev, after: func(ctx context.Context, db *store.SQLite, id int64) error {
 		if _, err := db.AddVoiceSample(ctx, store.VoiceSample{EventID: id, CallID: callID, At: at.Add(time.Duration(secs) * time.Second), Seconds: secs, Channels: 2,

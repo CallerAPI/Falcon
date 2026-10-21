@@ -47,8 +47,11 @@ or the body is not JSON (415).
 
 ## Connect a switch
 
-Pick the adapter for the switch and copy it in. Each one is under 100
-lines and posts to `/v1/screen`, then reports the outcome at hangup.
+Pick the adapter for the switch and copy it in. Each adapter posts the
+INVITE to `/v1/screen`. The Asterisk and FreeSWITCH adapters also report
+the outcome at hangup. The Kamailio and OpenSIPS files show an optional
+outcome hook in their comments. CI runs every adapter against a live
+Falcon and a real switch.
 
 | Switch | Files | Where |
 | --- | --- | --- |
