@@ -844,8 +844,7 @@ version in production. An install does not update itself.
 ## Build
 
 ```bash
-make build            # bin/falcon
-make build VERSION=1.0.0
+make build VERSION=0.9.23
 ```
 
 ## Ask Falcon: the assistant

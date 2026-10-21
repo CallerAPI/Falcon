@@ -21,14 +21,14 @@ embedded dashboard. Apache 2.0.
 Requirements: Go 1.22 or Docker. No database server, no other service.
 
 ```
-# 1. Build and run (Go)
-go build -o falcon ./cmd/falcon
-FALCON_TOKEN=change-me ./falcon
-# expected: "falcon <version> listening on 127.0.0.1:8090" and a telemetry line
+# 1. Build and run (Go). VERSION is required. A binary without it says dev.
+make build VERSION=0.9.23
+FALCON_TOKEN=change-me ./bin/falcon
+# expected: "Falcon 0.9.23 listening on 127.0.0.1:8090" and a telemetry line
 
-# 1. or Docker
+# 1. or Docker. FALCON_VERSION is required. Without it the image is not built.
 cp .env.example .env && sed -i 's/^FALCON_TOKEN=.*/FALCON_TOKEN=change-me/' .env
-docker compose up -d --build
+FALCON_VERSION=0.9.23 docker compose up -d --build
 # expected: container up, http://127.0.0.1:8090/v1/health returns {"status":"ok"}
 
 # 2. Prove it screens
