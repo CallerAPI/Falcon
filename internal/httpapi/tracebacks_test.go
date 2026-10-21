@@ -33,6 +33,7 @@ func TestTracebackFindsTheCallAndNamesTheUpstream(t *testing.T) {
 	if w := do(t, srv, http.MethodPost, "/v1/screen", map[string]string{"switch": "t", "source_ip": "203.0.113.40", "raw_sip": inviteTo("+13125550100", "+14155550123", "tb-call-1")}); w.Code != http.StatusOK {
 		t.Fatalf("screen: %d %s", w.Code, w.Body.String())
 	}
+	waitEvents(t, db, 1)
 
 	for _, bad := range []map[string]any{{"call_at": callAt.Format(time.RFC3339)}, {"from": "+13125550100", "call_at": "yesterday"}, {"from": "+13125550100", "call_at": callAt.Format(time.RFC3339), "window_minutes": 500}} {
 		if w := do(t, srv, http.MethodPost, "/v1/tracebacks", bad); w.Code != http.StatusBadRequest {
