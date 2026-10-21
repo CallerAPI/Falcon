@@ -309,7 +309,7 @@ func (e *Engine) Score(s sipmsg.Snapshot, en Enrichment) Result {
 		add("synthetic_from", "number", "From number is sequential or repeating digits", 20)
 	}
 
-	if strings.EqualFold(s.Method, "INVITE") && !s.HasSDP {
+	if strings.EqualFold(s.Method, "INVITE") && !s.HasSDP && !s.SDPUnknown {
 		add("invite_no_sdp", "sdp", "INVITE has no SDP body", 5)
 	}
 	if s.SDPZero {

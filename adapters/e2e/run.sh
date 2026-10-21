@@ -18,7 +18,13 @@ DB="$(mktemp -d)/e2e.db"
 BRIDGE_DB="$(mktemp -d)/bridge.db"
 export FALCON_TOKEN="$TOKEN"
 
-go build -o /tmp/falcon-e2e ./cmd/falcon
+# A Falcon build carries its release. VERSION defaults to the latest public tag.
+VERSION="${VERSION:-$(git ls-remote --tags --refs --sort=-v:refname https://github.com/CallerAPI/Falcon.git 'v*' 2>/dev/null | head -1 | sed 's#.*refs/tags/v##')}"
+if [ -z "$VERSION" ] || [ "$VERSION" = "dev" ]; then
+  echo "set VERSION to the release, for example VERSION=0.9.32"
+  exit 1
+fi
+go build -ldflags "-X main.version=$VERSION" -o /tmp/falcon-e2e ./cmd/falcon
 go build -o /tmp/sipsend ./adapters/e2e/sipsend
 FALCON_LISTEN="127.0.0.1:${PORT}" FALCON_SIP_LISTEN="127.0.0.1:${SIP_PORT}" FALCON_DB_PATH="$DB" \
   FALCON_SHAKEN=false FALCON_SHARE=false FALCON_REPUTATION=false FALCON_TOKEN="$TOKEN" \
@@ -237,6 +243,26 @@ if [ -n "${OPENSIPS_IMAGE:-}" ]; then
   opensips_case sync opensips falcon
   opensips_case async opensips_async falcon_async
 fi
+
+# Every INVITE in this run carries an offer. No event may say it has none,
+# and every call a switch adapter sent must name its Content-Type.
+echo "== offer"
+python3 - "$PORT" "$TOKEN" <<'PY' || fail=1
+import json, sys, urllib.request
+port, token = sys.argv[1], sys.argv[2]
+def get(path):
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers={"X-Falcon-Token": token})
+    return json.load(urllib.request.urlopen(req))
+events = get("/v1/events?limit=500")["data"]
+no_offer = [e["id"] for e in events if any(r.get("code") == "invite_no_sdp" for r in e.get("reasons") or [])]
+adapters = [e for e in events if e.get("switch") in ("freeswitch", "kamailio", "opensips")]
+unnamed = [e["id"] for e in adapters if "content-type: application/sdp" not in (get(f"/v1/events/{e['id']}").get("raw_sip") or "").lower()]
+print(f"events={len(events)} adapter_events={len(adapters)} invite_no_sdp={no_offer} no_content_type={unnamed}")
+if no_offer or unnamed or not adapters:
+    print("offer: FAIL")
+    sys.exit(1)
+print("offer: PASS")
+PY
 
 if [ "$fail" -ne 0 ]; then
   echo "adapters: FAIL"

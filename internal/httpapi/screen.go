@@ -111,6 +111,7 @@ func (s *Server) Screen(ctx context.Context, req ScreenRequest) (score.Result, e
 		return score.Result{}, ErrParse
 	}
 	snap := sipmsg.SnapshotFrom(msg, req.SourceIP)
+	snap.SDPUnknown = offerUnknown(req)
 	en, verification := s.enrich(ctx, snap)
 	signed := s.switchSigning(ctx, snap, req.Signing)
 	en.SwitchSigns = signed != nil
@@ -369,6 +370,20 @@ func buildMessage(req ScreenRequest) (*sipmsg.Message, error) {
 	b.WriteByte('\n')
 	b.WriteString(req.Body)
 	return sipmsg.Parse(b.String())
+}
+
+// offerUnknown reports a request built from a header map that names no
+// Content-Type and has no body. Older adapters send no Content-Type.
+func offerUnknown(req ScreenRequest) bool {
+	if strings.TrimSpace(req.RawSIP) != "" || strings.TrimSpace(req.Body) != "" {
+		return false
+	}
+	for k := range req.Headers {
+		if strings.EqualFold(k, "Content-Type") || strings.EqualFold(k, "c") {
+			return false
+		}
+	}
+	return true
 }
 
 func looksJSON(b []byte) bool {

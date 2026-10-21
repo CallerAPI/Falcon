@@ -50,8 +50,11 @@ type Snapshot struct {
 	ViaReceived string
 	Identity    Identity
 	HasSDP      bool
-	SDPZero     bool
-	SourceIP    string
+	// SDPUnknown is set when the request carries neither Content-Type nor
+	// a body, so a missing offer can not be told from a missing field.
+	SDPUnknown bool
+	SDPZero    bool
+	SourceIP   string
 	// BCIDAssertion is an in-band compact JWS from X-BCID-Assertion.
 	BCIDAssertion string
 }

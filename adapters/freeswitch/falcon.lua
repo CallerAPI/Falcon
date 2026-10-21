@@ -37,6 +37,10 @@ local function asSIP(v)
   return "sip:" .. v
 end
 
+-- The offer the caller sent. A late-offer INVITE has none, and then
+-- Content-Type is left out so Falcon does not read it as a missing offer.
+local sdp = var("switch_r_sdp")
+
 -- Direction and customer. Set falcon_direction=outbound and
 -- falcon_customer=<account id> in the dialplan for calls your own
 -- customers place; Falcon then checks the caller id against the numbers
@@ -58,7 +62,9 @@ local payload = {
     ["X-BCID-Assertion"] = first(var("sip_h_X-BCID-Assertion"), var("sip_h_X-Bcid-Assertion")),
     Contact = asSIP(var("sip_contact_uri")),
     Via = var("sip_full_via") or "",
+    ["Content-Type"] = sdp and "application/sdp" or nil,
   },
+  body = sdp or "",
 }
 
 -- JSON. FreeSWITCH 1.10 ships freeswitch.JSON. Older builds fall back to

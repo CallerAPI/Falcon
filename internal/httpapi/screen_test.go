@@ -121,3 +121,43 @@ func TestScreenUnauthorized(t *testing.T) {
 		t.Fatalf("status %d", w.Code)
 	}
 }
+
+// An adapter that sends no Content-Type says nothing about the offer. A raw
+// INVITE without a body has none.
+func TestScreenOfferUnknownIsNotMissing(t *testing.T) {
+	srv, _ := newTestServer(t)
+	noOffer := func(res score.Result) bool {
+		for _, r := range res.Reasons {
+			if r.Code == "invite_no_sdp" {
+				return true
+			}
+		}
+		return false
+	}
+	headers := func(callID string, extra map[string]string) map[string]string {
+		h := map[string]string{
+			"From": "<sip:+14155550100@ex>;tag=1", "To": "<sip:+15551212@ex>", "Call-ID": callID,
+			"User-Agent": "FreeSWITCH", "Max-Forwards": "70",
+		}
+		for k, v := range extra {
+			h[k] = v
+		}
+		return h
+	}
+	invite := func(h map[string]string) map[string]any {
+		return map[string]any{"switch": "fs", "source_ip": "198.51.100.20", "method": "INVITE", "request_uri": "sip:+15551212@ex", "headers": h}
+	}
+	if res := screenJSON(t, srv, invite(headers("o1", nil))); noOffer(res) {
+		t.Fatalf("a header map without Content-Type got invite_no_sdp: %+v", res.Reasons)
+	}
+	if res := screenJSON(t, srv, invite(headers("o2", map[string]string{"Content-Type": "application/sdp"}))); noOffer(res) {
+		t.Fatalf("an offer got invite_no_sdp: %+v", res.Reasons)
+	}
+	if res := screenJSON(t, srv, invite(headers("o3", map[string]string{"Content-Type": "application/isup"}))); !noOffer(res) {
+		t.Fatalf("a named non-SDP body must keep invite_no_sdp: %+v", res.Reasons)
+	}
+	raw := "INVITE sip:+15551212@ex SIP/2.0\r\nFrom: <sip:+14155550100@ex>;tag=1\r\nTo: <sip:+15551212@ex>\r\nCall-ID: o4\r\nUser-Agent: FreeSWITCH\r\nMax-Forwards: 70\r\n\r\n"
+	if res := screenJSON(t, srv, map[string]any{"switch": "fs", "source_ip": "198.51.100.20", "raw_sip": raw}); !noOffer(res) {
+		t.Fatalf("a raw INVITE without a body must keep invite_no_sdp: %+v", res.Reasons)
+	}
+}

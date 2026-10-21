@@ -78,8 +78,6 @@ Changed
   keyed install that did not share got neither.
 - The Asterisk adapter reads `FALCON_URL` and `FALCON_TOKEN` from channel
   variables first, so one Asterisk can screen for several Falcon installs.
-- The Asterisk adapter forwards `Content-Type`. An INVITE with SDP no longer
-  gets the `invite_no_sdp` reason.
 - Telemetry sends less. A call with a signal is still an event. A clean
   inbound call is counted once an hour per verified signer, sending tool,
   calling number with 3 or more calls, and install. One clean call in 20 is
@@ -105,6 +103,15 @@ Fixed
   requires, and show how to run the published image.
 - `AGENTS.md` says which adapters report the outcome at hangup. It no
   longer says that each adapter is under 100 lines.
+- Every adapter forwards the SIP `Content-Type`. The FreeSWITCH adapter
+  also sends the offer. Before, the adapters sent no `Content-Type`, so
+  every call they screened got the `invite_no_sdp` reason.
+- A request with no `Content-Type` and no body no longer gets
+  `invite_no_sdp`. Falcon can not tell a missing offer from a missing
+  field, so an older adapter stops adding 5 points to every call.
+- The adapter e2e builds Falcon with the release version, from `VERSION`
+  or the latest public tag. It also checks that every adapter sends
+  `Content-Type`.
 
 ## 0.9.x patches
 

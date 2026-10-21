@@ -104,6 +104,7 @@ local function run(caller, callee)
     sip_user_agent = "e2e-harness/1.0 (space and 100% plain)",
     sip_contact_uri = caller .. "@203.0.113.9",
     sip_full_via = "SIP/2.0/UDP 203.0.113.9:5060;branch=z9hG4bKe2e",
+    switch_r_sdp = "v=0\r\no=- 1 1 IN IP4 203.0.113.9\r\ns=-\r\nc=IN IP4 203.0.113.9\r\nt=0 0\r\nm=audio 4000 RTP/AVP 0\r\n",
     uuid = "e2e-uuid",
   }
   local set, hung = {}, nil

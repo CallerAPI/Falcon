@@ -59,10 +59,15 @@ You can send selected headers instead of the raw message:
     "To": "<sip:+15551212@carrier.example>",
     "Call-ID": "abc@host",
     "User-Agent": "Asterisk PBX 20",
+    "Content-Type": "application/sdp",
     "Identity": ""
   }
 }
 ```
+
+Send the `Content-Type` of the INVITE. Falcon uses it to tell an INVITE
+with an audio offer from one without. When a request has no
+`Content-Type` and no body, Falcon does not score the offer.
 
 A switch that signs the call on the way out, after the screen, sends what
 it will sign with. The INVITE it screens has no Identity header yet:
