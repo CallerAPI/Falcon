@@ -338,7 +338,7 @@ func (s *Server) tracebackInsights(ctx context.Context, add adder) {
 		detail := "Falcon found no matching call. The answer says so. Check the numbers and the time."
 		switch {
 		case c.Upstream != "":
-			detail = "Falcon found the call. It came from " + c.Upstream + ". The answer is ready to send."
+			detail = "Falcon found the call. It came from " + strings.TrimSuffix(c.Upstream, ".") + ". The answer is ready to send."
 		case len(c.EventIDs) > 0:
 			detail = "Falcon found the call. Its address is not in the upstream registry. The answer is ready to send."
 		}

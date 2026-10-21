@@ -112,6 +112,8 @@ Fixed
 - The adapter e2e builds Falcon with the release version, from `VERSION`
   or the latest public tag. It also checks that every adapter sends
   `Content-Type`.
+- An upstream name that ends with a period, such as `Example Inc.`, no
+  longer shows two periods in the traceback views and on the Overview.
 
 ## 0.9.x patches
 

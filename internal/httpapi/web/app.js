@@ -53,6 +53,8 @@
   const $ = (s, r) => (r || document).querySelector(s);
   const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  // A name such as "Example Inc." already ends the sentence.
+  const sentence = (s) => String(s).replace(/\.+$/, "") + ".";
   function patch(el, html) { if (el && el.__html !== html) { el.innerHTML = html; el.__html = html; } }
   function setText(el, t) { if (el && el.textContent !== t) el.textContent = t; }
 
@@ -807,7 +809,7 @@
         const form = e.target, f = new FormData(form);
         try {
           const c = await post("/v1/tracebacks", { from: f.get("from"), to: f.get("to"), call_at: f.get("call_at"), reference: f.get("reference"), window_minutes: Number(f.get("window_minutes")), requested_at: f.get("requested_at") });
-          toast(c.upstream ? "Found the call. It came from " + c.upstream + "." : (c.event_ids || []).length ? "Found the call. Its address is not in the registry." : "No matching call. The answer says so.", "ok");
+          toast(c.upstream ? "Found the call. It came from " + sentence(c.upstream) : (c.event_ids || []).length ? "Found the call. Its address is not in the registry." : "No matching call. The answer says so.", "ok");
           form.reset();
           this.loadTracebacks();
         } catch (err) { toast(err.message, "bad"); }
@@ -827,7 +829,7 @@
         };
         patch($("#tbList"), this.cases.map((c) => {
           const status = c.status === "answered" ? '<span class="pill allowed">Answered ' + esc(when(c.answered_at)) + "</span>" : c.overdue ? '<span class="pill blocked">Overdue</span>' : '<span class="pill flagged">' + esc(dueIn(c.due_at)) + "</span>";
-          const found = c.upstream ? "Came from " + c.upstream + "." : (c.event_ids || []).length ? "The address is not in the upstream registry." : "No matching call.";
+          const found = c.upstream ? "Came from " + sentence(c.upstream) : (c.event_ids || []).length ? "The address is not in the upstream registry." : "No matching call.";
           return '<div class="card"><div class="card-head"><h2>' + esc(c.reference || "Call from " + c.from) + "</h2>" + status + "</div>" +
             '<p class="muted small" style="margin:0 0 10px">' + esc(c.from + (c.to ? " to " + c.to : "") + ", " + utc(c.call_at) + ". " + found) + "</p>" +
             '<textarea class="mono small" rows="7" style="width:100%" data-answer="' + c.id + '">' + esc(c.answer || "") + "</textarea>" +
