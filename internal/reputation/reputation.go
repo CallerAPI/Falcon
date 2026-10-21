@@ -58,10 +58,14 @@ type Feed struct {
 type Table struct {
 	BaseURL string
 	Key     *identity.Key
+	// APIKey, when set, goes in X-Auth. A keyed install gets the feed
+	// without sharing.
+	APIKey  string
 	HTTP    *http.Client
 	Refresh time.Duration
-	// Enabled reports whether the install is sharing right now. The feed is
-	// only fetched while it is; CallerAPI enforces the same rule.
+	// Enabled reports whether the install shares or carries a key right
+	// now. The feed is only fetched while it does; CallerAPI enforces the
+	// same rule.
 	Enabled func(context.Context) bool
 
 	mu       sync.RWMutex
@@ -133,7 +137,7 @@ func (t *Table) Load(ctx context.Context) error {
 		return errors.New("reputation: no base url or key")
 	}
 	if t.Enabled != nil && !t.Enabled(ctx) {
-		t.setErr("not sharing telemetry; the network feed is for sharing installs")
+		t.setErr("not sharing telemetry and no CallerAPI key; the network feed is for installs that share or carry a key")
 		return nil
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(t.BaseURL, "/")+Path, nil)
@@ -142,6 +146,9 @@ func (t *Table) Load(ctx context.Context) error {
 	}
 	t.Key.Sign(req, nil)
 	req.Header.Set("Accept", "application/json")
+	if t.APIKey != "" {
+		req.Header.Set("X-Auth", t.APIKey)
+	}
 	client := t.HTTP
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}

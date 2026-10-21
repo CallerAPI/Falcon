@@ -189,15 +189,17 @@ func main() {
 			HMACKey:   hmacKey,
 			Key:       installKey,
 		}
-		if cfg.Reputation {
-			api.Reputation = &reputation.Table{
-				BaseURL: cfg.CallerAPIBase,
-				Key:     installKey,
-				Refresh: cfg.ReputationRefresh,
-				Enabled: api.Sharing,
-			}
-			go api.Reputation.Run(ctx)
+	}
+	// The network feed is the return for installs that share or pay.
+	if cfg.Reputation && (cfg.Share || cfg.CallerAPIKey != "") {
+		api.Reputation = &reputation.Table{
+			BaseURL: cfg.CallerAPIBase,
+			Key:     installKey,
+			APIKey:  cfg.CallerAPIKey,
+			Refresh: cfg.ReputationRefresh,
+			Enabled: func(ctx context.Context) bool { return api.Sharing(ctx) || cfg.CallerAPIKey != "" },
 		}
+		go api.Reputation.Run(ctx)
 	}
 	switch cfg.VoiceProvider {
 	case "", "off":
@@ -433,7 +435,7 @@ func newAutopilot(cfg config.Config, db store.Store, api *httpapi.Server, key *i
 	case cfg.FCCFile != "":
 		a.Source, a.SourceName = compliance.File{Path: cfg.FCCFile}, "file"
 	case cfg.CallerAPIBase != "" && (cfg.Share || cfg.CallerAPIKey != ""):
-		a.Source, a.SourceName = &compliance.Source{BaseURL: cfg.CallerAPIBase, Key: key}, "callerapi"
+		a.Source, a.SourceName = &compliance.Source{BaseURL: cfg.CallerAPIBase, Key: key, APIKey: cfg.CallerAPIKey}, "callerapi"
 	}
 	return a
 }

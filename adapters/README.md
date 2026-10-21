@@ -258,7 +258,10 @@ AGI is the default path. It uses the Python standard library only.
 2. Include `asterisk/extensions.conf` in the inbound context. The patterns
    are `_[+0-9]X.`, so E.164 destinations with a plus match.
 3. Set `FALCON_URL` and `FALCON_TOKEN` in the Asterisk environment
-   (`/etc/default/asterisk` or the systemd unit).
+   (`/etc/default/asterisk` or the systemd unit). A channel variable with
+   the same name wins, so one Asterisk can screen for several Falcon
+   installs: put `set_var=FALCON_URL=...` and `set_var=FALCON_TOKEN=...` on
+   each PJSIP endpoint.
 
 FreePBX, Issabel, VitalPBX, and PBX in a Flash: put the context in
 `extensions_custom.conf` and point the trunk's inbound context at

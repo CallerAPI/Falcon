@@ -18,6 +18,11 @@ supervision (FAS).
 One binary. One SQLite file. No external service. A laptop and a fleet of a
 thousand nodes run the same build with the same configuration.
 
+Installs that share redacted telemetry get the network back for free: a
+reputation score for every signer and dialer tool that any install saw, and
+the FCC standing of every provider. See
+[Share and get](#share-and-get-the-network-is-free).
+
 ## What you get
 
 1. **STIR/SHAKEN verification.** Falcon fetches the signing certificate,
@@ -52,6 +57,54 @@ thousand nodes run the same build with the same configuration.
     verifies each INVITE for free. A spoofed registered brand is a hard
     reject. A verified name is put in `X-Falcon-BCID-Name` and
     `Remote-Party-ID` when the switch can set those headers.
+12. **An FCC autopilot.** List the carriers that send you calls. Every 6 hours
+    Falcon checks each one against the Robocall Mitigation Database and FCC
+    orders. An upstream you may no longer take calls from gets an alert, or a
+    deny rule when you turn on enforcement.
+13. **Traceback answers in minutes.** Enter the calling number, the called
+    number, and the time. Falcon finds the call, names the upstream, writes
+    the answer, and shows the 24-hour clock.
+14. **The network, free.** Installs that share get the network reputation
+    feed and the FCC list at no cost. See
+    [Share and get](#share-and-get-the-network-is-free).
+
+## Share and get: the network is free
+
+Every Falcon that shares is a sensor on a different network. Together they
+see a bad signer or a new dialer tool within hours, on calls that never
+reached you. Your install gets that back for free.
+
+| You get | Local only | Sharing (the default) | With a CallerAPI key |
+| --- | --- | --- | --- |
+| Screening, STIR/SHAKEN, lists, dashboard, bridge, FAS guard, traceback | Yes | Yes | Yes |
+| Network reputation: a score for every signer and dialer tool from every install, refreshed hourly | No | Yes | Yes |
+| FCC autopilot list: the FCC standing of every provider, refreshed every 6 hours | No | Yes | Yes |
+| Business Caller ID verification | No | No | Yes, free |
+| Spam database feed, live reputation, voice AI | No | No | Paid add-ons |
+
+What it costs you:
+
+- **Nothing on the call path.** Telemetry leaves after the decision, in the
+  background. A slow or absent CallerAPI never slows a call.
+- **Nothing about your subscribers.** The called number, recordings,
+  transcripts, the PASSporT, and the SDP never leave the host. A clean call
+  leaves as a count in an hourly total, not as a record.
+- **One day.** CallerAPI serves the feed and the FCC list after one day of
+  sharing and 100 events. A CallerAPI key unlocks both at once, with or
+  without sharing.
+
+What it is worth:
+
+- The signer scores are the CallerAPI signer reputation API, a paid product
+  for companies that do not run Falcon. A sharing install gets the same data
+  inside the engine.
+- The FCC list keeps you inside 47 CFR 64.6305(g) and 64.1200(n)(3) without
+  anyone on your team reading FCC orders.
+- Each install makes every score sharper for the others. The more installs
+  share, the fewer calls a campaign gets through before the network names it.
+
+`FALCON_SHARE=false` turns sharing off. Nothing leaves the host, and the
+engine still screens on its own.
 
 ## Telemetry: on by default, called party redacted
 

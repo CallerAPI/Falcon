@@ -47,6 +47,11 @@ def header(name):
 
 def main():
     agi_read_env()
+    # Channel variables win over the environment, so one Asterisk can screen
+    # for several Falcon installs: set them per endpoint with set_var.
+    url, token = var("FALCON_URL"), var("FALCON_TOKEN")
+    falcon_url = url if url and url != "(null)" else FALCON_URL
+    falcon_token = token if token and token != "(null)" else FALCON_TOKEN
     headers = {}
     for name in (
         "From",
@@ -76,10 +81,10 @@ def main():
         "headers": headers,
     }
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(FALCON_URL, data=data, method="POST")
+    req = urllib.request.Request(falcon_url, data=data, method="POST")
     req.add_header("Content-Type", "application/json")
-    if FALCON_TOKEN:
-        req.add_header("X-Falcon-Token", FALCON_TOKEN)
+    if falcon_token:
+        req.add_header("X-Falcon-Token", falcon_token)
 
     action = "allow"
     score = "0"

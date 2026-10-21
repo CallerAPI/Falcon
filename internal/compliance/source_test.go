@@ -34,6 +34,9 @@ func TestSourceSignsAndHonorsETag(t *testing.T) {
 		if id, _, err := identity.Verify(r, nil, time.Minute); err != nil || id != "install-1" {
 			t.Errorf("signature: %q %v", id, err)
 		}
+		if got := r.Header.Get("X-Auth"); got != "k-1" {
+			t.Errorf("X-Auth = %q, want the API key", got)
+		}
 		if r.Header.Get("If-None-Match") == `"v1"` {
 			w.WriteHeader(http.StatusNotModified)
 			return
@@ -42,7 +45,7 @@ func TestSourceSignsAndHonorsETag(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(testList())
 	}))
 	defer srv.Close()
-	src := &Source{BaseURL: srv.URL, Key: key}
+	src := &Source{BaseURL: srv.URL, Key: key, APIKey: "k-1"}
 	l, tag, notModified, err := src.Fetch(context.Background(), "")
 	if err != nil || notModified || tag != `"v1"` || len(l.Providers) != len(testList().Providers) {
 		t.Fatalf("first fetch: %d providers, tag %q, notModified %v, err %v", len(l.Providers), tag, notModified, err)

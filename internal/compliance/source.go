@@ -28,9 +28,11 @@ type Fetcher interface {
 
 // Source fetches the list from CallerAPI with the install's signed
 // identity. CallerAPI serves it to installs that share or carry a key.
+// APIKey, when set, goes in X-Auth.
 type Source struct {
 	BaseURL string
 	Key     *identity.Key
+	APIKey  string
 	HTTP    *http.Client
 }
 
@@ -44,6 +46,9 @@ func (s *Source) Fetch(ctx context.Context, etag string) (List, string, bool, er
 	}
 	s.Key.Sign(req, nil)
 	req.Header.Set("Accept", "application/json")
+	if s.APIKey != "" {
+		req.Header.Set("X-Auth", s.APIKey)
+	}
 	if etag != "" {
 		req.Header.Set("If-None-Match", etag)
 	}

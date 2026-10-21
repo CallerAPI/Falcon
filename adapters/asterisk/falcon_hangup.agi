@@ -43,7 +43,14 @@ def headers():
 
 
 def main():
+    global BASE, FALCON_TOKEN
     read_env()
+    # Channel variables win over the environment, as in falcon.agi.
+    url, token = var("FALCON_URL"), var("FALCON_TOKEN")
+    if url and url != "(null)":
+        BASE = url[: -len("/v1/screen")] if url.endswith("/v1/screen") else url
+    if token and token != "(null)":
+        FALCON_TOKEN = token
     call_id = var("FALCON_CALL_ID") or var("PJSIP_HEADER(read,Call-ID)") or var("SIP_HEADER(Call-ID)")
     if not call_id or call_id == "(null)":
         return
