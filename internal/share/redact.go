@@ -23,6 +23,9 @@ const Redacted = "REDACTED"
 
 // Event is the shape Falcon sends. Field names are the wire format.
 type Event struct {
+	// EventID is the local event id. CallerAPI stores an event once per
+	// install and id, so a resent batch is not counted twice.
+	EventID    int64  `json:"event_id,omitempty"`
 	ReceivedAt string `json:"received_at"`
 	Action     string `json:"action"`
 	RiskScore  int    `json:"risk_score"`
@@ -113,6 +116,7 @@ func Redact(ev store.Event, key []byte) Event {
 	called := digits(ev.To)
 	calledUser := userPart(ev.To)
 	out := Event{
+		EventID:       ev.ID,
 		ReceivedAt:    ev.ReceivedAt.UTC().Format(time.RFC3339Nano),
 		Action:        string(ev.Action),
 		RiskScore:     ev.RiskScore,

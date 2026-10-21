@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/callerapi/falcon/internal/identity"
@@ -79,7 +81,38 @@ func (c *CallerAPI) Ingest(ctx context.Context, events []store.Event) error {
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		slurp, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return fmt.Errorf("callerapi telemetry: %s %s", resp.Status, string(slurp))
+		return &HTTPError{
+			Status:     resp.Status,
+			RetryAfter: retryAfter(resp.Header.Get("Retry-After"), time.Now()),
+			Body:       string(slurp),
+		}
 	}
 	return nil
+}
+
+// HTTPError is a telemetry post that CallerAPI did not accept. RetryAfter is
+// zero when the answer had no Retry-After header.
+type HTTPError struct {
+	Status     string
+	RetryAfter time.Duration
+	Body       string
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("callerapi telemetry: %s %s", e.Status, e.Body)
+}
+
+// retryAfter reads a Retry-After value in seconds or as an HTTP date.
+func retryAfter(v string, now time.Time) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if s, err := strconv.Atoi(v); err == nil {
+		return max(time.Duration(s)*time.Second, 0)
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		return max(t.Sub(now), 0)
+	}
+	return 0
 }

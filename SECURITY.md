@@ -84,7 +84,7 @@ Settings shows which add-ons are on. In full:
 | `api.callerapi.com` (feed) | On the refresh timer | A GET for the spam list. Only with a key and `FALCON_SPAM_FEED=true`. |
 | `api.callerapi.com` (live lookup) | Per screened INVITE | The calling number. Only with a key and `FALCON_VOICE_FIREWALL=true`. |
 | `api.callerapi.com` (BCID verify) | Per screened INVITE | The calling number, the called number, and an optional in-band assertion. Only with a key and `FALCON_BCID=true` (the default). Off with `FALCON_BCID=false`. |
-| `api.callerapi.com` (telemetry) | Every 30 seconds | Redacted screening events: decision, score, reasons, calling number, source IP, User-Agent, signer, verification result, SIP headers with the called party replaced by `REDACTED`, no `Identity` header, no SDP, no recordings, no transcripts. On by default. Off with `FALCON_SHARE=false`. Never in demo mode. See the README section "Telemetry". |
+| `api.callerapi.com` (telemetry) | Every 30 seconds, up to 15 minutes apart after a failure | Redacted screening events with their local event id: decision, score, reasons, calling number, source IP, User-Agent, signer, verification result, SIP headers with the called party replaced by `REDACTED`, no `Identity` header, no SDP, no recordings, no transcripts. On by default. Off with `FALCON_SHARE=false`. Never in demo mode. See the README section "Telemetry". |
 | Your S3 endpoint | Every 30 seconds | Screened events as JSONL, unredacted. Only with your credentials. |
 
 An optional release check GETs `https://api.github.com/repos/CallerAPI/Falcon/releases/latest`.

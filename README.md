@@ -106,6 +106,12 @@ An event on a bridged call waits until the call ends, so the FAS verdict
 travels with it. A recorded call waits three more minutes for the voice
 verdict.
 
+Each event carries its local event id. CallerAPI stores an event once per
+install and id, so a batch sent again after a timeout is not counted twice.
+When CallerAPI answers with `Retry-After`, Falcon waits that long. After
+other failures the wait doubles from 30 seconds up to 15 minutes. Events
+wait in the local database until they are sent.
+
 If you screen outbound calls on the same switch, the calling number is your
 subscriber. Run that switch with `FALCON_SHARE=false`.
 

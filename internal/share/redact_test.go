@@ -116,6 +116,15 @@ func TestRedactHMACIsPerKeyAndStable(t *testing.T) {
 	}
 }
 
+// CallerAPI drops a resent event by install and event id.
+func TestRedactKeepsTheEventID(t *testing.T) {
+	ev := event()
+	ev.ID = 4242
+	if got := Redact(ev, []byte("k")).EventID; got != 4242 {
+		t.Fatalf("event_id = %d, want 4242", got)
+	}
+}
+
 func TestRedactHidesFromWhenItEqualsTo(t *testing.T) {
 	ev := event()
 	ev.From = "+14155550123"

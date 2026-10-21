@@ -50,6 +50,12 @@ Changed
 - The demo uses fictional carriers, addresses from the RFC 5737
   documentation ranges, and fictional phone numbers. `examples/ipintel.csv`
   and the demo IP intel tables hold only fictional rows.
+- Telemetry events carry `event_id`, the local event id. CallerAPI stores
+  an event once per install and id, so a batch that is sent again after a
+  timeout is not counted twice.
+- Telemetry waits as long as CallerAPI asks with `Retry-After`. After a
+  failure with no `Retry-After`, the wait doubles from 30 seconds up to 15
+  minutes, with jitter. Before, an install retried every 30 seconds.
 
 Removed
 
