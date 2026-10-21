@@ -50,6 +50,15 @@ for port in "$PORT" "$BRIDGE_PORT"; do
 done
 
 fail=0
+# The AGI harness always screens as Asterisk. Each later switch appends its
+# name. The offer check requires one event for every name in this list.
+offer_switches="asterisk"
+add_offer_switch() {
+  case ",${offer_switches}," in
+    *",$1,"*) ;;
+    *) offer_switches="${offer_switches},$1" ;;
+  esac
+}
 
 echo "== sip redirect (udp ${SIP_PORT})"
 set +e
@@ -84,6 +93,7 @@ python3 adapters/e2e/agi_harness.py "http://127.0.0.1:${PORT}/v1/screen" "$DENY"
 echo "== freeswitch lua"
 if command -v lua5.4 >/dev/null; then
   lua5.4 adapters/e2e/fs_harness.lua "http://127.0.0.1:${PORT}/v1/screen" "$DENY" "$CLEAN" || fail=1
+  add_offer_switch freeswitch
 else
   echo "lua5.4 not installed, skipped"
 fi
@@ -232,37 +242,27 @@ if [ -n "${FREESWITCH_IMAGE:-}" ]; then
     --entrypoint freeswitch "$FREESWITCH_IMAGE" -nonat -nf -nc -conf /etc/freeswitch -log /tmp -db /tmp -run /tmp >/dev/null
   wait_port falcon-e2e-freeswitch 5080 || true
   switch_check "freeswitch real" falcon-e2e-freeswitch 5080 603 404
+  add_offer_switch freeswitch
 fi
 
 if [ -n "${KAMAILIO_IMAGE:-}" ]; then
   kamailio_case sync kamailio falcon
   kamailio_case async kamailio_async falcon_async
+  add_offer_switch kamailio
 fi
 
 if [ -n "${OPENSIPS_IMAGE:-}" ]; then
   opensips_case sync opensips falcon
   opensips_case async opensips_async falcon_async
+  add_offer_switch opensips
 fi
 
-# Every INVITE in this run carries an offer. No event may say it has none,
-# and every call a switch adapter sent must name its Content-Type.
+# Every INVITE in this run carries an offer. No event may say it has none.
+# Every Asterisk, FreeSWITCH, Kamailio, and OpenSIPS event must name
+# Content-Type. A switch this run started must leave at least one event.
 echo "== offer"
-python3 - "$PORT" "$TOKEN" <<'PY' || fail=1
-import json, sys, urllib.request
-port, token = sys.argv[1], sys.argv[2]
-def get(path):
-    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers={"X-Falcon-Token": token})
-    return json.load(urllib.request.urlopen(req))
-events = get("/v1/events?limit=500")["data"]
-no_offer = [e["id"] for e in events if any(r.get("code") == "invite_no_sdp" for r in e.get("reasons") or [])]
-adapters = [e for e in events if e.get("switch") in ("freeswitch", "kamailio", "opensips")]
-unnamed = [e["id"] for e in adapters if "content-type: application/sdp" not in (get(f"/v1/events/{e['id']}").get("raw_sip") or "").lower()]
-print(f"events={len(events)} adapter_events={len(adapters)} invite_no_sdp={no_offer} no_content_type={unnamed}")
-if no_offer or unnamed or not adapters:
-    print("offer: FAIL")
-    sys.exit(1)
-print("offer: PASS")
-PY
+python3 adapters/e2e/offer_check.py --self-test || fail=1
+python3 adapters/e2e/offer_check.py "$PORT" "$TOKEN" "$offer_switches" || fail=1
 
 if [ "$fail" -ne 0 ]; then
   echo "adapters: FAIL"

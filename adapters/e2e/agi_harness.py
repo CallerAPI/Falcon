@@ -23,6 +23,8 @@ def run(falcon_url, caller, callee):
         "PJSIP_HEADER(read,User-Agent)": "e2e-harness/1.0",
         "PJSIP_HEADER(read,Contact)": "<sip:%s@203.0.113.9>" % caller,
         "PJSIP_HEADER(read,Max-Forwards)": "70",
+        # A real INVITE carries an offer. The adapter forwards this header.
+        "PJSIP_HEADER(read,Content-Type)": "application/sdp",
     }
     env = dict(os.environ, FALCON_URL=falcon_url)
     p = subprocess.Popen([sys.executable, AGI], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env, bufsize=1)
