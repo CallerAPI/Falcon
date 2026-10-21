@@ -101,7 +101,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .chip-btn.on { background: var(--accent-soft); border-color: var(--accent-line); color: #fff; }
 .chip-btn .count { margin-left: 6px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
-input[type="text"], input[type="number"], input[type="url"], input[type="time"], select, textarea {
+input[type="text"], input[type="number"], input[type="url"], input[type="time"], input[type="month"], select, textarea {
   height: 34px; padding: 0 10px; background: var(--bg-2); border: 1px solid var(--line-2); border-radius: var(--radius-sm); min-width: 0;
 }
 textarea { height: auto; padding: 8px 10px; }

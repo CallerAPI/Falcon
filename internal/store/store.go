@@ -201,6 +201,7 @@ type Alert struct {
 type Store interface {
 	MediaStore
 	ComplianceStore
+	TracebackStore
 	Insert(ctx context.Context, ev Event) (int64, error)
 	Recent(ctx context.Context, limit int) ([]Event, error)
 	Query(ctx context.Context, f Filter) ([]Event, error)

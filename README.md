@@ -648,6 +648,8 @@ All endpoints take the token. Ranges are `range=15m|1h|6h|24h|7d|30d` or
 | `GET /v1/rules`, `POST /v1/rules`, `DELETE /v1/rules/{id}` | Allow and deny rules. |
 | `GET|POST /v1/upstreams`, `GET|DELETE /v1/upstreams/{id}` | Upstream carriers with their FCC check: `name`, `rmd`, `frn`, `ips`, `spcs`, `contact`, `note`. Send `id` to update. |
 | `GET /v1/compliance` | FCC autopilot mode, list state, and log. |
+| `GET|POST /v1/tracebacks`, `GET|POST /v1/tracebacks/{id}` | Traceback cases. Open one with `from`, `to`, `call_at` (UTC), `reference`, `window_minutes`, `requested_at`. Update `status` (`open` or `answered`), `answer`, `note`. |
+| `GET /v1/upstreams/report?month=YYYY-MM`, `GET /v1/upstreams/report.csv` | Traffic, blocks, and traceback cases per upstream for one month. |
 | `GET /v1/stream` | Server-sent events, one per screened request. |
 | `POST /v1/reload` | Reload the IP intel table, the trust list, the CRL, and the rules. |
 | `GET /v1/settings`, `PUT /v1/settings` | Runtime settings: `mode`, `fas_mode`, `fcc_mode`, retention, raw SIP retention, recording retention, bridge sampling, and the three score levels. Telemetry is not a runtime setting. |
@@ -811,6 +813,35 @@ the subject, and the detail: rules added or deleted, settings, alert
 settings, reloads, traceback exports. `GET /v1/audit` lists them. Settings,
 System shows the latest changes. The actor is the dashboard user, the
 token, or the query token, with the client address.
+
+## Traceback requests
+
+Under 47 CFR 64.1200(n)(1) you must answer a traceback request within 24
+hours. Threats, Tracebacks takes the request as it arrives: the calling
+number, the called number, the call time in UTC, and the case reference.
+Falcon searches its own call log within the window you choose (10 minutes
+by default), picks the nearest call, and names the upstream that owns its
+source address or signer code in Rules, Upstream carriers. It writes the
+answer: who handed the call over, their RMD number and traceback contact,
+their FCC standing, the Call-ID, and the STIR/SHAKEN result. Copy it into
+the portal, mark the case answered, and keep the pack. A call your own
+customer sent is answered with that customer. The called number never
+leaves this host.
+
+Each open case is on the Overview with the time left. Six hours before the
+deadline it turns critical.
+
+Threats, Upstreams is the month per upstream: calls, blocks, flags, spam
+list and honeypot hits, failed verification, unsigned or C-attested calls,
+traceback cases, and the FCC standing. Traffic from an address that no
+upstream owns gets its own row. `GET /v1/upstreams/report.csv?month=YYYY-MM`
+is the file to keep as evidence that you know your upstreams.
+
+```bash
+curl -sS -X POST http://127.0.0.1:8090/v1/tracebacks -H "X-Falcon-Token: $FALCON_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"reference":"TB-2041","from":"+13125550101","to":"+14155550123","call_at":"2026-10-21 13:36:00"}'
+```
 
 ## Traceback pack
 

@@ -719,7 +719,7 @@
   };
 
   // ================= THREATS =================
-  const TABS = [["numbers", "Numbers"], ["signers", "Signers"], ["networks", "Networks"], ["vendors", "Vendors"], ["mine", "Your numbers"]];
+  const TABS = [["numbers", "Numbers"], ["signers", "Signers"], ["networks", "Networks"], ["upstreams", "Upstreams"], ["vendors", "Vendors"], ["tracebacks", "Tracebacks"], ["mine", "Your numbers"]];
   const Threats = {
     title: "Threats",
     mount(root, params) {
@@ -727,6 +727,7 @@
       root.innerHTML = '<div class="tabs" id="thTabs">' + TABS.map(([k, l]) => '<button type="button" data-t="' + k + '">' + l + "</button>").join("") + '</div><div id="thBody" class="stack"></div>';
       $("#thTabs").onclick = (e) => { const b = e.target.closest("[data-t]"); if (b) { this.tab = b.dataset.t; history.replaceState(null, "", "#threats?tab=" + this.tab); this.show(); } };
       $("#thBody").onclick = (e) => this.onClick(e);
+      $("#thBody").onchange = (e) => { if (e.target.id === "upMonth" && e.target.value) { this.month = e.target.value; this.show(); } };
       this.show();
     },
     rangeChanged() { this.show(); },
@@ -734,7 +735,7 @@
       $$("#thTabs [data-t]").forEach((b) => b.classList.toggle("on", b.dataset.t === this.tab));
       const body = $("#thBody");
       body.__html = null;
-      const fn = { numbers: this.numbers, signers: this.signers, networks: this.networks, vendors: this.vendors, mine: this.mine }[this.tab];
+      const fn = { numbers: this.numbers, signers: this.signers, networks: this.networks, upstreams: this.upstreams, vendors: this.vendors, tracebacks: this.tracebacks, mine: this.mine }[this.tab];
       fn.call(this, body);
     },
     table(head, rows, empty) {
@@ -778,6 +779,63 @@
         return '<p class="muted small" style="margin:0">Where the SIP came from, with the network that owns each address.</p>' +
           this.table([["Address"], ["Network"], ["Calls", 1], ["Blocked", 1], ["Callers", 1], ["Last seen"], [""]], rows, "<strong>No traffic</strong>No calls in this window.");
       });
+    },
+    upstreams(body) {
+      const month = this.month || new Date().toISOString().slice(0, 7);
+      this.loadInto(body, "upreport:" + month, "/v1/upstreams/report?month=" + month, (d) => {
+        const rows = (d.data || []).map((r) => "<tr><td>" + (r.id ? "<strong>" + esc(r.name) + "</strong>" : '<span class="muted">' + esc(r.name) + "</span>") +
+          (r.rmd || r.frn ? '<div class="muted small mono">' + esc([r.rmd, r.frn].filter(Boolean).join(" / ")) + "</div>" : "") + "</td><td>" + (r.id ? standingPill({ check: r.standing ? { standing: r.standing, confirmed: r.confirmed } : null, words: r.standing_text }) : "") +
+          '</td><td class="right num">' + fmtN(r.calls) + '</td><td class="right num" style="color:' + (r.blocked / Math.max(1, r.calls) > 0.2 ? "#fca5a5" : "inherit") + '">' + pctText(r.blocked, r.calls) +
+          '</td><td class="right num">' + pctText(r.flagged, r.calls) + '</td><td class="right num">' + fmtN(r.spam_hits) + '</td><td class="right num">' + fmtN(r.honeypots) +
+          '</td><td class="right num">' + fmtN(r.verify_failed) + '</td><td class="right num">' + fmtN(r.unsigned) + '</td><td class="right num">' + fmtN(r.tracebacks) + "</td></tr>");
+        return '<div style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap"><p class="muted small" style="margin:0;max-width:640px">Each upstream for one month: what it sent, what Falcon stopped, and its FCC standing. Keep the CSV as evidence that you know your upstreams.</p>' +
+          '<div style="display:flex;gap:8px;align-items:center"><input type="month" id="upMonth" value="' + esc(month) + '"><a class="btn sm" href="' + esc(withToken("/v1/upstreams/report.csv?month=" + month)) + '">Export CSV</a></div></div>' +
+          this.table([["Upstream"], ["FCC standing"], ["Calls", 1], ["Blocked", 1], ["Flagged", 1], ["Spam list", 1], ["Honeypot", 1], ["Failed checks", 1], ["Unsigned or C", 1], ["Tracebacks", 1]], rows, "<strong>No upstreams</strong>Add your upstream carriers in Rules.");
+      });
+    },
+    tracebacks(body) {
+      body.innerHTML = '<div class="card"><div class="card-head"><h2>Log a traceback request</h2><span class="hint">You have 24 hours to answer</span></div>' +
+        '<form id="tbForm" class="stack" style="gap:10px"><div class="form-row" style="grid-template-columns:repeat(3, minmax(0,1fr)) minmax(0,1.2fr)">' +
+        '<label class="field">Calling number<input name="from" type="text" placeholder="+13125550100" required></label><label class="field">Called number<input name="to" type="text" placeholder="+14155550123"></label>' +
+        '<label class="field">Call time (UTC)<input name="call_at" type="text" placeholder="2026-10-21 14:03:07" required></label><label class="field">Request reference<input name="reference" type="text" placeholder="Case number"></label></div>' +
+        '<div class="form-row" style="grid-template-columns:150px minmax(0,1fr) auto"><label class="field">Search window<select name="window_minutes"><option value="5">5 minutes</option><option value="10" selected>10 minutes</option><option value="30">30 minutes</option><option value="60">1 hour</option></select></label>' +
+        '<label class="field">Request received (UTC, empty is now)<input name="requested_at" type="text" placeholder="2026-10-21 15:00:00"></label><button class="btn primary" type="submit">Find the call</button></div></form>' +
+        '<p class="muted small" style="margin:12px 0 0">Falcon searches its own call log, names the upstream that sent the call, and writes the answer. The called number never leaves this host.</p></div>' +
+        '<div id="tbList" class="stack">' + '<div class="card">' + sk("100%", 100) + "</div></div>";
+      $("#tbForm").onsubmit = async (e) => {
+        e.preventDefault();
+        const form = e.target, f = new FormData(form);
+        try {
+          const c = await post("/v1/tracebacks", { from: f.get("from"), to: f.get("to"), call_at: f.get("call_at"), reference: f.get("reference"), window_minutes: Number(f.get("window_minutes")), requested_at: f.get("requested_at") });
+          toast(c.upstream ? "Found the call. It came from " + c.upstream + "." : (c.event_ids || []).length ? "Found the call. Its address is not in the registry." : "No matching call. The answer says so.", "ok");
+          form.reset();
+          this.loadTracebacks();
+        } catch (err) { toast(err.message, "bad"); }
+      };
+      this.loadTracebacks();
+    },
+    async loadTracebacks() {
+      try {
+        const res = await get("/v1/tracebacks");
+        if (state.view !== this || this.tab !== "tracebacks") return;
+        this.cases = res.data || [];
+        if (!this.cases.length) { patch($("#tbList"), '<div class="card"><div class="empty"><strong>No traceback requests</strong>Log one above when a request arrives.</div></div>'); return; }
+        const utc = (iso) => String(iso || "").replace("T", " ").slice(0, 19) + " UTC";
+        const dueIn = (iso) => {
+          const mins = Math.round((new Date(iso) - Date.now()) / 60000);
+          return mins < 60 ? "Due in " + Math.max(mins, 1) + " min" : "Due in " + Math.round(mins / 60) + " h";
+        };
+        patch($("#tbList"), this.cases.map((c) => {
+          const status = c.status === "answered" ? '<span class="pill allowed">Answered ' + esc(when(c.answered_at)) + "</span>" : c.overdue ? '<span class="pill blocked">Overdue</span>' : '<span class="pill flagged">' + esc(dueIn(c.due_at)) + "</span>";
+          const found = c.upstream ? "Came from " + c.upstream + "." : (c.event_ids || []).length ? "The address is not in the upstream registry." : "No matching call.";
+          return '<div class="card"><div class="card-head"><h2>' + esc(c.reference || "Call from " + c.from) + "</h2>" + status + "</div>" +
+            '<p class="muted small" style="margin:0 0 10px">' + esc(c.from + (c.to ? " to " + c.to : "") + ", " + utc(c.call_at) + ". " + found) + "</p>" +
+            '<textarea class="mono small" rows="7" style="width:100%" data-answer="' + c.id + '">' + esc(c.answer || "") + "</textarea>" +
+            '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button type="button" class="btn sm" data-tbcopy="' + c.id + '">Copy answer</button>' +
+            (c.status === "answered" ? '<button type="button" class="btn ghost sm" data-tbstatus="' + c.id + '|open">Reopen</button>' : '<button type="button" class="btn primary sm" data-tbstatus="' + c.id + '|answered">Mark answered</button>') +
+            ((c.event_ids || []).length ? '<a class="btn ghost sm" href="' + esc(withToken(c.pack_url)) + '">Download the pack</a>' : "") + "</div></div>";
+        }).join(""));
+      } catch (e) { toast(e.message, "bad"); }
     },
     vendors(body) {
       const render = (d) => {
@@ -905,6 +963,24 @@
       const dr = e.target.closest("[data-delroute]");
       if (dr) {
         try { await del("/v1/routes/" + dr.dataset.delroute); toast("Route removed", "ok"); this.show(); } catch (err) { toast(err.message, "bad"); }
+        return;
+      }
+      const cp = e.target.closest("[data-tbcopy]");
+      if (cp) {
+        const box = $('[data-answer="' + cp.dataset.tbcopy + '"]');
+        try { await navigator.clipboard.writeText(box.value); toast("Answer copied", "ok"); } catch (err) { box.select(); toast("Select the text and copy it", "bad"); }
+        return;
+      }
+      const st = e.target.closest("[data-tbstatus]");
+      if (st) {
+        const [id, status] = st.dataset.tbstatus.split("|");
+        const box = $('[data-answer="' + id + '"]');
+        st.disabled = true;
+        try {
+          await post("/v1/tracebacks/" + id, { status, answer: box ? box.value : undefined });
+          toast(status === "answered" ? "Marked answered" : "Reopened", "ok");
+          this.loadTracebacks();
+        } catch (err) { toast(err.message, "bad"); st.disabled = false; }
       }
     },
   };

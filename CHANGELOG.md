@@ -45,6 +45,13 @@ Added
   `FALCON_FCC_FILE`. Matching runs on the host.
 - `GET|POST /v1/upstreams`, `DELETE /v1/upstreams/{id}`, `GET /v1/compliance`,
   and the `fcc_mode` setting.
+- Traceback requests. Threats, Tracebacks logs a request with the calling
+  number, the called number, and the call time. Falcon finds the call,
+  names the upstream, writes the answer, and shows the 24-hour clock on the
+  Overview. `GET|POST /v1/tracebacks` and `/v1/tracebacks/{id}`.
+- Threats, Upstreams: traffic, blocks, and traceback cases per upstream for
+  one month, with the FCC standing. `GET /v1/upstreams/report` and
+  `report.csv`.
 
 Changed
 

@@ -234,6 +234,9 @@ CREATE INDEX IF NOT EXISTS voice_samples_event ON voice_samples(event_id);
 	if err := s.migrateCompliance(); err != nil {
 		return err
 	}
+	if err := s.migrateTracebacks(); err != nil {
+		return err
+	}
 	// Older rows get a unix time from the ISO text once.
 	if _, err := s.db.Exec(`UPDATE events SET received_unix = CAST(strftime('%s', substr(received_at, 1, 19)) AS INTEGER) WHERE received_unix IS NULL`); err != nil {
 		return err
