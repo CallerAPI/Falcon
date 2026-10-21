@@ -66,6 +66,7 @@ def main():
         "X-BCID-Assertion",
         "Privacy",
         "Max-Forwards",
+        "Content-Type",
     ):
         value = header(name)
         if value:

@@ -78,6 +78,8 @@ Changed
   keyed install that did not share got neither.
 - The Asterisk adapter reads `FALCON_URL` and `FALCON_TOKEN` from channel
   variables first, so one Asterisk can screen for several Falcon installs.
+- The Asterisk adapter forwards `Content-Type`. An INVITE with SDP no longer
+  gets the `invite_no_sdp` reason.
 - Telemetry sends less. A call with a signal is still an event. A clean
   inbound call is counted once an hour per verified signer, sending tool,
   calling number with 3 or more calls, and install. One clean call in 20 is
