@@ -166,6 +166,16 @@ type call struct {
 	finalizing sync.WaitGroup
 }
 
+// dialogInvite is the INVITE the dialog owns. sipgo 1.6 clones it and
+// puts the To tag on the clone. A response built from the original
+// request gets a different tag, and the dialog then rejects the 200.
+func (c *call) dialogInvite() *sip.Request {
+	if c.a != nil && c.a.InviteRequest != nil {
+		return c.a.InviteRequest
+	}
+	return c.aReq
+}
+
 func (c *call) contact() sip.Header {
 	_, port := c.s.viaAddr()
 	return &sip.ContactHeader{Address: sip.Uri{Scheme: "sip", User: "falcon", Host: c.host, Port: port}}
@@ -460,7 +470,7 @@ func (c *call) connect() {
 	c.finalSent, c.connected, c.connectAt, c.status = true, true, time.Now(), 200
 	body := c.aSDP
 	c.mu.Unlock()
-	res := sip.NewResponseFromRequest(c.aReq, 200, "OK", body)
+	res := sip.NewResponseFromRequest(c.dialogInvite(), 200, "OK", body)
 	res.AppendHeader(c.contact())
 	res.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 	res.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, CANCEL, BYE, OPTIONS, UPDATE, INFO"))
@@ -543,7 +553,7 @@ func (c *call) finalA(status int, headers map[string]string) {
 	}
 	c.finalSent, c.status = true, status
 	c.mu.Unlock()
-	res := sip.NewResponseFromRequest(c.aReq, status, reasonPhrase(status), nil)
+	res := sip.NewResponseFromRequest(c.dialogInvite(), status, reasonPhrase(status), nil)
 	for k, v := range headers {
 		res.AppendHeader(sip.NewHeader(k, v))
 	}
