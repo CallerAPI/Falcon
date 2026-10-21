@@ -18,7 +18,7 @@ embedded dashboard. Apache 2.0.
 
 ## Stand it up in five minutes
 
-Requirements: Go 1.22 or Docker. No database server, no other service.
+Requirements: Go 1.23 or Docker. No database server, no other service.
 
 ```
 # 1. Build and run (Go). VERSION is required. A binary without it says dev.
