@@ -35,6 +35,16 @@ Added
 - Protection mode and the FAS mode are runtime settings. No restart.
 - The adapter e2e runs the bridge binary: 603 for a denied caller, 503 for
   a clean one.
+- FCC autopilot. Rules, Upstream carriers lists the carriers that send you
+  calls. Every 6 hours Falcon checks each one against the Robocall
+  Mitigation Database and FCC orders. `monitor` (default) alerts and puts
+  the upstream on the Overview. `enforce` adds deny rules for its addresses
+  and signer codes, and removes them when the order is lifted. A block needs
+  the RMD number or FRN. A name match only warns. The list comes from
+  CallerAPI for installs that share or carry a key, or from
+  `FALCON_FCC_FILE`. Matching runs on the host.
+- `GET|POST /v1/upstreams`, `DELETE /v1/upstreams/{id}`, `GET /v1/compliance`,
+  and the `fcc_mode` setting.
 
 Changed
 

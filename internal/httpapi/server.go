@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/callerapi/falcon/internal/alerts"
+	"github.com/callerapi/falcon/internal/compliance"
 	"github.com/callerapi/falcon/internal/config"
 	"github.com/callerapi/falcon/internal/feed"
 	"github.com/callerapi/falcon/internal/fleet"
@@ -57,6 +58,9 @@ type Server struct {
 	Reputation *reputation.Table
 	// Alerts is the webhook watcher; nil when not started.
 	Alerts *alerts.Watcher
+	// Compliance is the FCC autopilot; nil when FALCON_FCC=false. The
+	// upstream registry works without it.
+	Compliance *compliance.Autopilot
 	// Fleet is the cached caller counts from the other switches. Nil when
 	// this process is not a fleet member.
 	Fleet *fleet.Cache
@@ -154,6 +158,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/config", s.withAuth(s.handleConfig))
 	mux.HandleFunc("/v1/rules", s.withAuth(s.handleRules))
 	mux.HandleFunc("/v1/rules/", s.withAuth(s.handleRule))
+	mux.HandleFunc("/v1/upstreams", s.withAuth(s.handleUpstreams))
+	mux.HandleFunc("/v1/upstreams/", s.withAuth(s.handleUpstream))
+	mux.HandleFunc("/v1/compliance", s.withAuth(s.handleCompliance))
 	mux.HandleFunc("/v1/stream", s.withAuth(s.handleStream))
 	mux.HandleFunc("/v1/reload", s.withAuth(s.handleReload))
 	mux.HandleFunc("/v1/demo", s.withAuth(s.handleDemo))

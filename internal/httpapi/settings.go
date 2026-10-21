@@ -19,6 +19,7 @@ import (
 type Settings struct {
 	Mode                   string `json:"mode"`
 	FASMode                string `json:"fas_mode"`
+	FCCMode                string `json:"fcc_mode"`
 	RetentionDays          int    `json:"retention_days"`
 	RawSIPRetentionDays    int    `json:"raw_sip_retention_days"`
 	RecordingRetentionDays int    `json:"recording_retention_days"`
@@ -32,6 +33,7 @@ type Settings struct {
 const (
 	kvMode         = "mode"
 	kvFASMode      = "fas_mode"
+	kvFCCMode      = "fcc_mode"
 	kvRetention    = "retention_days"
 	kvRawRetention = "raw_sip_retention_days"
 	kvRecRetention = "recording_retention_days"
@@ -47,7 +49,7 @@ const (
 
 func (s *Server) defaults() Settings {
 	out := Settings{
-		Mode: s.Cfg.Mode, FASMode: s.Cfg.FASMode,
+		Mode: s.Cfg.Mode, FASMode: s.Cfg.FASMode, FCCMode: s.Cfg.FCCMode,
 		RetentionDays: s.Cfg.RetentionDays, RawSIPRetentionDays: s.Cfg.RawSIPRetentionDays, RecordingRetentionDays: s.Cfg.RecordingRetentionDays,
 		BridgeFanoutEvery: s.Cfg.BridgeFanoutEvery, BridgeCleanEvery: s.Cfg.BridgeCleanEvery,
 		FlagScore: s.Cfg.FlagScore, ChallengeScore: s.Cfg.ChallengeScore, RejectScore: s.Cfg.RejectScore,
@@ -57,6 +59,9 @@ func (s *Server) defaults() Settings {
 	}
 	if out.FASMode == "" {
 		out.FASMode = config.FASMonitor
+	}
+	if out.FCCMode == "" {
+		out.FCCMode = config.ModeMonitor
 	}
 	if out.FlagScore == 0 && out.ChallengeScore == 0 && out.RejectScore == 0 && s.Engine != nil {
 		th := s.Engine.Thresholds()
@@ -103,6 +108,9 @@ func (s *Server) loadSettings(ctx context.Context) Settings {
 	if v, _ := s.Store.KVGet(ctx, kvFASMode); v == config.FASOff || v == config.FASMonitor || v == config.FASEnforce {
 		out.FASMode = v
 	}
+	if v, _ := s.Store.KVGet(ctx, kvFCCMode); v == config.ModeMonitor || v == config.ModeEnforce {
+		out.FCCMode = v
+	}
 	for _, kv := range []struct {
 		key  string
 		into *int
@@ -137,6 +145,9 @@ func (s *Server) Mode(ctx context.Context) string { return s.Settings(ctx).Mode 
 
 // FASMode is off, monitor, or enforce right now.
 func (s *Server) FASMode(ctx context.Context) string { return s.Settings(ctx).FASMode }
+
+// FCCMode is monitor or enforce right now.
+func (s *Server) FCCMode(ctx context.Context) string { return s.Settings(ctx).FCCMode }
 
 // Sampling is how often the bridge carries a fan-out call and a clean call.
 func (s *Server) Sampling(ctx context.Context) (fanoutEvery, cleanEvery int) {
@@ -173,6 +184,7 @@ func (s *Server) Retention() store.Retention {
 type settingsPatch struct {
 	Mode                   *string `json:"mode"`
 	FASMode                *string `json:"fas_mode"`
+	FCCMode                *string `json:"fcc_mode"`
 	RetentionDays          *int    `json:"retention_days"`
 	RawSIPRetentionDays    *int    `json:"raw_sip_retention_days"`
 	RecordingRetentionDays *int    `json:"recording_retention_days"`
@@ -189,6 +201,9 @@ func (p settingsPatch) apply(cur *Settings) {
 	}
 	if p.FASMode != nil {
 		cur.FASMode = *p.FASMode
+	}
+	if p.FCCMode != nil {
+		cur.FCCMode = *p.FCCMode
 	}
 	for _, f := range []struct {
 		in  *int
@@ -211,6 +226,8 @@ func validSettings(cur Settings) string {
 		return "mode must be enforce or monitor"
 	case cur.FASMode != config.FASOff && cur.FASMode != config.FASMonitor && cur.FASMode != config.FASEnforce:
 		return "fas_mode must be off, monitor, or enforce"
+	case cur.FCCMode != config.ModeMonitor && cur.FCCMode != config.ModeEnforce:
+		return "fcc_mode must be monitor or enforce"
 	case cur.RetentionDays < 1 || cur.RetentionDays > maxRetention:
 		return "retention_days must be between 1 and 3650"
 	case cur.RawSIPRetentionDays < 0 || cur.RawSIPRetentionDays > cur.RetentionDays:
@@ -248,7 +265,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		pairs := map[string]string{
-			kvMode: cur.Mode, kvFASMode: cur.FASMode,
+			kvMode: cur.Mode, kvFASMode: cur.FASMode, kvFCCMode: cur.FCCMode,
 			kvRetention: strconv.Itoa(cur.RetentionDays), kvRawRetention: strconv.Itoa(cur.RawSIPRetentionDays),
 			kvRecRetention: strconv.Itoa(cur.RecordingRetentionDays),
 			kvFanoutEvery:  strconv.Itoa(cur.BridgeFanoutEvery), kvCleanEvery: strconv.Itoa(cur.BridgeCleanEvery),
@@ -266,6 +283,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if b, err := json.Marshal(cur); err == nil {
 			s.audit(r, "settings", "runtime", string(b))
+		}
+		if s.Compliance != nil && patch.FCCMode != nil {
+			if err := s.Compliance.Evaluate(r.Context()); err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "saved, but the FCC autopilot did not run: " + err.Error()})
+				return
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"effective": cur})
 	default:

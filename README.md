@@ -571,6 +571,46 @@ gets `X-Falcon-Provider`. A starter file is in `examples/ipintel.csv`.
 Zoom walkthrough: `falcon demo seed`, then `FALCON_DEMO=true` and
 `falcon demo swap paid`. See `examples/demo/README.md`.
 
+## FCC autopilot
+
+List the carriers that send you calls in Rules, Upstream carriers: a name,
+the RMD number or FRN, the addresses they send from, and their signer codes.
+Every 6 hours Falcon checks each one against the FCC standing of every
+provider: the Robocall Mitigation Database, FCC removal orders, and final
+determination orders.
+
+| Standing | What it means |
+| --- | --- |
+| In the RMD | The provider has a filing and no FCC order. |
+| Not in the RMD | The filing is gone. Under 47 CFR 64.6305(g) you may not accept its calls directly. |
+| Removed from the RMD | An FCC order removed it. The same rule applies. |
+| FCC block order | A final determination order names it. Under 47 CFR 64.1200(n)(3) downstream providers must block its traffic. |
+| Number not found | The RMD number or FRN you entered is not on the list. Check it. |
+
+Falcon blocks an upstream only when its RMD number or FRN matches. A name
+alone gives a warning and never a block. When one FRN has an order on one
+filing and a clean filing next to it, Falcon also asks for the RMD number.
+
+`monitor` (the default) records each change of standing, alerts on the
+webhook, and puts the upstream on the Overview with the one action that
+settles it. `enforce` also adds a deny rule for every address and signer
+code of each upstream under an order. The autopilot owns those rules. It
+replaces them on each pass, removes them when the FCC lifts the order or the
+upstream leaves the registry, and never touches your own rules. A failed
+fetch keeps the last list, so a network fault never lifts a block.
+Settings, FCC autopilot changes the mode at runtime. `FALCON_FCC_MODE` is
+the start value.
+
+CallerAPI serves the list to installs that share telemetry for a day or
+carry a key. Falcon downloads the whole list and matches on this host, so
+CallerAPI never learns who your upstreams are. A host with no outbound
+access reads the same JSON from `FALCON_FCC_FILE`. `FALCON_FCC=false` turns
+the autopilot off. The upstream registry stays.
+
+Overview also names calls signed by a provider under an FCC order. That
+match uses the company name on the signing certificate, so the action is a
+signer rule you choose.
+
 ## Lists
 
 ```bash
@@ -606,9 +646,11 @@ All endpoints take the token. Ranges are `range=15m|1h|6h|24h|7d|30d` or
 | `GET /v1/histogram` | Ten score buckets and the live thresholds. |
 | `GET /v1/parties?by=signer|provider|ip|fingerprint|customer|caller` | Per-entity totals, reject rate, attestation mix, verstat, distinct callers, and the network score for signers and tools. |
 | `GET /v1/rules`, `POST /v1/rules`, `DELETE /v1/rules/{id}` | Allow and deny rules. |
+| `GET|POST /v1/upstreams`, `GET|DELETE /v1/upstreams/{id}` | Upstream carriers with their FCC check: `name`, `rmd`, `frn`, `ips`, `spcs`, `contact`, `note`. Send `id` to update. |
+| `GET /v1/compliance` | FCC autopilot mode, list state, and log. |
 | `GET /v1/stream` | Server-sent events, one per screened request. |
 | `POST /v1/reload` | Reload the IP intel table, the trust list, the CRL, and the rules. |
-| `GET /v1/settings`, `PUT /v1/settings` | Runtime settings: `mode`, `fas_mode`, retention, raw SIP retention, recording retention, bridge sampling, and the three score levels. Telemetry is not a runtime setting. |
+| `GET /v1/settings`, `PUT /v1/settings` | Runtime settings: `mode`, `fas_mode`, `fcc_mode`, retention, raw SIP retention, recording retention, bridge sampling, and the three score levels. Telemetry is not a runtime setting. |
 | `GET /v1/alerts`, `GET|PUT /v1/alerts/settings`, `POST /v1/alerts/test` | Fired alerts, webhook and thresholds, a test message. |
 | `GET /v1/audit` | Who changed what. |
 | `GET /v1/traceback.zip?spc=|number=|ip=|fingerprint=` | The traceback pack. |
@@ -634,6 +676,7 @@ that turns it on. `GET /v1/modules` returns the same list.
 | Live reputation | `CALLERAPI_API_KEY` and `FALCON_VOICE_FIREWALL=true` |
 | Business Caller ID | `CALLERAPI_API_KEY` |
 | Network reputation | `FALCON_SHARE=true` and `FALCON_REPUTATION=true` (both default) |
+| FCC autopilot | `FALCON_FCC=true` (default) and sharing, a key, or `FALCON_FCC_FILE` |
 | Call bridge and recording | `FALCON_SIP_LISTEN` and `FALCON_SIP_MODE=bridge` |
 | FAS guard | The call bridge |
 | AI voice analysis | `FALCON_VOICE_PROVIDER=callerapi` or `openai` |

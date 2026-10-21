@@ -386,7 +386,7 @@
       }
       let done = false;
       if (it.action.rule) done = await addRule(it.action.rule, it.action.label);
-      else if (it.action.setting) done = !!(await saveSettings(it.action.setting, "Done. " + it.action.label + " is on."));
+      else if (it.action.setting) done = !!(await saveSettings(it.action.setting, "Done: " + it.action.label));
       if (done) { card.remove(); this.refresh(); loadStatus(); } else act.disabled = false;
     },
     renderRecent(d) {
@@ -924,6 +924,15 @@
         '<button class="btn primary" type="submit">Save</button></form>' +
         '<p class="muted small" style="margin:12px 0 0">Block rejects the call with SIP 603. Always allow skips every check. Honeypot marks your unassigned numbers: anyone who calls them is a robocaller.</p></div>' +
         '<div id="ruleList">' + '<div class="card">' + sk("100%", 80) + "</div></div>" +
+        '<div class="card"><div class="card-head"><h2>Upstream carriers</h2><span class="hint" id="upHint">Falcon checks each one against FCC orders and the Robocall Mitigation Database</span></div>' +
+        '<form id="upForm" class="stack" style="gap:10px"><input type="hidden" name="uid">' +
+        '<div class="form-row" style="grid-template-columns:minmax(0,1.6fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.2fr)"><label class="field">Name<input name="name" type="text" placeholder="Northwind Voice" required></label>' +
+        '<label class="field">RMD number<input name="rmd" type="text" placeholder="RMD0012345"></label><label class="field">FRN<input name="frn" type="text" placeholder="0012345678"></label>' +
+        '<label class="field">Traceback contact<input name="contact" type="text" placeholder="noc@example.com"></label></div>' +
+        '<div class="form-row" style="grid-template-columns:minmax(0,2.6fr) minmax(0,1.2fr) auto"><label class="field">Addresses<input name="ips" type="text" placeholder="192.0.2.10, 198.51.100.0/24"></label>' +
+        '<label class="field">Signer codes<input name="spcs" type="text" placeholder="1234, 567J"></label><button class="btn primary" type="submit">Save</button></div></form>' +
+        '<p class="muted small" style="margin:12px 0 0">Falcon blocks an upstream only on its RMD number or FRN, never on a name alone. The addresses and signer codes are what a block covers.</p>' +
+        '<div id="upList" style="margin-top:14px"></div></div>' +
         '<div class="card"><div class="card-head"><h2>Your customers</h2><span class="hint">Outbound calls with a caller ID the customer does not own are rejected</span></div>' +
         '<form id="custForm" class="form-row" style="grid-template-columns:minmax(0,0.8fr) minmax(0,1fr) minmax(0,2fr) auto">' +
         '<label class="field">Account ID<input name="id" type="text" placeholder="acme" required></label><label class="field">Name<input name="name" type="text" placeholder="Acme Dialer"></label>' +
@@ -955,8 +964,57 @@
         if (!b) return;
         try { await del("/v1/customers/" + encodeURIComponent(b.dataset.cust)); toast("Customer removed", "ok"); this.loadCustomers(); } catch (err) { toast(err.message, "bad"); }
       };
+      const split = (v) => String(v || "").split(",").map((x) => x.trim()).filter(Boolean);
+      $("#upForm").onsubmit = async (e) => {
+        e.preventDefault();
+        const form = e.target, f = new FormData(form);
+        const body = { id: Number(f.get("uid")) || 0, name: f.get("name"), rmd: f.get("rmd"), frn: f.get("frn"), ips: split(f.get("ips")), spcs: split(f.get("spcs")), contact: f.get("contact") };
+        try {
+          const saved = await post("/v1/upstreams", body);
+          toast(saved.words ? saved.name + ": " + saved.words : "Upstream saved", "ok");
+          form.reset();
+          form.elements.uid.value = "";
+          this.loadUpstreams();
+          this.loadRules();
+        } catch (err) { toast(err.message, "bad"); }
+      };
+      $("#upList").onclick = async (e) => {
+        const ed = e.target.closest("[data-upedit]"), rm = e.target.closest("[data-updel]");
+        if (ed) {
+          const u = (this.ups || [])[Number(ed.dataset.upedit)], el = $("#upForm").elements;
+          if (!u) return;
+          el.uid.value = u.id; el.name.value = u.name; el.rmd.value = u.rmd || ""; el.frn.value = u.frn || "";
+          el.ips.value = (u.ips || []).join(", "); el.spcs.value = (u.spcs || []).join(", "); el.contact.value = u.contact || "";
+          el.name.focus();
+          return;
+        }
+        if (!rm) return;
+        try { await del("/v1/upstreams/" + rm.dataset.updel); toast("Upstream removed", "ok"); this.loadUpstreams(); this.loadRules(); } catch (err) { toast(err.message, "bad"); }
+      };
       this.loadRules();
+      this.loadUpstreams();
       this.loadCustomers();
+    },
+    async loadUpstreams() {
+      try {
+        const res = await get("/v1/upstreams");
+        const fcc = res.fcc || {}, list = fcc.list || {};
+        let hint = "FCC autopilot is off. Set FALCON_FCC=true to check upstreams.";
+        if (fcc.enabled) {
+          hint = list.providers ? "Checked against " + fmtN(list.providers) + " providers. " + (fcc.mode === "enforce" ? "Falcon blocks upstreams under an FCC order." : "Monitor mode: Falcon alerts and blocks nothing.") : "Waiting for the FCC list" + (list.error ? ": " + list.error : ".");
+        }
+        setText($("#upHint"), hint);
+        this.ups = res.data || [];
+        if (!this.ups.length) { patch($("#upList"), '<p class="muted small" style="margin:0">No upstreams yet. Add the carriers that send you calls, with their RMD number, so Falcon can watch their FCC standing.</p>'); return; }
+        const covers = (u) => {
+          const all = (u.ips || []).concat((u.spcs || []).map((s) => "SPC " + s));
+          return all.length > 4 ? all.slice(0, 4).join(", ") + ", and " + (all.length - 4) + " more" : all.join(", ") || "None";
+        };
+        patch($("#upList"), '<div class="table-wrap"><table><thead><tr><th>Upstream</th><th>RMD / FRN</th><th>Covers</th><th>FCC standing</th><th></th></tr></thead><tbody>' + this.ups.map((u, i) =>
+          "<tr><td><strong>" + esc(u.name) + "</strong>" + (u.contact ? '<div class="muted small">' + esc(u.contact) + "</div>" : "") + '</td><td class="mono small">' + esc([u.rmd, u.frn].filter(Boolean).join(" / ") || "None") +
+          '</td><td class="mono small">' + esc(covers(u)) + "</td><td>" + standingPill(u) + (u.check && u.check.since ? '<div class="muted small">Since ' + esc(u.check.since) + "</div>" : "") +
+          '</td><td class="acts"><button type="button" class="btn ghost sm" data-upedit="' + i + '">Edit</button><button type="button" class="btn ghost sm" data-updel="' + u.id + '">Remove</button></td></tr>').join("") + "</tbody></table></div>");
+      } catch (e) { toast(e.message, "bad"); }
     },
     async loadRules() {
       try {
@@ -964,8 +1022,9 @@
         const rows = (res.data || []).map((r) => {
           const kind = r.kind === "deny" ? '<span class="pill blocked">Block</span>' : r.kind === "allow" ? '<span class="pill allowed">Allow</span>' : '<span class="pill flagged">Honeypot</span>';
           const exp = r.expires_at && r.expires_at.indexOf("0001") !== 0 ? "Until " + dayClock(r.expires_at) : "Always";
+          const from = { fleet: ", from the fleet hub", fcc: ", from the FCC autopilot" }[r.origin] || "";
           return "<tr><td>" + kind + "</td><td>" + esc({ number: "Number", ip: "Address", spc: "Signer" }[r.subject] || r.subject) + '</td><td class="mono">' + esc(r.value) + "</td><td>" + esc(r.note || "") +
-            '</td><td class="muted small">' + esc(exp) + (r.origin === "fleet" ? ", from the fleet hub" : "") + '</td><td class="acts">' + (r.origin === "fleet" ? "" : '<button type="button" class="btn ghost sm" data-del="' + r.id + '">Remove</button>') + "</td></tr>";
+            '</td><td class="muted small">' + esc(exp) + from + '</td><td class="acts">' + (from ? "" : '<button type="button" class="btn ghost sm" data-del="' + r.id + '">Remove</button>') + "</td></tr>";
         });
         patch($("#ruleList"), Threats.table([["Rule"], ["Match"], ["Value"], ["Note"], ["Active"], [""]], rows, "<strong>No rules yet</strong>Block a number from any call, or add one above."));
       } catch (e) { toast(e.message, "bad"); }
@@ -980,6 +1039,15 @@
       } catch (e) { toast(e.message, "bad"); }
     },
   };
+
+  const STANDING = { listed: ["allowed", "In the RMD"], blocked: ["blocked", "FCC block order"], removed: ["blocked", "Removed from the RMD"], unlisted: ["blocked", "Not in the RMD"], not_found: ["flagged", "Number not found"], unknown: ["", "No RMD number"] };
+  function standingPill(u) {
+    const c = u.check;
+    if (!c) return '<span class="pill">Not checked</span>';
+    let [cls, text] = STANDING[c.standing] || ["", c.standing];
+    if (!c.confirmed && cls === "blocked") { cls = "flagged"; text = "May be: " + text; }
+    return '<span class="pill ' + cls + '" title="' + esc(u.words || "") + '">' + esc(text) + "</span>";
+  }
 
   // ================= SETTINGS =================
   const PRESETS = [
@@ -1022,10 +1090,13 @@
         '<p class="muted small" style="margin:0">0 turns sampling off. Clean-call sampling lets the FAS guard check vendors on ordinary traffic.</p></div></div>' +
         '<div class="set"><div><h3>FAS guard</h3><p>Hears ringback, busy, intercepts, and silence after a vendor answers a bridged call. Watch records it and alerts. Hold keeps the answer back until a person speaks, so your customer is not billed for a false answer and the switch can route again.</p></div><div class="ctl">' +
         '<div class="seg" id="fasSeg"><button type="button" data-v="off">Off</button><button type="button" data-v="monitor">Watch</button><button type="button" data-v="enforce">Hold</button></div>' +
-        (bridge ? "" : '<p class="muted small" style="margin:0">Needs the call bridge.</p>') + "</div></div>";
+        (bridge ? "" : '<p class="muted small" style="margin:0">Needs the call bridge.</p>') + "</div></div>" +
+        '<div class="set"><div><h3>FCC autopilot</h3><p>Checks your upstream carriers against FCC orders and the Robocall Mitigation Database every 6 hours. Watch alerts you. Block adds deny rules for an upstream the FCC removed or ordered blocked. Add upstreams in Rules.</p></div><div class="ctl">' +
+        '<div class="seg" id="fccSeg"><button type="button" data-v="monitor">Watch</button><button type="button" data-v="enforce">Block</button></div><p class="muted small" id="fccHint" style="margin:0"></p></div></div>';
       const paintSegs = () => {
         $$("#modeSeg button").forEach((b) => b.classList.toggle("on", b.dataset.v === this.eff.mode));
         $$("#fasSeg button").forEach((b) => b.classList.toggle("on", b.dataset.v === this.eff.fas_mode));
+        $$("#fccSeg button").forEach((b) => b.classList.toggle("on", b.dataset.v === this.eff.fcc_mode));
         const p = PRESETS.find((x) => x[2].flag_score === this.eff.flag_score && x[2].challenge_score === this.eff.challenge_score && x[2].reject_score === this.eff.reject_score);
         $$("#presetSeg button").forEach((b) => b.classList.toggle("on", !!p && b.dataset.p === p[0]));
         setText($("#presetHint"), p ? p[3] : "Custom levels");
@@ -1034,11 +1105,19 @@
       const apply = async (body, text) => { const eff = await saveSettings(body, text); if (eff) { this.eff = eff; paintSegs(); const tf = $("#threshForm"); ["flag_score", "challenge_score", "reject_score"].forEach((k) => { tf[k].value = eff[k]; }); loadStatus(); } };
       $("#modeSeg").onclick = (ev) => { const b = ev.target.closest("[data-v]"); if (b && b.dataset.v !== this.eff.mode) apply({ mode: b.dataset.v }, b.dataset.v === "enforce" ? "Enforce: Falcon blocks hard fraud now" : "Monitor: Falcon records and blocks nothing"); };
       $("#fasSeg").onclick = (ev) => { const b = ev.target.closest("[data-v]"); if (b && b.dataset.v !== this.eff.fas_mode) apply({ fas_mode: b.dataset.v }, "FAS guard saved"); };
+      $("#fccSeg").onclick = async (ev) => {
+        const b = ev.target.closest("[data-v]");
+        if (!b || b.dataset.v === this.eff.fcc_mode) return;
+        await apply({ fcc_mode: b.dataset.v }, b.dataset.v === "enforce" ? "FCC autopilot blocks upstreams under an FCC order now" : "FCC autopilot alerts and blocks nothing");
+        try { const mods = await get("/v1/modules"); if (state.view === this) this.paintModules(mods.data || []); } catch (e) { /* the next visit repaints */ }
+      };
       $("#presetSeg").onclick = (ev) => { const b = ev.target.closest("[data-p]"); const p = b && PRESETS.find((x) => x[0] === b.dataset.p); if (p) apply(p[2], p[1] + " levels saved"); };
       $("#threshForm").onsubmit = (ev) => { ev.preventDefault(); const f = ev.target; apply({ flag_score: Number(f.flag_score.value), challenge_score: Number(f.challenge_score.value), reject_score: Number(f.reject_score.value) }, "Levels saved"); };
       $("#bridgeForm").onsubmit = (ev) => { ev.preventDefault(); const f = ev.target; apply({ recording_retention_days: Number(f.recording_retention_days.value), bridge_fanout_every: Number(f.bridge_fanout_every.value), bridge_clean_every: Number(f.bridge_clean_every.value) }, "Bridge settings saved"); };
     },
     paintModules(mods) {
+      const fcc = mods.find((m) => m.id === "fcc");
+      setText($("#fccHint"), fcc ? (fcc.state === "on" ? fcc.detail || "" : "Off. Set " + fcc.enable + ".") : "");
       const words = { on: "On", off: "Off", needs_key: "Needs a key", error: "Problem" };
       patch($("#setModules"), mods.map((m) => '<div class="module"><div class="module-top"><strong>' + esc(m.title) + '</strong><span class="state ' + esc(m.state) + '">' + esc(words[m.state] || m.state) + "</span></div><p>" + esc(m.summary) + "</p>" +
         (m.detail ? '<p style="color:var(--text-2)">' + esc(m.detail) + "</p>" : "") + (m.state !== "on" && m.enable ? '<span class="enable">' + esc(m.enable) + "</span>" : "") + "</div>").join(""));

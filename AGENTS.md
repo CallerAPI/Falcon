@@ -87,6 +87,7 @@ and `adapters: PASS` at the end.
 | `FALCON_SIP_MODE` | `bridge` when Falcon should carry suspicious calls, record them, and run the FAS guard. `redirect` answers 302 or 603 and steps out. | `redirect` |
 | `FALCON_MEDIA_IP` | The bridge host has more than one address. Falcon puts this one in SDP. | empty |
 | `FALCON_FAS_MODE` | `enforce` holds a bridged answer until a person speaks. `monitor` only records. Settings changes it at runtime. | `monitor` |
+| `FALCON_FCC_MODE` | `enforce` adds deny rules for every upstream under an FCC order, matched by RMD number or FRN. `monitor` alerts only. Settings changes it at runtime. `FALCON_FCC=false` turns the autopilot off. `FALCON_FCC_FILE` reads the list from disk. | `monitor` |
 | `FALCON_SHARE` | The operator opts out of redacted telemetry. The environment is the only switch. Demo mode never shares. | `true` |
 | `CALLERAPI_API_KEY` | The operator has a CallerAPI account: credits telemetry, enables the paid feed, live reputation, Business Caller ID, number check, the voice scan provider, and the assistant. | empty |
 | `FALCON_VOICE_PROVIDER` | Recordings should be transcribed by speaker and classified: `openai` (any OpenAI-compatible speech and chat pair) or `callerapi`. | `off` |

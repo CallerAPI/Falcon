@@ -20,6 +20,7 @@ import (
 
 	"github.com/callerapi/falcon/internal/alerts"
 	"github.com/callerapi/falcon/internal/bridge"
+	"github.com/callerapi/falcon/internal/compliance"
 	"github.com/callerapi/falcon/internal/config"
 	"github.com/callerapi/falcon/internal/demo"
 	"github.com/callerapi/falcon/internal/export"
@@ -256,6 +257,11 @@ func main() {
 		InstallID: installID,
 	}}
 	go api.Alerts.Run(ctx)
+	if cfg.FCC {
+		api.Compliance = newAutopilot(cfg, db, api, installKey)
+		go api.Compliance.Run(ctx)
+		log.Printf("falcon fcc: autopilot in %s mode, list from %s", api.FCCMode(ctx), api.Compliance.SourceName)
+	}
 	if cfg.Mode == config.ModeMonitor {
 		log.Printf("falcon mode: monitor. Decisions are recorded. The switch is told to continue.")
 	}
@@ -413,6 +419,22 @@ func ensureSecret(ctx context.Context, db store.Store, key string) ([]byte, erro
 		return nil, err
 	}
 	return b[:], db.KVSet(ctx, key, hex.EncodeToString(b[:]))
+}
+
+// newAutopilot wires the FCC autopilot. The list comes from FALCON_FCC_FILE,
+// or from CallerAPI when the install shares telemetry or carries a key.
+func newAutopilot(cfg config.Config, db store.Store, api *httpapi.Server, key *identity.Key) *compliance.Autopilot {
+	a := &compliance.Autopilot{Store: db, Mode: api.FCCMode, Reload: api.ReloadRules, Refresh: cfg.FCCRefresh, SourceName: "none"}
+	if api.Alerts != nil {
+		a.Alert = api.Alerts.FireNow
+	}
+	switch {
+	case cfg.FCCFile != "":
+		a.Source, a.SourceName = compliance.File{Path: cfg.FCCFile}, "file"
+	case cfg.CallerAPIBase != "" && (cfg.Share || cfg.CallerAPIKey != ""):
+		a.Source, a.SourceName = &compliance.Source{BaseURL: cfg.CallerAPIBase, Key: key}, "callerapi"
+	}
+	return a
 }
 
 func prepareDemo(cfg *config.Config) error {

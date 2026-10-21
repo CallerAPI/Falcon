@@ -231,6 +231,9 @@ CREATE INDEX IF NOT EXISTS voice_samples_event ON voice_samples(event_id);
 	if err := s.migrateMedia(); err != nil {
 		return err
 	}
+	if err := s.migrateCompliance(); err != nil {
+		return err
+	}
 	// Older rows get a unix time from the ISO text once.
 	if _, err := s.db.Exec(`UPDATE events SET received_unix = CAST(strftime('%s', substr(received_at, 1, 19)) AS INTEGER) WHERE received_unix IS NULL`); err != nil {
 		return err
@@ -944,39 +947,7 @@ ON CONFLICT(kind, subject, value) DO UPDATE SET note = excluded.note, expires_at
 // ReplaceFleetRules swaps the fleet copy of the shared list. Local rules stay.
 // An empty list removes every fleet rule.
 func (s *SQLite) ReplaceFleetRules(ctx context.Context, rules []lists.Rule) error {
-	ready := make([]lists.Rule, 0, len(rules))
-	for _, r := range rules {
-		n, err := lists.Normalize(r)
-		if err != nil {
-			return err
-		}
-		n.Origin = "fleet"
-		if n.CreatedAt.IsZero() {
-			n.CreatedAt = time.Now().UTC()
-		}
-		ready = append(ready, n)
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM rules WHERE origin = 'fleet'`); err != nil {
-		return err
-	}
-	for _, r := range ready {
-		var expires any
-		if !r.ExpiresAt.IsZero() {
-			expires = r.ExpiresAt.UTC().Format(time.RFC3339Nano)
-		}
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO rules (kind, subject, value, note, created_at, expires_at, origin) VALUES (?, ?, ?, ?, ?, ?, 'fleet')
-ON CONFLICT(kind, subject, value) DO NOTHING`,
-			string(r.Kind), string(r.Subject), r.Value, r.Note, r.CreatedAt.UTC().Format(time.RFC3339Nano), expires); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+	return s.ReplaceOriginRules(ctx, "fleet", rules)
 }
 
 // FleetPending returns local events not yet copied to the fleet hub.

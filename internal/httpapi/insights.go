@@ -105,6 +105,7 @@ func (s *Server) insights(ctx context.Context, from, to time.Time, ov Overview) 
 		return ok && hit.Kind == lists.Deny
 	}
 
+	s.fccInsights(ctx, from, to, denied, add)
 	s.spoofInsights(ctx, from, to, add)
 	s.voiceInsights(ctx, from, to, denied, add)
 	s.fasInsights(ctx, from, to, add)

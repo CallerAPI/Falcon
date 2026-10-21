@@ -70,6 +70,15 @@ type Config struct {
 	ReputationEnforce bool
 	ReputationRefresh time.Duration
 
+	// FCC is the FCC autopilot. It checks the upstream carriers against FCC
+	// orders and the Robocall Mitigation Database. FCCMode is the start
+	// value of the runtime setting: monitor alerts, enforce also blocks.
+	// FCCFile replaces the CallerAPI list for a host with no outbound access.
+	FCC        bool
+	FCCMode    string
+	FCCRefresh time.Duration
+	FCCFile    string
+
 	// Behaviour thresholds over the last hour; zero means the default.
 	FanoutPerHour int
 	SequentialN   int
@@ -298,6 +307,11 @@ func Load() Config {
 		ReputationRefresh: envDuration("FALCON_REPUTATION_REFRESH", time.Hour),
 		FeedRefresh:       envDuration("FALCON_FEED_REFRESH", time.Hour),
 
+		FCC:        envBool("FALCON_FCC", true),
+		FCCMode:    strings.ToLower(env("FALCON_FCC_MODE", ModeMonitor)),
+		FCCRefresh: envDuration("FALCON_FCC_REFRESH", 6*time.Hour),
+		FCCFile:    env("FALCON_FCC_FILE", ""),
+
 		IPIntel:        envBool("FALCON_IP_INTEL", false),
 		IPIntelFile:    env("FALCON_IP_INTEL_FILE", ""),
 		IPIntelURL:     env("FALCON_IP_INTEL_URL", ""),
@@ -425,6 +439,9 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("FALCON_FAS_MODE must be off, monitor, or enforce, got %q", c.FASMode)
 	}
+	if c.FCCMode != ModeMonitor && c.FCCMode != ModeEnforce {
+		return fmt.Errorf("FALCON_FCC_MODE must be monitor or enforce, got %q", c.FCCMode)
+	}
 	if c.BridgeEnabled() {
 		if c.RTPPortMin < 1024 || c.RTPPortMax > 65534 || c.RTPPortMax-c.RTPPortMin < 8 {
 			return fmt.Errorf("FALCON_RTP_PORT_MIN and FALCON_RTP_PORT_MAX must span at least 8 ports between 1024 and 65534")
@@ -488,6 +505,7 @@ func (c Config) Redacted() map[string]any {
 			"max_calls": c.BridgeMaxCalls, "max_duration": c.BridgeMaxDuration.String(), "rtp_timeout": c.RTPTimeout.String(),
 			"fanout_every": c.BridgeFanoutEvery, "clean_every": c.BridgeCleanEvery, "recordings": c.RecordingsPath(), "record_max_seconds": c.RecordMaxSeconds},
 		"fas": map[string]any{"mode": c.FASMode, "hold": c.FASHold.String(), "max_ringback": c.FASMaxRingback.String()},
+		"fcc": map[string]any{"enabled": c.FCC, "mode": c.FCCMode, "refresh": c.FCCRefresh.String(), "file": c.FCCFile},
 	}
 }
 

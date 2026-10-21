@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/callerapi/falcon/internal/compliance"
 	"github.com/callerapi/falcon/internal/config"
 	"github.com/callerapi/falcon/internal/numbercheck"
 )
@@ -96,6 +97,24 @@ func (s *Server) modules(ctx context.Context) []Module {
 		}
 	}
 	out = append(out, net)
+
+	fcc := Module{ID: "fcc", Title: "FCC autopilot", Summary: "Checks your upstream carriers against FCC orders and the Robocall Mitigation Database, and blocks the ones you may not take calls from.", State: "off", Enable: "FALCON_FCC=true"}
+	if s.Compliance != nil {
+		st := s.Compliance.Status()
+		fcc.State, fcc.Enable = "on", ""
+		action := "Alerts only."
+		if s.FCCMode(ctx) == compliance.ModeEnforce {
+			action = "Blocks upstreams under an FCC order."
+		}
+		fcc.Detail = fmt.Sprintf("%d providers on the list. %s", st.Providers, action)
+		if st.Providers == 0 {
+			fcc.Detail = "Waiting for the first list."
+			if st.Error != "" {
+				fcc.Detail = "Waiting for the first list: " + st.Error
+			}
+		}
+	}
+	out = append(out, fcc)
 
 	br := Module{ID: "bridge", Title: "Call bridge and recording", Summary: "Carries suspicious calls back to your switch, records both sides, and hears false answers.", State: "off", Enable: "FALCON_SIP_LISTEN and FALCON_SIP_MODE=bridge"}
 	if s.Media != nil {
