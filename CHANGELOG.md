@@ -8,6 +8,9 @@ Fixed
   an Identity header often is. Before, Falcon read it but could not send
   leg B ("size of packet larger than MTU"), so the switch got 503 and the
   call failed.
+- The bridge setup guide in the README now covers outbound calls, inbound
+  DID calls, a test, and the common failures. It named the wrong page for
+  customer numbers: the page is Rules, Your customers.
 
 Added
 
@@ -16,7 +19,7 @@ Added
   block, like a PBX. Falcon hears and records each one. A hard block in
   enforce mode still gets 603. Past the bridge capacity, a call gets 503
   and the switch routes it as before.
-- Direction needs no setup. Falcon decides it per call: what the switch
+- Falcon decides the direction of each call: what the switch
   says in `X-Falcon-Direction`, else a named customer, else a calling
   number that one of your customers owns is outbound for that customer.
   Any other call is inbound. Before, a call without a direction was always

@@ -449,51 +449,112 @@ the path for Sansay, Sippy, PortaSwitch, Metaswitch, Ribbon, Oracle,
 AudioCodes, Cisco CUBE, and any proprietary class 4 platform. Details and
 per-vendor notes are in `adapters/README.md`.
 
-## Call bridge: hear the suspicious calls
+## Call bridge: Falcon in the call
 
-The redirect listener decides and steps out. The bridge stays in the
-calls it wants to hear. It needs no script on the switch and no Asterisk.
+The bridge puts Falcon in the call itself. Falcon screens each call,
+carries it, records both sides, and checks the answer. It needs no script
+on the switch and no Asterisk.
+
+On the Falcon host:
 
 ```
-FALCON_SIP_LISTEN=0.0.0.0:5060
-FALCON_SIP_PEERS=203.0.113.10
 FALCON_SIP_MODE=bridge
-FALCON_MEDIA_IP=203.0.113.20
+FALCON_SIP_LISTEN=0.0.0.0:5060
+FALCON_SIP_PEERS=203.0.113.10        # the switch addresses, comma separated
+FALCON_MEDIA_IP=203.0.113.20         # Falcon's public address
+FALCON_BRIDGE_CARRY=all              # carry every call, like a PBX
 ```
 
-Set it up on the switch in two steps:
+Open UDP and TCP 5060 and UDP 20000 to 29999 (the RTP ports) from the
+switch to Falcon. Falcon drops all SIP from addresses that are not in
+`FALCON_SIP_PEERS`.
 
-1. Add Falcon as a carrier, first in the routing strategy of the traffic you
-   want screened.
-2. Add Falcon as a customer with IP authentication. Its routes are your real
-   vendors. Do not put Falcon in that customer's routes.
+### Outbound calls
 
-What Falcon does with each INVITE:
+Outbound calls are calls your customers send to the switch. They reach
+Falcon through the switch's carrier routing.
+
+1. Add Falcon as a carrier. Its address is `FALCON_MEDIA_IP`, port 5060.
+   Give it a rate card for the destinations you want screened, for example
+   prefix `1` for all of North America.
+2. Put that carrier first in the routing of the customers you want
+   screened. Set its rate to 0 or give it the top priority, so least-cost
+   routing tries it first.
+3. Add Falcon as a customer, with IP authentication on Falcon's address.
+   Falcon sends each call back to the switch as this customer. Give it the
+   same routing as your real customers.
+4. Exclude the Falcon carrier from the routing of the Falcon customer. If
+   the Falcon carrier is inside a shared rate card, exclude it by name.
+   Otherwise the switch sends Falcon's calls back to Falcon, and Falcon
+   refuses them with `482 Loop Detected`.
+5. In Falcon, open Rules, Your customers. Add each customer with the
+   numbers it may call from. Falcon then labels those calls outbound and
+   rejects a caller ID that the customer does not own. Without this step,
+   Falcon carries and records the calls but labels them inbound.
+
+### Inbound calls
+
+Inbound calls are calls from a carrier to a DID. Most switches send a DID
+call straight to its destination and skip the carrier routing, so the
+outbound steps do not put DID calls through Falcon. Point the DID at
+Falcon, and tell Falcon where the DID goes:
+
+1. In Falcon, open Threats, Vendors, and add a route. Prefix: a tech
+   prefix of your choice, for example `7001`. Vendor name: the customer.
+   Send to: the address that receives the DID now, as `host:port`. Strip
+   prefix: Yes. Carry: Every call.
+2. On the switch, set the DID destination to the SIP address
+   `7001<DID>@<FALCON_MEDIA_IP>:5060`.
+3. Make sure the destination accepts calls from Falcon's address.
+
+Do not leave Send to empty for a DID route. An empty Send to sends the
+call back to the switch, which sends it to the DID, which points at
+Falcon. Falcon refuses that loop with `482`.
+
+### Test it
+
+1. Outbound: call any number on a screened route from a phone of a
+   screened customer. The call connects as usual.
+2. Inbound: call the DID from a mobile phone.
+3. In Falcon, open Calls. Each test call is there with its direction.
+   Open the call to play the recording. With a voice provider, the
+   transcript follows a few seconds after the hangup.
+
+When a test call fails:
+
+| What you see | Cause and fix |
+| --- | --- |
+| The call is not in Falcon | The switch address is not in `FALCON_SIP_PEERS`, or the firewall blocks 5060. The Falcon log counts dropped requests and names the last address |
+| The switch gets `503` with `X-Falcon-Bridge: outbound-failed` | Falcon could not send the call back. The Falcon log names the reason |
+| The Falcon log says the switch refused Falcon with `401`, `403`, or `407` | Step 3 of the outbound setup is missing, or the switch firewall blocks Falcon's address |
+| The switch gets `482 Loop Detected` | Step 4 of the outbound setup is missing, or a DID route has an empty Send to |
+| Outbound calls show as inbound | Step 5 of the outbound setup is missing |
+
+### What Falcon does with each call
+
+With `FALCON_BRIDGE_CARRY=all` (Settings, Call bridge, Carry: Every call),
+Falcon carries every call that is not a hard block. A hard block in
+enforce mode gets `603`. Past `FALCON_BRIDGE_MAX_CALLS` (1000) calls, a
+call gets `503` and the switch routes it to the next carrier. A call that
+Falcon carries ends if Falcon stops, so size the host and the RTP ports
+for your peak.
+
+With `FALCON_BRIDGE_CARRY=suspicious` (the default), Falcon carries only
+the calls it wants to hear. The switch must try the next carrier after a
+`503`:
 
 | Decision | Bridge |
 | --- | --- |
-| Allow, flag | `503` before any answer. The switch routes the call to the next vendor. Nothing is recorded |
+| Allow, flag | `503` before any answer. The switch routes the call to the next carrier. Nothing is recorded |
 | Reject, enforce mode | `603`. The switch drops the call |
-| Challenge, or reject in monitor mode | Falcon calls the switch back as the customer, relays the audio, and records both sides |
+| Challenge, or reject in monitor mode | Falcon carries the call and records both sides |
 | Flag from `caller_fanout` | One call in `FALCON_BRIDGE_FANOUT_EVERY` (20) is carried and recorded. The rest get `503` |
 | Allow | One call in `FALCON_BRIDGE_CLEAN_EVERY` (0, off) is carried, so the FAS guard also checks ordinary traffic |
 
-Every call, like a PBX: `FALCON_BRIDGE_CARRY=all` (or Settings, Call
-bridge, Carry: Every call) carries every call that is not a hard block.
-Falcon hears, records, and checks the answer of each one. A hard block in
-enforce mode still gets `603`. This puts Falcon in the audio of all
-traffic, so size `FALCON_BRIDGE_MAX_CALLS` and the RTP ports for your peak.
-Past the capacity a call gets `503` and the switch routes it as before. A
-call Falcon carries ends if Falcon stops.
-
-Direction needs no setup. Falcon screens inbound and outbound calls the
-same way and decides the direction of each call: a calling number that one
-of your customers owns (Rules, Your numbers) is outbound for that customer,
-and any other call is inbound. A switch can also say it per call with
+Falcon decides the direction of each call. A switch can also send
 `X-Falcon-Direction: inbound` or `outbound`, and name the customer with
-`X-Falcon-Customer`. Falcon then checks the caller ID against that
-customer's numbers and rejects one the customer does not own.
-`FALCON_SIP_DIRECTION` (auto) can fix one direction for every call.
+`X-Falcon-Customer`. `FALCON_SIP_DIRECTION=inbound` or `outbound` sets one
+direction for every call.
 
 The bridge does not create FAS of its own:
 

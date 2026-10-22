@@ -216,48 +216,18 @@ FALCON_SIP_MODE=bridge
 FALCON_MEDIA_IP=203.0.113.20
 ```
 
-On the switch:
+The switch needs two entries: Falcon as a carrier for outbound calls, and
+Falcon as a customer so that Falcon can send each call back. Inbound DID
+calls need the DID pointed at Falcon and a route in Falcon that names the
+destination. The steps, a test, and a table of failures are in the main
+README, under [Call bridge](../README.md#call-bridge-falcon-in-the-call).
 
-1. Add Falcon as a carrier, first in the routing strategy of the traffic
-   you want screened.
-2. Add Falcon as a customer with IP authentication. Its routes are your
-   real vendors. Do not route that customer's calls back to Falcon.
-3. Open UDP 5060 and the RTP range (`FALCON_RTP_PORT_MIN` to
-   `FALCON_RTP_PORT_MAX`, default 20000 to 29999) from the switch to
-   Falcon.
-
-What the switch gets back:
-
-| Falcon decision | SIP answer |
-| --- | --- |
-| `allow`, `flag` | `503 Service Unavailable` before any answer. The switch routes to the next vendor |
-| `reject` in enforce mode | `603 Decline` |
-| `challenge`, or `reject` in monitor mode | Falcon sends the call back to the switch as the customer and relays the answer, the audio, and the hangup |
-| A call the bridge cannot carry | `503`, with `X-Falcon-Bridge` naming why, for example `full` or `no-sdp` |
-| Any call that is not a hard block, with `FALCON_BRIDGE_CARRY=all` | Falcon carries it like a PBX and records it |
-
-Inbound and outbound need no setup. A calling number that one of your
-customers owns is outbound for that customer. A switch can also send
-`X-Falcon-Direction: outbound` and `X-Falcon-Customer: <account id>` on
-the carrier route, so Falcon checks the caller ID against that customer's
-numbers.
-
-The bridge relays ringing and early media. It answers the caller only
-after the far end answers. A hangup on either side ends both legs. A call
-with no audio in either direction for `FALCON_RTP_TIMEOUT` ends. Falcon
-marks the call it sends with `X-Falcon-Leg` and refuses that call if the
-switch routes it back, so a routing mistake cannot loop.
-
-For a vendor check by tech prefix, add the prefix on the switch route to
-that vendor and route the prefix to Falcon. In Falcon, open Threats,
-Vendors and add the prefix with "Strip prefix" on. "Carry: Every call"
-carries all of that vendor's calls, so the FAS guard hears every answer.
-
-Test the bridge from any host:
+To check that Falcon answers SIP, run this from a host in
+`FALCON_SIP_PEERS`. Falcon drops requests from other addresses.
 
 ```bash
 go run ./adapters/e2e/sipsend -to falcon:5060 -from +13125550199
-# 503 for a clean caller
+# 503 for a clean caller, unless FALCON_BRIDGE_CARRY=all
 ```
 
 ## Asterisk
