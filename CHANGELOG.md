@@ -4,6 +4,11 @@
 
 Fixed
 
+- Restart cleanup waits for the SIP socket. In 0.9.43 it sent its BYEs
+  before sipgo served the socket, so sipgo tried to bind port 5060 again
+  and every BYE failed. A saved call now stays until the switch confirms
+  a BYE on every leg, or until it is older than the longest call.
+
 - A crash no longer leaves calls up. Falcon saves each bridged call when
   its far end answers and deletes it when the call ends. On the next
   start it sends BYE on both legs of every call that a crash or a kill

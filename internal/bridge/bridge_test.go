@@ -706,6 +706,20 @@ func TestRestartHangsUpCallsACrashLeftUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Before sipgo serves the socket, a BYE would bind a second socket on
+	// the same port and fail. The call must stay saved, not be dropped.
+	rows, _ := h.db.LiveCalls(context.Background())
+	early, cancelEarly := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	restarted.hangUpLeftovers(early, rows)
+	cancelEarly()
+	if left, _ := h.db.LiveCalls(context.Background()); len(left) != 1 {
+		t.Fatalf("a call must stay saved until the switch confirms a BYE, %d rows left", len(left))
+	}
+	select {
+	case bye := <-h.sw.byes:
+		t.Fatalf("BYE for %s went out before SIP was up", callIDOf(bye))
+	default:
+	}
 	rctx, rcancel := context.WithCancel(context.Background())
 	stopped := make(chan struct{})
 	go func() { _ = restarted.Serve(rctx); close(stopped) }()

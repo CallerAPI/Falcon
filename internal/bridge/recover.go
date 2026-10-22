@@ -52,36 +52,77 @@ func (s *Server) leftovers(ctx context.Context) []store.LiveCall {
 	return rows
 }
 
+// listenWait bounds the wait for sipgo to serve the SIP socket.
+const listenWait = 3 * time.Second
+
 // hangUpLeftovers ends the calls a previous run left up. Falcon saves each
 // call when its far end answers and deletes it when the call ends, so a row
-// that is still here is a call a crash left billed on the switch.
+// that is still here is a call a crash left billed on the switch. A row
+// stays until the switch confirms every BYE, or until it is older than the
+// longest call.
 func (s *Server) hangUpLeftovers(ctx context.Context, rows []store.LiveCall) {
 	if len(rows) == 0 {
 		return
 	}
+	if !s.listening(ctx) {
+		log.Printf("falcon bridge: SIP is not up, so %d calls left up by a previous run stay saved for the next start", len(rows))
+		return
+	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	ended := 0
+	ended, legs := 0, 0
 	for _, row := range rows {
 		wg.Add(1)
 		go func(row store.LiveCall) {
 			defer wg.Done()
-			n := s.byeLeftover(ctx, row)
-			if err := s.calls.DeleteLiveCall(context.Background(), row.CallID); err != nil {
-				log.Printf("falcon bridge: forget %s: %v", row.CallID, err)
+			ok, sent := s.byeLeftover(ctx, row)
+			if ok == sent || time.Since(row.Saved) > s.maxCallAge() {
+				if err := s.calls.DeleteLiveCall(context.Background(), row.CallID); err != nil {
+					log.Printf("falcon bridge: forget %s: %v", row.CallID, err)
+				}
 			}
 			mu.Lock()
-			ended += n
+			ended, legs = ended+ok, legs+sent
 			mu.Unlock()
 		}(row)
 	}
 	wg.Wait()
-	log.Printf("falcon bridge: %d calls were up when Falcon last stopped; sent BYE to %d legs", len(rows), ended)
+	log.Printf("falcon bridge: %d calls were up when Falcon last stopped; the switch confirmed BYE on %d of %d legs", len(rows), ended, legs)
+}
+
+// listening waits until sipgo serves the SIP socket. A request sent before
+// that makes sipgo bind a second socket on the same port, which fails.
+func (s *Server) listening(ctx context.Context) bool {
+	addr := s.udp.LocalAddr().String()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	deadline := time.NewTimer(listenWait)
+	defer deadline.Stop()
+	for {
+		if _, err := s.ua.TransportLayer().GetConnection("udp", addr); err == nil {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-deadline.C:
+			return false
+		case <-tick.C:
+		}
+	}
+}
+
+// maxCallAge is how long a saved call can still be up on the switch.
+func (s *Server) maxCallAge() time.Duration {
+	if s.cfg.MaxDuration > 0 {
+		return s.cfg.MaxDuration
+	}
+	return 4 * time.Hour
 }
 
 // byeLeftover sends BYE on each answered leg of one call. It returns the
-// number of legs the switch confirmed.
-func (s *Server) byeLeftover(ctx context.Context, row store.LiveCall) int {
+// number of legs the switch confirmed and the number of BYEs sent.
+func (s *Server) byeLeftover(ctx context.Context, row store.LiveCall) (int, int) {
 	var byes []*sip.Request
 	if row.AOK != "" {
 		if bye, err := byeFromSaved(row.AInvite, row.AOK, byeAsCallee); err == nil {
@@ -110,7 +151,7 @@ func (s *Server) byeLeftover(ctx context.Context, row store.LiveCall) int {
 			log.Printf("falcon bridge: BYE for %s left up by a previous run: %d", callIDOf(bye), res.StatusCode)
 		}
 	}
-	return ok
+	return ok, len(byes)
 }
 
 func byeFromSaved(rawInvite, rawOK string, build func(*sip.Request, *sip.Response) (*sip.Request, error)) (*sip.Request, error) {
