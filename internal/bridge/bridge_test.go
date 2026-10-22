@@ -641,6 +641,76 @@ func TestBridgeRefusesItsOwnLegComingBack(t *testing.T) {
 	}
 }
 
+// A carrier chain strips X-Falcon-Leg. The loop is then the same caller
+// and number while leg B rings. Falcon refuses the copy and ends its own
+// leg B at once, so the switch stops trying carriers.
+func TestBridgeEndsALoopWithoutTheLegHeader(t *testing.T) {
+	h := newHarness(t, options{action: score.ActionAllow, carryAll: true})
+	copyResult := make(chan error, 1)
+	h.sw.onB = func(in *inbound) {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, _, err := h.sw.call(ctx, h.bridgeAddr(), 30002)
+			copyResult <- err
+		}()
+		<-in.dlg.Context().Done()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, _, err := h.sw.call(ctx, h.bridgeAddr(), 30000)
+	var dr *sipgo.ErrDialogResponse
+	if !errors.As(err, &dr) || dr.Res.StatusCode != 482 {
+		t.Fatalf("the first call must end with 482, got %v", err)
+	}
+	if time.Since(start) > 3*time.Second {
+		t.Fatalf("the loop took %v to end", time.Since(start))
+	}
+	select {
+	case err := <-copyResult:
+		if !errors.As(err, &dr) || dr.Res.StatusCode != 482 {
+			t.Fatalf("the copy must get 482, got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the copy got no answer")
+	}
+}
+
+func TestSendsElsewhere(t *testing.T) {
+	peer := netip.MustParseAddrPort("162.243.163.173:5060")
+	cases := []struct {
+		route *store.Route
+		want  bool
+	}{
+		{nil, false},
+		{&store.Route{Prefix: "9901"}, false},
+		{&store.Route{Prefix: "7001", Target: "162.243.163.173:5080"}, false},
+		{&store.Route{Prefix: "7001", Target: "52.50.165.204:5060"}, true},
+		{&store.Route{Prefix: "7001", Target: "pbx.example.com:5060"}, true},
+	}
+	for _, c := range cases {
+		if got := sendsElsewhere(c.route, peer); got != c.want {
+			t.Errorf("%+v: got %v", c.route, got)
+		}
+	}
+}
+
+// With no customer that owns the caller, a call Falcon sends back to the
+// switch is the switch's own outbound traffic.
+func TestBridgeCallsBackToTheSwitchAreUsuallyOutbound(t *testing.T) {
+	h := newHarness(t, options{action: score.ActionAllow})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _, _ = h.sw.call(ctx, h.bridgeAddr(), 30000)
+	h.screen.mu.Lock()
+	usual := h.screen.last.Usual
+	h.screen.mu.Unlock()
+	if usual != "outbound" {
+		t.Fatalf("usual %q", usual)
+	}
+}
+
 // The INVITE goes out as one raw datagram. A sipgo client would keep
 // retransmitting, and force-cancelling its transaction races sipgo's
 // retransmit timer.

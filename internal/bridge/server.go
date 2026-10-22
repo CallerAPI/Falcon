@@ -120,7 +120,7 @@ type Server struct {
 	mu      sync.Mutex
 	closing bool
 	byID    map[string]*call
-	pending map[string]time.Time
+	pending map[string]pendingLeg
 	active  atomic.Int64
 	dropped atomic.Uint64
 	local   sync.Map
@@ -153,7 +153,7 @@ func New(cfg Config, screen Screener, ctl Controls, sink Sink, calls CallLog) (*
 		cfg: cfg, screen: screen, ctl: ctl, sink: sink, calls: calls,
 		ports:   media.NewAllocator("", cfg.RTPPortMin, cfg.RTPPortMax),
 		byID:    map[string]*call{},
-		pending: map[string]time.Time{},
+		pending: map[string]pendingLeg{},
 	}
 	udp, err := net.ListenPacket("udp", cfg.Listen)
 	if err != nil {
@@ -445,10 +445,37 @@ func (s *Server) onInDialog(req *sip.Request, tx sip.ServerTransaction) {
 // routing Falcon's own outbound leg back to Falcon.
 func loopKey(from, to string) string { return from + "\x00" + to }
 
-func (s *Server) markPending(key string) {
+// pendingLeg is a leg B that rings, and the call that sent it.
+type pendingLeg struct {
+	at   time.Time
+	call *call
+}
+
+func (s *Server) markPending(key string, c *call) {
 	s.mu.Lock()
-	s.pending[key] = time.Now()
+	s.pending[key] = pendingLeg{at: time.Now(), call: c}
 	s.mu.Unlock()
+}
+
+// sendsElsewhere is true when a route sends the call to an address other
+// than the switch that sent it. A call that comes back on such a route is
+// a new call, for example to a DID behind Falcon, not a loop.
+func sendsElsewhere(route *store.Route, peer netip.AddrPort) bool {
+	if route == nil {
+		return false
+	}
+	t := strings.TrimSpace(route.Target)
+	if t == "" {
+		return false
+	}
+	host, _, err := net.SplitHostPort(t)
+	if err != nil {
+		return false
+	}
+	if a, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil && a.Unmap() == peer.Addr().Unmap() {
+		return false
+	}
+	return true
 }
 
 func (s *Server) clearPending(key string) {
@@ -457,10 +484,9 @@ func (s *Server) clearPending(key string) {
 	s.mu.Unlock()
 }
 
-func (s *Server) isLoop(req *sip.Request) bool {
-	if h := req.GetHeader("X-Falcon-Leg"); h != nil && strings.HasPrefix(h.Value(), legPrefix(s.cfg.InstallID)) {
-		return true
-	}
+// loopOf reports a call that Falcon itself sent, and the call that sent
+// it while that leg still rings.
+func (s *Server) loopOf(req *sip.Request) (bool, *call) {
 	from, to := "", ""
 	if f := req.From(); f != nil {
 		from = f.Address.User
@@ -469,9 +495,15 @@ func (s *Server) isLoop(req *sip.Request) bool {
 		to = t.Address.User
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	at, ok := s.pending[loopKey(from, to)]
-	return ok && time.Since(at) < 10*time.Second
+	p, ok := s.pending[loopKey(from, to)]
+	s.mu.Unlock()
+	if ok && time.Since(p.at) < 10*time.Second {
+		return true, p.call
+	}
+	if h := req.GetHeader("X-Falcon-Leg"); h != nil && strings.HasPrefix(h.Value(), legPrefix(s.cfg.InstallID)) {
+		return true, nil
+	}
+	return false, nil
 }
 
 func legPrefix(installID string) string {
@@ -491,8 +523,8 @@ func (s *Server) sweep(ctx context.Context) {
 			return
 		case <-t.C:
 			s.mu.Lock()
-			for k, at := range s.pending {
-				if time.Since(at) > time.Minute {
+			for k, p := range s.pending {
+				if time.Since(p.at) > time.Minute {
 					delete(s.pending, k)
 				}
 			}

@@ -57,24 +57,34 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 	if !ok {
 		return
 	}
-	if s.isLoop(req) {
-		respond(req, tx, 482, "Loop Detected", nil)
-		return
+	route := s.routes.match(req.Recipient.User)
+	backToSwitch := !sendsElsewhere(route, peer)
+	if backToSwitch {
+		if looped, owner := s.loopOf(req); looped {
+			respond(req, tx, 482, "Loop Detected", nil)
+			if owner != nil {
+				owner.abortLoop()
+			}
+			return
+		}
 	}
 	_ = tx.Respond(sip.NewResponseFromRequest(req, 100, "Trying", nil))
 	received := time.Now()
 	base := s.base()
+	usual := ""
+	if backToSwitch {
+		usual = config.DirectionOutbound
+	}
 	sctx, cancel := context.WithTimeout(base, s.cfg.ScreenTimeout)
 	res, err := s.screen.Screen(sctx, httpapi.ScreenRequest{
 		RawSIP: req.String(), SourceIP: sourceIP(req, peer), SourcePort: int(peer.Port()),
 		Switch: "sip/" + peer.Addr().Unmap().String(), Received: received,
-		Direction: s.directionOf(req), Customer: customerOf(req),
+		Direction: s.directionOf(req), Customer: customerOf(req), Usual: usual,
 	})
 	cancel()
 	if err != nil {
 		res = score.Result{Action: score.ActionAllow, Headers: map[string]string{"X-Falcon-Action": "allow", "X-Falcon-Error": err.Error()}}
 	}
-	route := s.routes.match(req.Recipient.User)
 	fanoutEvery, cleanEvery := s.ctl.Sampling(base)
 	d := s.policy.Decide(res, Rules{Mode: s.ctl.Mode(base), FanoutEvery: fanoutEvery, CleanEvery: cleanEvery, CarryAll: s.ctl.CarryAll(base)}, route)
 	switch d.Plan {
@@ -161,6 +171,7 @@ type call struct {
 	status     int
 	endedBy    string
 	fasAction  string
+	looped     bool
 	stopRing   context.CancelFunc
 	torn       sync.Once
 	done       chan struct{}
@@ -241,10 +252,15 @@ func (c *call) run() {
 	if id, err := s.calls.InsertMediaCall(s.base(), c.row); err == nil {
 		c.row.ID = id
 	}
+	wait, stopWait := context.WithTimeout(context.Background(), ringTimeout)
+	c.mu.Lock()
+	c.stopRing = stopWait
+	c.mu.Unlock()
 	key := loopKey(c.row.From, bReq.Recipient.User)
-	s.markPending(key)
+	s.markPending(key, c)
 	b, err := s.dua.WriteInvite(s.base(), bReq)
 	if err != nil {
+		stopWait()
 		s.clearPending(key)
 		log.Printf("falcon bridge: outbound leg for %s: %v", c.id, err)
 		c.status = s.cfg.PassStatus
@@ -257,10 +273,6 @@ func (c *call) run() {
 	c.row.LegBCallID = c.bID
 	s.register(c, c.bID)
 
-	wait, stopWait := context.WithTimeout(context.Background(), ringTimeout)
-	c.mu.Lock()
-	c.stopRing = stopWait
-	c.mu.Unlock()
 	callerGone := make(chan struct{})
 	go func() {
 		select {
@@ -309,7 +321,9 @@ func (c *call) run() {
 	if err != nil {
 		var dr *sipgo.ErrDialogResponse
 		status := s.cfg.PassStatus
-		if errors.As(err, &dr) {
+		if c.isLooped() {
+			status = 482
+		} else if errors.As(err, &dr) {
 			status = mapFailure(dr.Res.StatusCode, s.cfg.PassStatus)
 			if dr.Res.StatusCode == 401 || dr.Res.StatusCode == 403 || dr.Res.StatusCode == 407 {
 				log.Printf("falcon bridge: the switch refused Falcon's outbound leg with %d. Add %s as a customer with IP authentication.", dr.Res.StatusCode, c.host)
@@ -561,6 +575,24 @@ func (c *call) finalA(status int, headers map[string]string) {
 	if err := c.aTx.Respond(res); err != nil {
 		log.Printf("falcon bridge: %d to caller for %s: %v", status, c.id, err)
 	}
+}
+
+// abortLoop ends a leg B that came back to Falcon. The switch would
+// otherwise try each of its carriers, and each one comes back.
+func (c *call) abortLoop() {
+	c.mu.Lock()
+	c.looped = true
+	stop := c.stopRing
+	c.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
+}
+
+func (c *call) isLooped() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.looped
 }
 
 func (c *call) isAnswered() bool {

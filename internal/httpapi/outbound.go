@@ -76,6 +76,9 @@ func (s *Server) direction(ctx context.Context, req ScreenRequest, snap sipmsg.S
 			return "outbound", &score.CustomerCtx{ID: c.ID, Known: true, HasDIDs: true, OwnsCaller: true}
 		}
 	}
+	if req.Usual == "outbound" {
+		return "outbound", nil
+	}
 	return "inbound", nil
 }
 

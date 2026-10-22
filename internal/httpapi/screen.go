@@ -28,8 +28,12 @@ type ScreenRequest struct {
 	Switch     string `json:"switch"`
 	// Direction is "outbound" when the operator's own customer is
 	// calling out; Customer names that account. Both optional.
-	Direction  string            `json:"direction"`
-	Customer   string            `json:"customer"`
+	Direction string `json:"direction"`
+	Customer  string `json:"customer"`
+	// Usual is the direction when nothing else decides it. The bridge
+	// sets "outbound" for a call it sends back to the switch. Empty is
+	// inbound.
+	Usual      string            `json:"-"`
 	Method     string            `json:"method"`
 	RequestURI string            `json:"request_uri"`
 	Headers    map[string]string `json:"headers"`

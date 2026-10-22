@@ -487,10 +487,10 @@ Falcon through the switch's carrier routing.
    the Falcon carrier is inside a shared rate card, exclude it by name.
    Otherwise the switch sends Falcon's calls back to Falcon, and Falcon
    refuses them with `482 Loop Detected`.
-5. In Falcon, open Rules, Your customers. Add each customer with the
-   numbers it may call from. Falcon then labels those calls outbound and
-   rejects a caller ID that the customer does not own. Without this step,
-   Falcon carries and records the calls but labels them inbound.
+5. Optional: in Falcon, open Rules, Your customers. Add each customer
+   with the numbers it may call from. Falcon then names the customer on
+   each call and rejects a caller ID that the customer does not own.
+   Without this step, Falcon still labels these calls outbound.
 
 ### Inbound calls
 
@@ -509,7 +509,12 @@ Falcon, and tell Falcon where the DID goes:
 
 Do not leave Send to empty for a DID route. An empty Send to sends the
 call back to the switch, which sends it to the DID, which points at
-Falcon. Falcon refuses that loop with `482`.
+Falcon. Falcon refuses that loop with `482` and cancels its own call at
+once, so the switch does not try its other carriers.
+
+A call can pass Falcon twice: out from one of your customers, and back in
+to one of your DIDs. Falcon carries both legs, because the DID route
+sends the second one to another address.
 
 ### Test it
 
@@ -527,8 +532,8 @@ When a test call fails:
 | The call is not in Falcon | The switch address is not in `FALCON_SIP_PEERS`, or the firewall blocks 5060. The Falcon log counts dropped requests and names the last address |
 | The switch gets `503` with `X-Falcon-Bridge: outbound-failed` | Falcon could not send the call back. The Falcon log names the reason |
 | The Falcon log says the switch refused Falcon with `401`, `403`, or `407` | Step 3 of the outbound setup is missing, or the switch firewall blocks Falcon's address |
-| The switch gets `482 Loop Detected` | Step 4 of the outbound setup is missing, or a DID route has an empty Send to |
-| Outbound calls show as inbound | Step 5 of the outbound setup is missing |
+| The switch gets `482 Loop Detected` | Step 4 of the outbound setup is missing, the DID destination has no tech prefix, or a DID route has an empty Send to |
+| An inbound call rings nowhere and never reaches Falcon's Calls page | The DID destination does not point at Falcon |
 
 ### What Falcon does with each call
 
@@ -551,7 +556,10 @@ the calls it wants to hear. The switch must try the next carrier after a
 | Flag from `caller_fanout` | One call in `FALCON_BRIDGE_FANOUT_EVERY` (20) is carried and recorded. The rest get `503` |
 | Allow | One call in `FALCON_BRIDGE_CLEAN_EVERY` (0, off) is carried, so the FAS guard also checks ordinary traffic |
 
-Falcon decides the direction of each call. A switch can also send
+Falcon decides the direction of each call. A caller ID that one of your
+customers owns is outbound for that customer. Else a call that Falcon
+sends back to the switch is outbound, and a call on a route with a Send
+to address is inbound. A switch can also send
 `X-Falcon-Direction: inbound` or `outbound`, and name the customer with
 `X-Falcon-Customer`. `FALCON_SIP_DIRECTION=inbound` or `outbound` sets one
 direction for every call.

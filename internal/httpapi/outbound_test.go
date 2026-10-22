@@ -17,6 +17,7 @@ import (
 
 	"github.com/callerapi/falcon/internal/alerts"
 	"github.com/callerapi/falcon/internal/score"
+	"github.com/callerapi/falcon/internal/sipmsg"
 	"github.com/callerapi/falcon/internal/store"
 	"github.com/callerapi/falcon/internal/voice"
 )
@@ -277,6 +278,23 @@ var _ = store.Outcome{}
 
 // With no setup, a call from a number one of your customers owns is
 // outbound for that customer. Any other call is inbound.
+// The bridge sets Usual for a call it sends back to the switch. It
+// decides only when no customer owns the caller.
+func TestDirectionFallsBackToUsual(t *testing.T) {
+	srv, _ := newTestServer(t)
+	ctx := context.Background()
+	snap := sipmsg.Snapshot{FromUser: "+14155550199"}
+	if got, _ := srv.direction(ctx, ScreenRequest{Usual: "outbound"}, snap); got != "outbound" {
+		t.Fatalf("usual outbound: %q", got)
+	}
+	if got, _ := srv.direction(ctx, ScreenRequest{}, snap); got != "inbound" {
+		t.Fatalf("no usual: %q", got)
+	}
+	if got, _ := srv.direction(ctx, ScreenRequest{Usual: "outbound", Direction: "inbound"}, snap); got != "inbound" {
+		t.Fatalf("the switch said inbound: %q", got)
+	}
+}
+
 func TestDirectionFollowsTheCustomerList(t *testing.T) {
 	srv, db := newTestServer(t)
 	if w := do(t, srv, http.MethodPut, "/v1/customers", map[string]any{"id": "acme", "name": "Acme", "dids": []string{"+1312555*"}}); w.Code != 200 {
