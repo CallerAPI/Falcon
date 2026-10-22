@@ -4,6 +4,16 @@
 
 Fixed
 
+- A loop ends at once. When the switch sends Falcon's own call back,
+  Falcon refuses the copy with 482 and also cancels its own call, so the
+  switch stops trying its other carriers. Before, each carrier delivered
+  the call back to Falcon in turn.
+- A call that passes Falcon twice, out from a customer and back in to a
+  DID route with a Send to address, is carried. Before, Falcon refused
+  the second leg as a loop.
+- A call that the bridge sends back to the switch is outbound when no
+  customer owns the caller. Before, it was inbound.
+
 - The bridge carries INVITEs larger than 1300 bytes. A signed INVITE with
   an Identity header often is. Before, Falcon read it but could not send
   leg B ("size of packet larger than MTU"), so the switch got 503 and the
