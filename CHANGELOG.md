@@ -9,10 +9,13 @@ Added
   block, like a PBX. Falcon hears and records each one. A hard block in
   enforce mode still gets 603. Past the bridge capacity, a call gets 503
   and the switch routes it as before.
-- `FALCON_SIP_DIRECTION=outbound` marks the calls the bridge screens as
-  placed by your own customers. An `X-Falcon-Customer` header from the
-  switch names the customer, so the caller ID check against that
-  customer's numbers applies to bridged calls.
+- Direction needs no setup. Falcon decides it per call: what the switch
+  says in `X-Falcon-Direction`, else a named customer, else a calling
+  number that one of your customers owns is outbound for that customer.
+  Any other call is inbound. Before, a call without a direction was always
+  inbound, and the bridge never had one. `X-Falcon-Customer` names the
+  customer on bridged calls. `FALCON_SIP_DIRECTION` (auto) can fix one
+  direction.
 
 - Call bridge. `FALCON_SIP_MODE=bridge` makes the SIP listener a native
   back-to-back user agent. Add Falcon to the switch as a carrier and as a

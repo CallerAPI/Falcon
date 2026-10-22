@@ -92,6 +92,10 @@ type Server struct {
 	settings   *Settings
 	settingsAt time.Time
 
+	customersMu sync.Mutex
+	customers   []store.Customer
+	customersAt time.Time
+
 	hub     *hub
 	metrics *metrics
 }

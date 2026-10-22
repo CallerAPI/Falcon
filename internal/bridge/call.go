@@ -68,7 +68,7 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 	res, err := s.screen.Screen(sctx, httpapi.ScreenRequest{
 		RawSIP: req.String(), SourceIP: sourceIP(req, peer), SourcePort: int(peer.Port()),
 		Switch: "sip/" + peer.Addr().Unmap().String(), Received: received,
-		Direction: s.cfg.Direction, Customer: customerOf(req),
+		Direction: s.directionOf(req), Customer: customerOf(req),
 	})
 	cancel()
 	if err != nil {
@@ -800,6 +800,22 @@ func (t fasTap) Audio(side media.Side, _, _ uint32, pcm []int16, at time.Time) {
 	if side == media.SideB {
 		t.det.Feed(pcm, at)
 	}
+}
+
+// directionOf is the fixed direction, or what the switch says in
+// X-Falcon-Direction. Empty leaves it to the screen.
+func (s *Server) directionOf(req *sip.Request) string {
+	switch s.cfg.Direction {
+	case config.DirectionInbound, config.DirectionOutbound:
+		return s.cfg.Direction
+	}
+	if h := req.GetHeader("X-Falcon-Direction"); h != nil {
+		switch v := strings.ToLower(strings.TrimSpace(h.Value())); v {
+		case config.DirectionInbound, config.DirectionOutbound:
+			return v
+		}
+	}
+	return ""
 }
 
 // customerOf is the account the switch names in X-Falcon-Customer, for the

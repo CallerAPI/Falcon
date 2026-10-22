@@ -83,7 +83,8 @@ type Config struct {
 	// PassStatus is the answer to a call Falcon does not carry. 503 makes
 	// every switch move to the next vendor.
 	PassStatus int
-	// Direction is inbound or outbound for every call screened here.
+	// Direction is auto, inbound, or outbound. Auto leaves each call to
+	// X-Falcon-Direction, or to the screen.
 	Direction string
 	Version   string
 	InstallID string

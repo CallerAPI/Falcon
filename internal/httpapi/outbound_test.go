@@ -274,3 +274,39 @@ func hasReason(res score.Result, code string) bool {
 }
 
 var _ = store.Outcome{}
+
+// With no setup, a call from a number one of your customers owns is
+// outbound for that customer. Any other call is inbound.
+func TestDirectionFollowsTheCustomerList(t *testing.T) {
+	srv, db := newTestServer(t)
+	if w := do(t, srv, http.MethodPut, "/v1/customers", map[string]any{"id": "acme", "name": "Acme", "dids": []string{"+1312555*"}}); w.Code != 200 {
+		t.Fatalf("customer: %d %s", w.Code, w.Body.String())
+	}
+	invite := func(from, to, callID string) map[string]any {
+		return map[string]any{
+			"source_ip": "10.0.0.5", "switch": "sip/10.0.0.5", "method": "INVITE", "request_uri": "sip:" + to + "@carrier.example",
+			"headers": map[string]string{
+				"From": "<sip:" + from + "@10.0.0.5>;tag=1", "To": "<sip:" + to + "@carrier.example>",
+				"Call-ID": callID, "User-Agent": "switch", "Max-Forwards": "70", "Content-Type": "application/sdp",
+			},
+		}
+	}
+	screenJSON(t, srv, invite("+13125550101", "+14155550199", "dir-out"))
+	screenJSON(t, srv, invite("+14155550199", "+13125550101", "dir-in"))
+	ctx := context.Background()
+	out, _, _ := db.EventByCallID(ctx, "dir-out")
+	in, _, _ := db.EventByCallID(ctx, "dir-in")
+	if out.Direction != "outbound" || out.Customer != "acme" {
+		t.Fatalf("customer's own number: direction %q customer %q", out.Direction, out.Customer)
+	}
+	if in.Direction != "inbound" || in.Customer != "" {
+		t.Fatalf("call to a customer: direction %q customer %q", in.Direction, in.Customer)
+	}
+	// What the switch says wins over the list.
+	said := invite("+13125550101", "+14155550199", "dir-said")
+	said["direction"] = "inbound"
+	screenJSON(t, srv, said)
+	if ev, _, _ := db.EventByCallID(ctx, "dir-said"); ev.Direction != "inbound" {
+		t.Fatalf("the switch said inbound, got %q", ev.Direction)
+	}
+}

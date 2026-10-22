@@ -942,3 +942,19 @@ func TestCustomerOfReadsTheSwitchHeader(t *testing.T) {
 		t.Fatalf("customer %q", got)
 	}
 }
+
+func TestDirectionOfFollowsTheSettingThenTheSwitch(t *testing.T) {
+	req := sip.NewRequest(sip.INVITE, sip.Uri{User: "+14155550100", Host: "127.0.0.1"})
+	auto := &Server{cfg: Config{Direction: "auto"}}
+	if got := auto.directionOf(req); got != "" {
+		t.Fatalf("auto with no header gave %q", got)
+	}
+	req.AppendHeader(sip.NewHeader("X-Falcon-Direction", "Outbound"))
+	if got := auto.directionOf(req); got != "outbound" {
+		t.Fatalf("header gave %q", got)
+	}
+	fixed := &Server{cfg: Config{Direction: "inbound"}}
+	if got := fixed.directionOf(req); got != "inbound" {
+		t.Fatalf("a fixed direction must win, got %q", got)
+	}
+}

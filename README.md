@@ -486,11 +486,14 @@ traffic, so size `FALCON_BRIDGE_MAX_CALLS` and the RTP ports for your peak.
 Past the capacity a call gets `503` and the switch routes it as before. A
 call Falcon carries ends if Falcon stops.
 
-Direction: `FALCON_SIP_DIRECTION=outbound` marks every call the bridge
-screens as placed by your own customers. The switch can name the customer
-in an `X-Falcon-Customer` header on the carrier route. Falcon then checks
-the caller ID against the numbers listed for that customer and rejects one
-the customer does not own.
+Direction needs no setup. Falcon screens inbound and outbound calls the
+same way and decides the direction of each call: a calling number that one
+of your customers owns (Rules, Your numbers) is outbound for that customer,
+and any other call is inbound. A switch can also say it per call with
+`X-Falcon-Direction: inbound` or `outbound`, and name the customer with
+`X-Falcon-Customer`. Falcon then checks the caller ID against that
+customer's numbers and rejects one the customer does not own.
+`FALCON_SIP_DIRECTION` (auto) can fix one direction for every call.
 
 The bridge does not create FAS of its own:
 

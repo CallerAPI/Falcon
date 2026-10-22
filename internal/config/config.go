@@ -189,8 +189,9 @@ type Config struct {
 	// not a hard block, so Falcon is in the audio of every call, like a
 	// PBX. Editable at runtime.
 	BridgeCarry string
-	// SIPDirection is inbound or outbound for every call the bridge
-	// screens. Outbound is traffic the operator's own customers place.
+	// SIPDirection is auto, inbound, or outbound. Auto decides per call:
+	// what the switch says in X-Falcon-Direction, else a named customer,
+	// else a calling number one of your customers owns is outbound.
 	SIPDirection string
 	// RecordingsDir holds the call recordings. Empty is a recordings
 	// folder next to the database. RecordMaxSeconds caps one recording.
@@ -241,6 +242,7 @@ const (
 	CarrySuspicious = "suspicious"
 	CarryAll        = "all"
 
+	DirectionAuto     = "auto"
 	DirectionInbound  = "inbound"
 	DirectionOutbound = "outbound"
 
@@ -366,7 +368,7 @@ func Load() Config {
 		BridgeFanoutEvery:      envInt("FALCON_BRIDGE_FANOUT_EVERY", 20),
 		BridgeCleanEvery:       envInt("FALCON_BRIDGE_CLEAN_EVERY", 0),
 		BridgeCarry:            strings.ToLower(env("FALCON_BRIDGE_CARRY", CarrySuspicious)),
-		SIPDirection:           strings.ToLower(env("FALCON_SIP_DIRECTION", DirectionInbound)),
+		SIPDirection:           strings.ToLower(env("FALCON_SIP_DIRECTION", DirectionAuto)),
 		RecordingsDir:          env("FALCON_RECORDINGS_DIR", ""),
 		RecordMaxSeconds:       envInt("FALCON_RECORD_MAX_SECONDS", 1800),
 		RecordingRetentionDays: envInt("FALCON_RECORDING_RETENTION_DAYS", 7),
@@ -465,8 +467,10 @@ func (c Config) Validate() error {
 	if c.BridgeCarry != CarrySuspicious && c.BridgeCarry != CarryAll {
 		return fmt.Errorf("FALCON_BRIDGE_CARRY must be suspicious or all, got %q", c.BridgeCarry)
 	}
-	if c.SIPDirection != DirectionInbound && c.SIPDirection != DirectionOutbound {
-		return fmt.Errorf("FALCON_SIP_DIRECTION must be inbound or outbound, got %q", c.SIPDirection)
+	switch c.SIPDirection {
+	case DirectionAuto, DirectionInbound, DirectionOutbound:
+	default:
+		return fmt.Errorf("FALCON_SIP_DIRECTION must be auto, inbound, or outbound, got %q", c.SIPDirection)
 	}
 	if c.BridgeEnabled() {
 		if c.RTPPortMin < 1024 || c.RTPPortMax > 65534 || c.RTPPortMax-c.RTPPortMin < 8 {

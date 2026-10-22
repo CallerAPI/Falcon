@@ -392,7 +392,7 @@ func startBridge(ctx context.Context, cfg config.Config, api *httpapi.Server, db
 	}
 	go func() {
 		defer close(done)
-		log.Printf("falcon sip bridge listening on %s (udp+tcp, peers=%d, rtp %d-%d, %s, %s calls, recordings %s, fas %s)",
+		log.Printf("falcon sip bridge listening on %s (udp+tcp, peers=%d, rtp %d-%d, %s, direction %s, recordings %s, fas %s)",
 			cfg.SIPListen, len(peers), cfg.RTPPortMin, cfg.RTPPortMax, carry, cfg.SIPDirection, dir, api.FASMode(ctx))
 		_ = br.Serve(ctx)
 	}()

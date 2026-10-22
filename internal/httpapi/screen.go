@@ -117,6 +117,9 @@ func (s *Server) Screen(ctx context.Context, req ScreenRequest) (score.Result, e
 	en.SwitchSigns = signed != nil
 	en.Network = s.network(en, fingerprint.Compute(msg))
 	s.behaviour(ctx, req, snap, &en)
+	if en.Customer != nil {
+		req.Customer = en.Customer.ID
+	}
 	result := s.Engine.Score(snap, en)
 	decision := result
 	result = s.hold(ctx, result)

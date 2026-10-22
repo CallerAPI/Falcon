@@ -28,19 +28,7 @@ const MaxClipBytes = 32 << 20
 // behaviour fills the direction, customer, honeypot, and caller activity
 // parts of the enrichment. All of it comes from this install's own store.
 func (s *Server) behaviour(ctx context.Context, req ScreenRequest, snap sipmsg.Snapshot, en *score.Enrichment) {
-	en.Direction = "inbound"
-	if strings.EqualFold(strings.TrimSpace(req.Direction), "outbound") {
-		en.Direction = "outbound"
-	}
-	if id := strings.TrimSpace(req.Customer); id != "" {
-		cc := &score.CustomerCtx{ID: id}
-		if c, ok, err := s.Store.Customer(ctx, id); err == nil && ok {
-			cc.Known = true
-			cc.HasDIDs = len(c.DIDs) > 0
-			cc.OwnsCaller = c.Owns(snap.FromUser)
-		}
-		en.Customer = cc
-	}
+	en.Direction, en.Customer = s.direction(ctx, req, snap)
 	if idx := s.ruleIndex(); idx != nil && snap.ToUser != "" {
 		en.Honeypot = idx.IsHoneypot(snap.ToUser)
 	}
@@ -60,6 +48,56 @@ func (s *Server) behaviour(ctx context.Context, req ScreenRequest, snap sipmsg.S
 			}
 		}
 	}
+}
+
+// direction decides inbound or outbound for one call with no setup. What
+// the switch says wins. A named customer means outbound. Otherwise a
+// calling number that one of your customers owns is outbound. Anything
+// else is inbound.
+func (s *Server) direction(ctx context.Context, req ScreenRequest, snap sipmsg.Snapshot) (string, *score.CustomerCtx) {
+	said := strings.ToLower(strings.TrimSpace(req.Direction))
+	if id := strings.TrimSpace(req.Customer); id != "" {
+		cc := &score.CustomerCtx{ID: id}
+		if c, ok, err := s.Store.Customer(ctx, id); err == nil && ok {
+			cc.Known = true
+			cc.HasDIDs = len(c.DIDs) > 0
+			cc.OwnsCaller = c.Owns(snap.FromUser)
+		}
+		if said != "inbound" {
+			said = "outbound"
+		}
+		return said, cc
+	}
+	if said == "inbound" || said == "outbound" {
+		return said, nil
+	}
+	for _, c := range s.customerList(ctx) {
+		if c.Owns(snap.FromUser) {
+			return "outbound", &score.CustomerCtx{ID: c.ID, Known: true, HasDIDs: true, OwnsCaller: true}
+		}
+	}
+	return "inbound", nil
+}
+
+// customerList is cached for a few seconds because every INVITE reads it.
+func (s *Server) customerList(ctx context.Context) []store.Customer {
+	s.customersMu.Lock()
+	defer s.customersMu.Unlock()
+	if s.customers != nil && time.Since(s.customersAt) < settingsTTL {
+		return s.customers
+	}
+	list, err := s.Store.Customers(ctx)
+	if err != nil {
+		return s.customers
+	}
+	s.customers, s.customersAt = list, time.Now()
+	return list
+}
+
+func (s *Server) forgetCustomers() {
+	s.customersMu.Lock()
+	s.customers = nil
+	s.customersMu.Unlock()
 }
 
 // spoofAlert pages the operator the moment one of their own customers
@@ -295,6 +333,7 @@ func (s *Server) handleCustomers(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		s.forgetCustomers()
 		s.audit(r, "customer.put", c.ID, fmt.Sprintf("%s, %d numbers", c.Name, len(c.DIDs)))
 		writeJSON(w, http.StatusOK, c)
 	default:
@@ -322,6 +361,7 @@ func (s *Server) handleCustomer(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		s.forgetCustomers()
 		s.audit(r, "customer.delete", id, "")
 		writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
 	default:
