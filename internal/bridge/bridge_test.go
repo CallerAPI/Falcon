@@ -677,6 +677,120 @@ func TestBridgeEndsALoopWithoutTheLegHeader(t *testing.T) {
 	}
 }
 
+// A crash leaves calls up on the switch. The next start hangs them up on
+// both legs from what Falcon saved when the call was answered.
+func TestRestartHangsUpCallsACrashLeftUp(t *testing.T) {
+	h := newHarness(t, options{action: score.ActionAllow, carryAll: true})
+	caller, callee := newEndpoint(t), newEndpoint(t)
+	h.sw.onB = answerWith(callee.port(), false)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	dlgA, _, err := h.sw.call(ctx, h.bridgeAddr(), caller.port())
+	if err != nil {
+		t.Fatalf("carry: %v", err)
+	}
+	_ = dlgA.Ack(ctx)
+	legB := <-h.sw.legBs
+	callA, callB := callIDOf(dlgA.InviteRequest), callIDOf(legB.req)
+	waitFor(t, "saved row", 3*time.Second, func() bool {
+		rows, _ := h.db.LiveCalls(context.Background())
+		return len(rows) == 1 && rows[0].AOK != ""
+	})
+
+	portBase += 200
+	restarted, err := New(Config{
+		Listen: "127.0.0.1:0", Peers: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, MediaIP: "127.0.0.1",
+		RTPPortMin: portBase, RTPPortMax: portBase + 199, MaxCalls: 20, MaxDuration: time.Hour,
+		RTPTimeout: 30 * time.Second, ScreenTimeout: time.Second, PassStatus: 503, Version: "test", InstallID: "fedcba9876543210",
+	}, h.screen, fakeControls{mode: "enforce", fasMode: "monitor"}, h.sink, h.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rctx, rcancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() { _ = restarted.Serve(rctx); close(stopped) }()
+	defer func() { rcancel(); <-stopped }()
+
+	got := map[string]bool{}
+	deadline := time.After(5 * time.Second)
+	for len(got) < 2 {
+		select {
+		case bye := <-h.sw.byes:
+			got[callIDOf(bye)] = true
+		case <-deadline:
+			t.Fatalf("BYE on %d legs, want both: %v", len(got), got)
+		}
+	}
+	if !got[callA] || !got[callB] {
+		t.Fatalf("BYE went to %v, want %s and %s", got, callA, callB)
+	}
+	waitFor(t, "row deleted", 3*time.Second, func() bool {
+		rows, _ := h.db.LiveCalls(context.Background())
+		return len(rows) == 0
+	})
+}
+
+func TestByeFromSavedLegs(t *testing.T) {
+	inviteA := "INVITE sip:+14155550100@10.0.0.9:5060 SIP/2.0\r\n" +
+		"Via: SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bKa\r\n" +
+		"Record-Route: <sip:10.0.0.1;lr>\r\nRecord-Route: <sip:10.0.0.2;lr>\r\n" +
+		"From: <sip:+13125550188@10.0.0.1>;tag=caller\r\nTo: <sip:+14155550100@10.0.0.9>\r\n" +
+		"Call-ID: leg-a\r\nCSeq: 7 INVITE\r\nContact: <sip:sw@10.0.0.1:5070>\r\nContent-Length: 0\r\n\r\n"
+	okA := "SIP/2.0 200 OK\r\nVia: SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bKa\r\n" +
+		"From: <sip:+13125550188@10.0.0.1>;tag=caller\r\nTo: <sip:+14155550100@10.0.0.9>;tag=falcon\r\n" +
+		"Call-ID: leg-a\r\nCSeq: 7 INVITE\r\nContact: <sip:falcon@10.0.0.9:5060>\r\nContent-Length: 0\r\n\r\n"
+	bye, err := byeFromSaved(inviteA, okA, byeAsCallee)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bye.Recipient.Host != "10.0.0.1" || bye.Recipient.Port != 5070 {
+		t.Fatalf("leg A target %s", bye.Recipient.String())
+	}
+	if tag, _ := bye.From().Params.Get("tag"); tag != "falcon" {
+		t.Fatalf("leg A From tag %q", tag)
+	}
+	if tag, _ := bye.To().Params.Get("tag"); tag != "caller" {
+		t.Fatalf("leg A To tag %q", tag)
+	}
+	if r := bye.GetHeaders("Route"); len(r) != 2 || r[0].Value() != "<sip:10.0.0.1;lr>" {
+		t.Fatalf("leg A routes %v", r)
+	}
+	if bye.CSeq().MethodName != sip.BYE || bye.CallID().Value() != "leg-a" {
+		t.Fatalf("leg A %s %s", bye.CSeq().Value(), bye.CallID().Value())
+	}
+
+	inviteB := "INVITE sip:+14155550100@10.0.0.1:5060 SIP/2.0\r\n" +
+		"Via: SIP/2.0/UDP 10.0.0.9:5060;branch=z9hG4bKb\r\n" +
+		"From: <sip:+13125550188@10.0.0.9>;tag=falconb\r\nTo: <sip:+14155550100@10.0.0.1>\r\n" +
+		"Call-ID: leg-b\r\nCSeq: 12 INVITE\r\nContact: <sip:falcon@10.0.0.9:5060>\r\nContent-Length: 0\r\n\r\n"
+	okB := "SIP/2.0 200 OK\r\nVia: SIP/2.0/UDP 10.0.0.9:5060;branch=z9hG4bKb\r\n" +
+		"Record-Route: <sip:10.0.0.3;lr>\r\nRecord-Route: <sip:10.0.0.4;lr>\r\n" +
+		"From: <sip:+13125550188@10.0.0.9>;tag=falconb\r\nTo: <sip:+14155550100@10.0.0.1>;tag=far\r\n" +
+		"Call-ID: leg-b\r\nCSeq: 12 INVITE\r\nContact: <sip:far@10.0.0.5:5080>\r\nContent-Length: 0\r\n\r\n"
+	bye, err = byeFromSaved(inviteB, okB, byeAsCaller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bye.Recipient.Host != "10.0.0.5" || bye.Recipient.Port != 5080 {
+		t.Fatalf("leg B target %s", bye.Recipient.String())
+	}
+	if tag, _ := bye.From().Params.Get("tag"); tag != "falconb" {
+		t.Fatalf("leg B From tag %q", tag)
+	}
+	if tag, _ := bye.To().Params.Get("tag"); tag != "far" {
+		t.Fatalf("leg B To tag %q", tag)
+	}
+	if r := bye.GetHeaders("Route"); len(r) != 2 || r[0].Value() != "<sip:10.0.0.4;lr>" {
+		t.Fatalf("leg B routes must be the 200 Record-Route reversed: %v", r)
+	}
+	if bye.Destination() != "10.0.0.4:5060" {
+		t.Fatalf("leg B next hop %s", bye.Destination())
+	}
+	if bye.CSeq().SeqNo <= 12 {
+		t.Fatalf("leg B CSeq %d must pass the INVITE", bye.CSeq().SeqNo)
+	}
+}
+
 func TestSendsElsewhere(t *testing.T) {
 	peer := netip.MustParseAddrPort("162.243.163.173:5060")
 	cases := []struct {

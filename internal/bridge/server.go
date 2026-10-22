@@ -71,6 +71,9 @@ type CallLog interface {
 	EventByCallID(ctx context.Context, callID string) (store.Event, bool, error)
 	NoteReason(ctx context.Context, eventID int64, reason score.Reason) error
 	SetOutcome(ctx context.Context, callID string, o store.Outcome) (store.Event, error)
+	SaveLiveCall(ctx context.Context, c store.LiveCall) error
+	DeleteLiveCall(ctx context.Context, callID string) error
+	LiveCalls(ctx context.Context) ([]store.LiveCall, error)
 }
 
 // Config is the bridge setup.
@@ -227,9 +230,11 @@ func (s *Server) Serve(ctx context.Context) error {
 	if err := s.ReloadRoutes(ctx); err != nil {
 		log.Printf("falcon bridge: routes: %v", err)
 	}
+	leftover := s.leftovers(ctx)
 	go func() { _ = s.srv.ServeUDP(s.udp) }()
 	go func() { _ = s.srv.ServeTCP(s.tcp) }()
 	go s.sweep(ctx)
+	go s.hangUpLeftovers(ctx, leftover)
 	<-ctx.Done()
 	s.mu.Lock()
 	s.closing = true

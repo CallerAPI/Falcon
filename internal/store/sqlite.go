@@ -648,6 +648,12 @@ func (s *SQLite) Parties(ctx context.Context, by string, from, to time.Time, lim
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
+	// A customer's calls are the ones it sends. Calls to its DIDs carry its
+	// name too, and spam to a customer must not read as fraud from it.
+	only := ""
+	if by == "customer" {
+		only = " AND direction = 'outbound'"
+	}
 	q := fmt.Sprintf(`
 SELECT COALESCE(%s, ''), %s, COUNT(*),
   SUM(CASE WHEN action = 'reject' THEN 1 ELSE 0 END),
@@ -661,8 +667,8 @@ SELECT COALESCE(%s, ''), %s, COUNT(*),
   COUNT(DISTINCT from_num),
   MIN(received_unix), MAX(received_unix)
 FROM events
-WHERE received_unix >= ? AND received_unix < ? AND COALESCE(%s, '') != ''
-GROUP BY 1 ORDER BY 3 DESC LIMIT ?`, col, label, col)
+WHERE received_unix >= ? AND received_unix < ? AND COALESCE(%s, '') != ''%s
+GROUP BY 1 ORDER BY 3 DESC LIMIT ?`, col, label, col, only)
 	rows, err := s.db.QueryContext(ctx, q, from.UTC().Unix(), to.UTC().Unix(), limit)
 	if err != nil {
 		return nil, err

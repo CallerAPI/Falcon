@@ -488,9 +488,10 @@ Falcon through the switch's carrier routing.
    Otherwise the switch sends Falcon's calls back to Falcon, and Falcon
    refuses them with `482 Loop Detected`.
 5. Optional: in Falcon, open Rules, Your customers. Add each customer
-   with the numbers it may call from. Falcon then names the customer on
-   each call and rejects a caller ID that the customer does not own.
-   Without this step, Falcon still labels these calls outbound.
+   with its numbers: the caller IDs it uses and its DIDs. Falcon then
+   names the customer on each call and rejects a caller ID that the
+   customer does not own. Without this step, Falcon still labels these
+   calls outbound.
 
 ### Inbound calls
 
@@ -506,6 +507,16 @@ Falcon, and tell Falcon where the DID goes:
 2. On the switch, set the DID destination to the SIP address
    `7001<DID>@<FALCON_MEDIA_IP>:5060`.
 3. Make sure the destination accepts calls from Falcon's address.
+4. In Falcon, open Rules, Your customers, and add the DID to the
+   customer that owns it. Falcon then labels these calls inbound and
+   names the customer.
+
+Some destinations can only be reached through the switch, for example a
+phone that registers to it. Then point the DID at Falcon with the number
+of a second DID, the one that rings the phone, and add no route. Falcon
+sends the call back to the switch, and the switch delivers that number
+to the phone. The switch must deliver a call to one of its own DIDs
+internally, not through a carrier.
 
 Do not leave Send to empty for a DID route. An empty Send to sends the
 call back to the switch, which sends it to the DID, which points at
@@ -540,9 +551,8 @@ When a test call fails:
 With `FALCON_BRIDGE_CARRY=all` (Settings, Call bridge, Carry: Every call),
 Falcon carries every call that is not a hard block. A hard block in
 enforce mode gets `603`. Past `FALCON_BRIDGE_MAX_CALLS` (1000) calls, a
-call gets `503` and the switch routes it to the next carrier. A call that
-Falcon carries ends if Falcon stops, so size the host and the RTP ports
-for your peak.
+call gets `503` and the switch routes it to the next carrier. Size the
+host and the RTP ports for your peak.
 
 With `FALCON_BRIDGE_CARRY=suspicious` (the default), Falcon carries only
 the calls it wants to hear. The switch must try the next carrier after a
@@ -557,9 +567,10 @@ the calls it wants to hear. The switch must try the next carrier after a
 | Allow | One call in `FALCON_BRIDGE_CLEAN_EVERY` (0, off) is carried, so the FAS guard also checks ordinary traffic |
 
 Falcon decides the direction of each call. A caller ID that one of your
-customers owns is outbound for that customer. Else a call that Falcon
-sends back to the switch is outbound, and a call on a route with a Send
-to address is inbound. A switch can also send
+customers owns is outbound for that customer. A call to a number that
+one of your customers owns is inbound for that customer. Else a call
+that Falcon sends back to the switch is outbound, and a call on a route
+with a Send to address is inbound. A switch can also send
 `X-Falcon-Direction: inbound` or `outbound`, and name the customer with
 `X-Falcon-Customer`. `FALCON_SIP_DIRECTION=inbound` or `outbound` sets one
 direction for every call.
@@ -573,6 +584,11 @@ The bridge does not create FAS of its own:
 - A call with no audio in either direction for `FALCON_RTP_TIMEOUT` (30s)
   ends. No call lasts longer than `FALCON_BRIDGE_MAX_DURATION` (4h).
 - On shutdown Falcon hangs up both legs of every call it carries.
+- After a crash or a kill, Falcon hangs up both legs of every call that
+  was up when it starts again. Run it under a supervisor that restarts
+  it, such as a Docker restart policy or systemd. If the host does not
+  come back, the switch's own RTP timeout ends those calls, so keep it
+  on.
 - A loop guard refuses a call that Falcon itself sent.
 
 The bridge fails clean. A call it cannot carry gets `503`, so the switch

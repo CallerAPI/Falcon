@@ -295,6 +295,49 @@ func TestDirectionFallsBackToUsual(t *testing.T) {
 	}
 }
 
+// A call to a customer's number is inbound for that customer, even when the
+// bridge sends it back to the switch. The caller ID check stays outbound.
+func TestDirectionCallsToACustomersNumberAreInbound(t *testing.T) {
+	srv, db := newTestServer(t)
+	if w := do(t, srv, http.MethodPut, "/v1/customers", map[string]any{"id": "acme", "name": "Acme", "dids": []string{"+1281800*"}}); w.Code != 200 {
+		t.Fatalf("customer: %d %s", w.Code, w.Body.String())
+	}
+	ctx := context.Background()
+	snap := sipmsg.Snapshot{FromUser: "+18883578668", ToUser: "700112818009832"}
+	dir, cc := srv.direction(ctx, ScreenRequest{Usual: "outbound", Called: "12818009832"}, snap)
+	if dir != "inbound" || cc == nil || cc.ID != "acme" {
+		t.Fatalf("call to a customer's DID: direction %q customer %+v", dir, cc)
+	}
+	invite := map[string]any{
+		"source_ip": "10.0.0.5", "switch": "sip/10.0.0.5", "method": "INVITE", "request_uri": "sip:+12818009832@pbx.example",
+		"headers": map[string]string{
+			"From": "<sip:+18883578668@10.0.0.5>;tag=1", "To": "<sip:+12818009832@pbx.example>",
+			"Call-ID": "did-in", "User-Agent": "switch", "Max-Forwards": "70", "Content-Type": "application/sdp",
+		},
+	}
+	if res := screenJSON(t, srv, invite); hasReason(res, "caller_id_not_owned") {
+		t.Fatal("an inbound caller is not the customer's caller ID")
+	}
+	ev, _, _ := db.EventByCallID(ctx, "did-in")
+	if ev.Direction != "inbound" || ev.Customer != "acme" {
+		t.Fatalf("stored direction %q customer %q", ev.Direction, ev.Customer)
+	}
+	for _, p := range mustParties(t, db) {
+		if p.Name == "acme" {
+			t.Fatalf("a call to acme counted as a call from acme: %+v", p)
+		}
+	}
+}
+
+func mustParties(t *testing.T, db *store.SQLite) []store.Party {
+	t.Helper()
+	parties, err := db.Parties(context.Background(), "customer", time.Now().Add(-time.Hour), time.Now().Add(time.Hour), 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parties
+}
+
 func TestDirectionFollowsTheCustomerList(t *testing.T) {
 	srv, db := newTestServer(t)
 	if w := do(t, srv, http.MethodPut, "/v1/customers", map[string]any{"id": "acme", "name": "Acme", "dids": []string{"+1312555*"}}); w.Code != 200 {
@@ -317,7 +360,7 @@ func TestDirectionFollowsTheCustomerList(t *testing.T) {
 	if out.Direction != "outbound" || out.Customer != "acme" {
 		t.Fatalf("customer's own number: direction %q customer %q", out.Direction, out.Customer)
 	}
-	if in.Direction != "inbound" || in.Customer != "" {
+	if in.Direction != "inbound" || in.Customer != "acme" {
 		t.Fatalf("call to a customer: direction %q customer %q", in.Direction, in.Customer)
 	}
 	// What the switch says wins over the list.

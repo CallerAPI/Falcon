@@ -1011,10 +1011,10 @@
         '<label class="field">Signer codes<input name="spcs" type="text" placeholder="1234, 567J"></label><button class="btn primary" type="submit">Save</button></div></form>' +
         '<p class="muted small" style="margin:12px 0 0">Falcon blocks an upstream only on its RMD number or FRN, never on a name alone. The addresses and signer codes are what a block covers.</p>' +
         '<div id="upList" style="margin-top:14px"></div></div>' +
-        '<div class="card"><div class="card-head"><h2>Your customers</h2><span class="hint">Outbound calls with a caller ID the customer does not own are rejected</span></div>' +
+        '<div class="card"><div class="card-head"><h2>Your customers</h2><span class="hint">Calls to these numbers are inbound. Outbound calls with a caller ID the customer does not own are rejected</span></div>' +
         '<form id="custForm" class="form-row" style="grid-template-columns:minmax(0,0.8fr) minmax(0,1fr) minmax(0,2fr) auto">' +
         '<label class="field">Account ID<input name="id" type="text" placeholder="acme" required></label><label class="field">Name<input name="name" type="text" placeholder="Acme Dialer"></label>' +
-        '<label class="field">Numbers it may send, comma separated. End a prefix with *<input name="dids" type="text" placeholder="+13125550100, +1312555*"></label><button class="btn primary" type="submit">Save</button></form>' +
+        '<label class="field">Its numbers and DIDs, comma separated. End a prefix with *<input name="dids" type="text" placeholder="+13125550100, +1312555*"></label><button class="btn primary" type="submit">Save</button></form>' +
         '<div id="custList" style="margin-top:14px"></div></div>';
       $("#ruleForm").onsubmit = async (e) => {
         e.preventDefault();

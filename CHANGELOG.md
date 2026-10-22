@@ -4,6 +4,15 @@
 
 Fixed
 
+- A crash no longer leaves calls up. Falcon saves each bridged call when
+  its far end answers and deletes it when the call ends. On the next
+  start it sends BYE on both legs of every call that a crash or a kill
+  left up, so the switch stops billing it.
+- A call to a number that one of your customers owns is inbound for that
+  customer, also when the bridge sends it back to the switch. Before, it
+  was labeled outbound. The customer reject alert and the Overview count
+  only the calls a customer sends.
+
 - A loop ends at once. When the switch sends Falcon's own call back,
   Falcon refuses the copy with 482 and also cancels its own call, so the
   switch stops trying its other carriers. Before, each carrier delivered

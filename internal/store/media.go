@@ -156,6 +156,14 @@ CREATE TABLE IF NOT EXISTS routes (
   carry TEXT NOT NULL DEFAULT 'all',
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS live_calls (
+  call_id TEXT PRIMARY KEY,
+  a_invite TEXT NOT NULL,
+  a_ok TEXT NOT NULL DEFAULT '',
+  b_invite TEXT NOT NULL,
+  b_ok TEXT NOT NULL,
+  saved_unix INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS events_latency ON events(received_unix, latency_us);`)
 	return err
 }

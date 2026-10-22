@@ -71,9 +71,19 @@ func (s *Server) direction(ctx context.Context, req ScreenRequest, snap sipmsg.S
 	if said == "inbound" || said == "outbound" {
 		return said, nil
 	}
-	for _, c := range s.customerList(ctx) {
+	customers := s.customerList(ctx)
+	for _, c := range customers {
 		if c.Owns(snap.FromUser) {
 			return "outbound", &score.CustomerCtx{ID: c.ID, Known: true, HasDIDs: true, OwnsCaller: true}
+		}
+	}
+	called := req.Called
+	if called == "" {
+		called = snap.ToUser
+	}
+	for _, c := range customers {
+		if c.Owns(called) {
+			return "inbound", &score.CustomerCtx{ID: c.ID, Known: true, HasDIDs: true}
 		}
 	}
 	if req.Usual == "outbound" {

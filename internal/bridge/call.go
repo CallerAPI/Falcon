@@ -75,11 +75,15 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 	if backToSwitch {
 		usual = config.DirectionOutbound
 	}
+	called := req.Recipient.User
+	if route != nil && route.Strip {
+		called = strings.TrimPrefix(called, route.Prefix)
+	}
 	sctx, cancel := context.WithTimeout(base, s.cfg.ScreenTimeout)
 	res, err := s.screen.Screen(sctx, httpapi.ScreenRequest{
 		RawSIP: req.String(), SourceIP: sourceIP(req, peer), SourcePort: int(peer.Port()),
 		Switch: "sip/" + peer.Addr().Unmap().String(), Received: received,
-		Direction: s.directionOf(req), Customer: customerOf(req), Usual: usual,
+		Direction: s.directionOf(req), Customer: customerOf(req), Usual: usual, Called: called,
 	})
 	cancel()
 	if err != nil {
@@ -172,6 +176,7 @@ type call struct {
 	endedBy    string
 	fasAction  string
 	looped     bool
+	live       store.LiveCall
 	stopRing   context.CancelFunc
 	torn       sync.Once
 	done       chan struct{}
@@ -337,7 +342,9 @@ func (c *call) run() {
 	now := time.Now()
 	c.mu.Lock()
 	c.answered, c.answerAt = true, now
+	c.live = store.LiveCall{CallID: c.id, AInvite: c.aReq.String(), BInvite: bReq.String(), BOK: b.InviteResponse.String(), Saved: now}
 	c.mu.Unlock()
+	c.saveLive()
 	c.det.Answer(now)
 	if body := b.InviteResponse.Body(); len(body) > 0 {
 		if err := c.applyAnswer(body); err != nil {
@@ -489,6 +496,10 @@ func (c *call) connect() {
 	res.AppendHeader(c.contact())
 	res.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 	res.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, CANCEL, BYE, OPTIONS, UPDATE, INFO"))
+	c.mu.Lock()
+	c.live.AOK = res.String()
+	c.mu.Unlock()
+	c.saveLive()
 	go c.watch()
 	if err := c.a.WriteResponse(res); err != nil {
 		log.Printf("falcon bridge: caller did not confirm %s: %v", c.id, err)
@@ -738,7 +749,13 @@ func (c *call) finish() {
 	row.EndedBy, row.Status, row.Codec, row.FASAction = c.endedBy, c.status, c.codec, c.fasAction
 	answered, decodable, connected := c.answered, c.decodable, c.connected
 	connectAt, endAt := c.connectAt, c.endAt
+	saved := c.live.BOK != ""
 	c.mu.Unlock()
+	if saved {
+		if err := c.s.calls.DeleteLiveCall(ctx, c.id); err != nil {
+			log.Printf("falcon bridge: forget ended call %s: %v", c.id, err)
+		}
+	}
 	if c.relay != nil {
 		row.PacketsA, row.PacketsB = c.relay.Packets(media.SideA), c.relay.Packets(media.SideB)
 	}

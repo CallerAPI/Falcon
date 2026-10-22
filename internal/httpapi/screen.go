@@ -33,7 +33,10 @@ type ScreenRequest struct {
 	// Usual is the direction when nothing else decides it. The bridge
 	// sets "outbound" for a call it sends back to the switch. Empty is
 	// inbound.
-	Usual      string            `json:"-"`
+	Usual string `json:"-"`
+	// Called is the dialed number without a tech prefix. The bridge sets
+	// it. Empty means the To header.
+	Called     string            `json:"-"`
 	Method     string            `json:"method"`
 	RequestURI string            `json:"request_uri"`
 	Headers    map[string]string `json:"headers"`
