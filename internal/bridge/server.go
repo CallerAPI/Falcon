@@ -36,6 +36,14 @@ import (
 	"github.com/emiago/sipgo/sip"
 )
 
+// sipgo refuses to send a UDP message over 1300 bytes. Switches send
+// signed INVITEs larger than that as fragmented UDP, and the bridge reads
+// them, so it must write them back the same way. 65507 is the largest
+// UDP payload; sipgo subtracts 200 from the limit.
+func init() {
+	sip.UDPMTUSize = 65507 + 200
+}
+
 // Screener scores an INVITE. *httpapi.Server satisfies it.
 type Screener interface {
 	Screen(ctx context.Context, req httpapi.ScreenRequest) (score.Result, error)

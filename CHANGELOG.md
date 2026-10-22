@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+Fixed
+
+- The bridge carries INVITEs larger than 1300 bytes. A signed INVITE with
+  an Identity header often is. Before, Falcon read it but could not send
+  leg B ("size of packet larger than MTU"), so the switch got 503 and the
+  call failed.
+
 Added
 
 - Every-call mode for the bridge. `FALCON_BRIDGE_CARRY=all`, or Settings,

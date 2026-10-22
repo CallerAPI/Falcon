@@ -921,6 +921,31 @@ func TestBridgeCarriesEveryCallWhenCarryAllIsOn(t *testing.T) {
 	}
 }
 
+// Signed INVITEs often pass 1300 bytes, and switches send them as UDP.
+// The bridge must send its leg B over UDP at the same size.
+func TestBridgeCarriesAnInviteLargerThanOneUDPPacket(t *testing.T) {
+	h := newHarness(t, options{action: score.ActionAllow, carryAll: true})
+	caller, callee := newEndpoint(t), newEndpoint(t)
+	h.sw.onB = answerWith(callee.port(), true)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	identity := strings.Repeat("e", 1400) + ";info=<https://cert.example/shaken.crt>;alg=ES256;ppt=shaken"
+	dlgA, codes, err := h.sw.call(ctx, h.bridgeAddr(), caller.port(), sip.NewHeader("Identity", identity))
+	if err != nil {
+		t.Fatalf("a large INVITE must be carried: %v (codes %v)", err, codes)
+	}
+	_ = dlgA.Ack(ctx)
+	select {
+	case in := <-h.sw.legBs:
+		if got := in.req.GetHeader("Identity"); got == nil || got.Value() != identity {
+			t.Fatal("leg B lost the Identity header")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no leg B for a large INVITE")
+	}
+	_ = dlgA.Bye(ctx)
+}
+
 func TestBridgeStillRejectsHardBlocksWhenCarryAllIsOn(t *testing.T) {
 	h := newHarness(t, options{action: score.ActionReject, carryAll: true})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
