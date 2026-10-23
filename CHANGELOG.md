@@ -4,6 +4,14 @@
 
 Fixed
 
+- The bridge drops a UDP datagram that declares a larger body than it
+  carries. It also drops a datagram with a length that is not a number,
+  with two lengths that disagree, or with a length and no end to its
+  headers. Before, the SIP parser reserved memory for the declared length.
+  The check reads folded and compact length headers the same way the
+  parser does. TCP is not changed. sipgo moves to an upstream commit that
+  also limits the body to the message size.
+
 - Restart cleanup waits for the SIP socket. In 0.9.43 it sent its BYEs
   before sipgo served the socket, so sipgo tried to bind port 5060 again
   and every BYE failed. A saved call now stays until the switch confirms
