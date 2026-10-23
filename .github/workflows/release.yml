@@ -7,14 +7,14 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: write
-  packages: write
-  id-token: write
-
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      issues: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,6 +26,7 @@ jobs:
       # A push to main cuts the next patch tag, then this same job publishes
       # it. The tag push uses the workflow token, which does not start a
       # second run. A failed publish deletes the tag so the next push retries.
+      # A failed verification keeps the tag.
       - name: Tag the next patch
         id: ver
         if: github.ref == 'refs/heads/main'
@@ -76,6 +77,48 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Runs the verify commands from the release notes. Keep the identity
+      # the same as the footer in .goreleaser.yaml.
+      - name: Verify the published signatures
+        id: verify
+        if: github.ref != 'refs/heads/main' || steps.ver.outputs.skip == 'false'
+        env:
+          IDENTITY: https://github.com/CallerAPI/Falcon/.github/workflows/release.yml@refs/heads/main
+          ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -euo pipefail
+          version=$(jq -r .version dist/metadata.json)
+          digest=$(jq -r --arg name "ghcr.io/callerapi/falcon:${version}" \
+            '.[] | select(.type == "Docker Manifest" and .name == $name) | .extra.Digest' \
+            dist/artifacts.json)
+          case "$digest" in
+            sha256:*) ;;
+            *) echo "no digest for ghcr.io/callerapi/falcon:${version} in dist/artifacts.json"; exit 1 ;;
+          esac
+          cd dist
+          cosign verify-blob --certificate checksums.txt.pem --signature checksums.txt.sig \
+            --certificate-identity "$IDENTITY" \
+            --certificate-oidc-issuer "$ISSUER" checksums.txt
+          sha256sum -c checksums.txt --ignore-missing
+          cosign verify "ghcr.io/callerapi/falcon@${digest}" \
+            --certificate-identity "$IDENTITY" \
+            --certificate-oidc-issuer "$ISSUER" > /dev/null
+      # The release and :latest are already public at this point. Someone
+      # must repoint :latest by hand.
+      - name: Open an issue if verification failed
+        if: failure() && steps.verify.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.ver.outputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh issue create \
+            --title "release ${TAG}: signature verification failed, check :latest" \
+            --body "The verify step failed for ${TAG}. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}. Repoint ghcr.io/callerapi/falcon:latest to the last verified release."
+      # A failed verification must never delete, move, or repoint a tag or a
+      # release. The only actions are the issue above and the failed job.
+      # This step runs only when the job failed before the verify step ran.
       - name: Drop the tag if the publish failed
-        if: failure() && steps.ver.outputs.tag != ''
+        if: failure() && steps.ver.outputs.tag != '' && steps.verify.outcome == 'skipped'
         run: git push origin ":refs/tags/${{ steps.ver.outputs.tag }}"

@@ -1,5 +1,6 @@
 /data/
 /bin/
+/dist/
 /falcon
 *.db
 *.db-wal
