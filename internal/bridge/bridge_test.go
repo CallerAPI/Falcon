@@ -18,6 +18,7 @@ import (
 	"github.com/callerapi/falcon/internal/httpapi"
 	"github.com/callerapi/falcon/internal/media"
 	"github.com/callerapi/falcon/internal/score"
+	"github.com/callerapi/falcon/internal/sipguard"
 	"github.com/callerapi/falcon/internal/store"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
@@ -870,6 +871,47 @@ func TestBridgeIgnoresAddressesOutsideThePeerList(t *testing.T) {
 		t.Fatalf("a stranger got an answer: %q", buf[:n])
 	}
 	waitFor(t, "drop counted", 2*time.Second, func() bool { return h.br.Dropped() > 0 })
+}
+
+// A datagram that declares a body larger than itself is dropped before the
+// parser, and the UDP listener keeps answering.
+func TestBridgeDropsDatagramsThatDeclareMoreBodyThanTheyCarry(t *testing.T) {
+	h := newHarness(t, options{action: score.ActionAllow})
+	conn, err := net.DialUDP("udp", nil, h.br.UDPAddr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	local := conn.LocalAddr().String()
+	request := func(method, callID, lengths string) []byte {
+		return []byte(method + " sip:falcon@" + h.bridgeAddr() + " SIP/2.0\r\n" +
+			"Via: SIP/2.0/UDP " + local + ";branch=z9hG4bK" + callID + ";rport\r\n" +
+			"Max-Forwards: 70\r\n" +
+			"From: <sip:probe@" + local + ">;tag=" + callID + "\r\n" +
+			"To: <sip:falcon@" + h.bridgeAddr() + ">\r\n" +
+			"Call-ID: " + callID + "\r\n" +
+			"CSeq: 1 " + method + "\r\n" +
+			lengths + "\r\n")
+	}
+	drops := sipguard.Dropped()
+	if _, err := conn.Write(request("OPTIONS", "oversized-1", "Content-Length:\r\n 4000000000\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write(request("OPTIONS", "probe-1", "Content-Length: 0\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 4096)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatalf("bridge did not answer after the oversized datagram: %v", err)
+	}
+	if got := string(buf[:n]); !strings.HasPrefix(got, "SIP/2.0 200") || !strings.Contains(got, "probe-1") {
+		t.Fatalf("answer: %q", got)
+	}
+	if sipguard.Dropped() == drops {
+		t.Fatal("the guard did not drop the oversized datagram")
+	}
 }
 
 func TestVendorRouteLabelsStripsAndCarriesCleanCalls(t *testing.T) {

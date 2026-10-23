@@ -31,6 +31,7 @@ import (
 	"github.com/callerapi/falcon/internal/httpapi"
 	"github.com/callerapi/falcon/internal/media"
 	"github.com/callerapi/falcon/internal/score"
+	"github.com/callerapi/falcon/internal/sipguard"
 	"github.com/callerapi/falcon/internal/store"
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
@@ -172,7 +173,10 @@ func New(cfg Config, screen Screener, ctl Controls, sink Sink, calls CallLog) (*
 	ua, err := sipgo.NewUA(
 		sipgo.WithUserAgent("Falcon/"+cfg.Version),
 		sipgo.WithUserAgentTransactionLayerOptions(sip.WithTransactionLayerLogger(quiet)),
-		sipgo.WithUserAgentTransportLayerOptions(sip.WithTransportLayerLogger(quiet)),
+		sipgo.WithUserAgentTransportLayerOptions(
+			sip.WithTransportLayerLogger(quiet),
+			sip.WithTransportLayerReadFilter(sipguard.ReadFilter),
+		),
 	)
 	if err != nil {
 		s.closeSockets()
