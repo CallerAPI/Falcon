@@ -9,6 +9,7 @@ import (
 
 	"github.com/callerapi/falcon/internal/score"
 	"github.com/callerapi/falcon/internal/shaken"
+	"github.com/callerapi/falcon/internal/sipguard"
 )
 
 // metrics is a small Prometheus text exposition without a dependency.
@@ -112,6 +113,9 @@ func (m *metrics) write(w io.Writer, s *Server) {
 	fmt.Fprintf(w, "# HELP falcon_voice_monologue_total Clips where one side talked into silence.\n# TYPE falcon_voice_monologue_total counter\nfalcon_voice_monologue_total %d\n", mono)
 	fmt.Fprintf(w, "# HELP falcon_voice_repeats_total Clips that matched an earlier recording.\n# TYPE falcon_voice_repeats_total counter\nfalcon_voice_repeats_total %d\n", repeats)
 	fmt.Fprintf(w, "# HELP falcon_monitor_holds_total Decisions recorded but not enforced.\n# TYPE falcon_monitor_holds_total counter\nfalcon_monitor_holds_total %d\n", held)
+	fmt.Fprintf(w, "# HELP falcon_sip_datagrams_dropped_total SIP datagrams dropped by the input guard before parsing.\n# TYPE falcon_sip_datagrams_dropped_total counter\nfalcon_sip_datagrams_dropped_total %d\n", sipguard.Dropped())
+	fmt.Fprintf(w, "# HELP falcon_sip_parse_failures_total SIP messages that did not parse, logged or not.\n# TYPE falcon_sip_parse_failures_total counter\nfalcon_sip_parse_failures_total %d\n", sipguard.ParseFailures())
+	fmt.Fprintf(w, "# HELP falcon_sip_unhandled_responses_total SIP responses that matched no transaction.\n# TYPE falcon_sip_unhandled_responses_total counter\nfalcon_sip_unhandled_responses_total %d\n", sipguard.UnhandledResponses())
 
 	if s.Feed != nil {
 		n, _, _ := s.Feed.Status()

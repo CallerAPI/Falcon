@@ -4,6 +4,22 @@
 
 Fixed
 
+- The bridge logs less from the SIP library. A line keeps only the
+  transport, the local address, the network, the method, the duration,
+  and an error category. It holds no numbers, SIP headers, or error text.
+  A message that does not parse, a request or response that cannot be
+  handled, and a failed error reply each write one fixed line at most
+  every 10 seconds per transport. The next line gives the count it
+  suppressed.
+- A SIP response that matches no call is counted and not logged.
+- `/metrics` has three new counters: `falcon_sip_datagrams_dropped_total`
+  (datagrams that the input check drops before parsing),
+  `falcon_sip_parse_failures_total` (messages that do not parse, also the
+  ones not logged), and `falcon_sip_unhandled_responses_total`.
+- Note on the SIP library update in 0.9.45: the library now closes a TCP
+  connection on any framing error. When a switch sends many calls on one
+  TCP connection, such an error can drop the calls in flight on it.
+
 - Restart cleanup waits for the SIP socket. In 0.9.43 it sent its BYEs
   before sipgo served the socket, so sipgo tried to bind port 5060 again
   and every BYE failed. A saved call now stays until the switch confirms

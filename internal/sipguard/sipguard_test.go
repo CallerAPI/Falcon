@@ -183,3 +183,17 @@ func FuzzFilterCoversParser(f *testing.F) {
 		}
 	})
 }
+
+func TestReadFilterCountsDrops(t *testing.T) {
+	before := Dropped()
+	props := sip.TransportReadProps{Transport: "udp"}
+	if out, _ := ReadFilter(props, datagram("Content-Length: 9000", "")); out != nil {
+		t.Fatal("unsafe datagram passed")
+	}
+	if out, _ := ReadFilter(props, datagram("Content-Length: 0", "")); out == nil {
+		t.Fatal("safe datagram dropped")
+	}
+	if got := Dropped() - before; got != 1 {
+		t.Fatalf("dropped count moved by %d, want 1", got)
+	}
+}

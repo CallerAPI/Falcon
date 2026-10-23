@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/emiago/sipgo/sip"
 )
@@ -35,9 +36,18 @@ func ReadFilter(info sip.TransportReadProps, data []byte) ([]byte, error) {
 		return data, nil
 	}
 	if DatagramBodyOverflows(data) {
+		dropped.Add(1)
 		return nil, nil
 	}
 	return data, nil
+}
+
+var dropped atomic.Uint64
+
+// Dropped returns how many datagrams ReadFilter dropped since the process
+// started.
+func Dropped() uint64 {
+	return dropped.Load()
 }
 
 // DatagramBodyOverflows reports whether data must be dropped before the

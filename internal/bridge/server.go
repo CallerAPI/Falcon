@@ -169,10 +169,11 @@ func New(cfg Config, screen Screener, ctl Controls, sink Sink, calls CallLog) (*
 		return nil, fmt.Errorf("bridge tcp: %w", err)
 	}
 	s.udp, s.tcp = udp, tcp
-	quiet := slog.New(slog.NewTextHandler(logWriter{}, &slog.HandlerOptions{Level: slog.LevelError}))
+	quiet := sipLogger()
+	defaultSIPLogger.Do(func() { sip.SetDefaultLogger(quiet) })
 	ua, err := sipgo.NewUA(
 		sipgo.WithUserAgent("Falcon/"+cfg.Version),
-		sipgo.WithUserAgentTransactionLayerOptions(sip.WithTransactionLayerLogger(quiet)),
+		sipgo.WithUserAgentTransactionLayerOptions(sip.WithTransactionLayerLogger(quiet), sip.WithTransactionLayerUnhandledResponseHandler(sipguard.UnhandledResponse)),
 		sipgo.WithUserAgentTransportLayerOptions(sip.WithTransportLayerLogger(quiet), sipguard.TransportLayerOption()),
 	)
 	if err != nil {
@@ -214,6 +215,26 @@ func (s *Server) closeSockets() {
 	if s.tcp != nil {
 		_ = s.tcp.Close()
 	}
+}
+
+// defaultSIPLogger sets the sipgo package logger once per process. Do not
+// replace it with slog.SetDefault: that would send Falcon's own log.Printf
+// lines through the Error only handler.
+var defaultSIPLogger sync.Once
+
+// sipLogger returns the logger for sipgo. It prints errors only, through
+// sipguard.LogHandler. The process log adds the time.
+func sipLogger() *slog.Logger {
+	text := slog.NewTextHandler(logWriter{}, &slog.HandlerOptions{
+		Level: slog.LevelError,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if len(groups) == 0 && a.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			return a
+		},
+	})
+	return slog.New(sipguard.NewLogHandler(text, sipguard.ParseLogEvery))
 }
 
 // logWriter sends sipgo errors to the process log.

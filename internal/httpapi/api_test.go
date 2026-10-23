@@ -243,7 +243,7 @@ func TestEventsFilterCursorPartiesHistogramCSVMetrics(t *testing.T) {
 
 	w = do(t, srv, http.MethodGet, "/metrics", nil)
 	body := w.Body.String()
-	for _, want := range []string{"falcon_screens_total 7", `falcon_screens_by_action_total{action="reject"} 1`, "falcon_rules 0", "falcon_build_info"} {
+	for _, want := range []string{"falcon_screens_total 7", `falcon_screens_by_action_total{action="reject"} 1`, "falcon_rules 0", "falcon_sip_datagrams_dropped_total ", "falcon_sip_parse_failures_total ", "falcon_sip_unhandled_responses_total ", "falcon_build_info"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("metrics missing %q in:\n%s", want, body)
 		}
