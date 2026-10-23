@@ -3,7 +3,7 @@ module github.com/callerapi/falcon
 go 1.23.0
 
 require (
-	github.com/emiago/sipgo v1.6.0
+	github.com/emiago/sipgo v1.6.1-0.20261020074914-bddd307b23d3
 	modernc.org/sqlite v1.34.5
 )
 
@@ -13,7 +13,7 @@ require (
 	github.com/gobwas/pool v0.2.1 // indirect
 	github.com/gobwas/ws v1.3.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/icholy/digest v1.1.0 // indirect
+	github.com/icholy/digest v1.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
