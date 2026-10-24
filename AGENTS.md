@@ -23,22 +23,24 @@ Requirements: Go 1.23 or Docker. No database server, no other service.
 ```
 # 1. Build and run (Go). VERSION is required. A binary without it says dev.
 make build VERSION=0.9.23
-FALCON_TOKEN=change-me ./bin/falcon
+export FALCON_TOKEN=$(openssl rand -hex 32)
+./bin/falcon
 # expected: "Falcon 0.9.23 listening on 127.0.0.1:8090" and a telemetry line
 
 # 1. or Docker. FALCON_VERSION is required. Without it the image is not built.
-cp .env.example .env && sed -i 's/^FALCON_TOKEN=.*/FALCON_TOKEN=change-me/' .env
+export FALCON_TOKEN=$(openssl rand -hex 32)
+sed "s/^FALCON_TOKEN=.*/FALCON_TOKEN=$FALCON_TOKEN/" .env.example > .env
 FALCON_VERSION=0.9.23 docker compose up -d --build
 # expected: container up, http://127.0.0.1:8090/v1/health returns {"status":"ok"}
 
 # 2. Prove it screens
-curl -s -X POST -H 'X-Falcon-Token: change-me' -H 'Content-Type: application/json' \
+curl -s -X POST -H "X-Falcon-Token: $FALCON_TOKEN" -H 'Content-Type: application/json' \
   -d '{"method":"INVITE","request_uri":"sip:+14155550100@x","source_ip":"203.0.113.9","headers":{"From":"<sip:+13125550188@203.0.113.9>;tag=1","To":"<sip:+14155550100@x>","Call-ID":"agent-1","CSeq":"1 INVITE","User-Agent":"friendly-scanner"}}' \
   http://127.0.0.1:8090/v1/screen
 # expected: {"action":"reject", ... "scanner_user_agent" ...}
 
 # 3. Open the dashboard
-# http://127.0.0.1:8090/?token=change-me  (Overview shows the state, four numbers, and what needs a decision)
+# http://127.0.0.1:8090/?token=$FALCON_TOKEN  (Overview shows the state, four numbers, and what needs a decision)
 ```
 
 If step 2 does not return JSON, read `/tmp/falcon.log` or the container
@@ -67,7 +69,7 @@ and `falcon_customer=<account id>` on the channel before the adapter runs,
 and register each customer's numbers:
 
 ```
-curl -s -X PUT -H 'X-Falcon-Token: change-me' -H 'Content-Type: application/json' \
+curl -s -X PUT -H "X-Falcon-Token: $FALCON_TOKEN" -H 'Content-Type: application/json' \
   -d '{"id":"acme","name":"Acme","dids":["+13125550100","+1312555*"]}' http://127.0.0.1:8090/v1/customers
 ```
 
@@ -80,7 +82,7 @@ and `adapters: PASS` at the end.
 
 | Variable | Set it when | Default |
 | --- | --- | --- |
-| `FALCON_TOKEN` | Always. An empty token on a non-loopback listen refuses to start. | empty |
+| `FALCON_TOKEN` | Always. On a non-loopback listen Falcon refuses to start unless the token has at least 32 characters and is not an example value. Generate it with `openssl rand -hex 32`. | empty |
 | `FALCON_PROFILE` | `carrier` on a class 4 or wholesale ingress. Default scoring rejects normal call center traffic there. | `trunk` |
 | `FALCON_LISTEN` | The switch is on another host. Keep it on a private network. | `127.0.0.1:8090` |
 | `FALCON_SIP_LISTEN`, `FALCON_SIP_PEERS` | The switch cannot run a script and routes INVITEs to Falcon over SIP. Peers are required off loopback. | empty |

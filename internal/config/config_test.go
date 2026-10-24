@@ -36,3 +36,38 @@ func TestTrunkIsTheDefaultProfile(t *testing.T) {
 		t.Fatalf("trunk defaults: %+v", c)
 	}
 }
+
+func TestCheckToken(t *testing.T) {
+	strong := "0123456789abcdef0123456789abcdef"
+	cases := []struct {
+		name   string
+		listen string
+		token  string
+		open   bool
+		ok     bool
+	}{
+		{"loopback empty", "127.0.0.1:8090", "", false, true},
+		{"loopback placeholder", "127.0.0.1:8090", "change-me", false, true},
+		{"localhost short", "localhost:8090", "abc", false, true},
+		{"ipv6 loopback short", "[::1]:8090", "abc", false, true},
+		{"public empty", "0.0.0.0:8090", "", false, false},
+		{"public empty allow open", "0.0.0.0:8090", "", true, true},
+		{"public placeholder", "0.0.0.0:8090", "change-me", false, false},
+		{"public placeholder upper", "0.0.0.0:8090", " CHANGE-ME ", false, false},
+		{"public placeholder allow open", "0.0.0.0:8090", "replace-me", true, false},
+		{"public short", "10.0.0.5:8090", strong[:31], false, false},
+		{"public strong", "0.0.0.0:8090", strong, false, true},
+		{"all interfaces no host", ":8090", strong[:20], false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Config{Listen: tc.listen, Token: tc.token, AllowOpen: tc.open}.CheckToken()
+			if tc.ok && err != nil {
+				t.Fatalf("want ok, got %v", err)
+			}
+			if !tc.ok && err == nil {
+				t.Fatal("want error, got ok")
+			}
+		})
+	}
+}

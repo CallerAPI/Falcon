@@ -387,27 +387,32 @@ go run ./cmd/falcon
 Docker, built from source:
 
 ```bash
-cp .env.example .env
+sed "s/^FALCON_TOKEN=.*/FALCON_TOKEN=$(openssl rand -hex 32)/" .env.example > .env
 FALCON_VERSION=0.9.26 docker compose up --build
 ```
 
 `FALCON_VERSION` is the release you build, such as `0.9.26`. The dashboard
-and the boot log show it.
+and the boot log show it. Compose publishes port 8090 on `127.0.0.1` only.
 
 Docker, the published image:
 
 ```bash
-docker run -d --name falcon -p 8090:8090 -v falcon-data:/data \
-  -e FALCON_LISTEN=0.0.0.0:8090 -e FALCON_TOKEN=change-me \
+FALCON_TOKEN=$(openssl rand -hex 32); echo "FALCON_TOKEN=$FALCON_TOKEN"
+docker run -d --name falcon -p 127.0.0.1:8090:8090 -v falcon-data:/data \
+  -e FALCON_LISTEN=0.0.0.0:8090 -e FALCON_TOKEN="$FALCON_TOKEN" \
   ghcr.io/callerapi/falcon:latest
 ```
 
 The image keeps its database in `/data`. Pin a version tag in production.
+Keep the printed token. The switch and the dashboard need it.
 
 Open `http://127.0.0.1:8090`. Set `FALCON_LISTEN=0.0.0.0:8090` if the process
 runs in a container.
 
-Set `FALCON_TOKEN` before you expose the port. Send that token in
+On a listen that is not loopback, Falcon refuses to start unless
+`FALCON_TOKEN` has at least 32 characters and is not an example value.
+Publish port 8090 to a private address only, never to the internet. Send
+that token in
 `X-Falcon-Token`, in `Authorization: Bearer`, or as `?token=` for the
 dashboard and event streams.
 
@@ -1102,10 +1107,16 @@ See `.env.example`. Every value has a default. Secrets never appear in
 Read `SECURITY.md` before the first install. In short: untrusted URLs are
 fetched only to public addresses over https with tight caps, the switch is
 never held longer than the budget, mutations refuse cross-site form
-submissions, the dashboard runs under a strict content security policy, an
-empty token on a public listen stops startup, raw SIP has its own short
+submissions, the dashboard runs under a strict content security policy, a
+missing, short, or example token on a public listen stops startup, raw SIP has its own short
 retention, telemetry never carries the called party, and nothing leaves the
 host that Settings does not list.
+
+If Falcon will not start after upgrading, check the log: on a non-loopback
+listen it now refuses tokens under 32 characters or example values. Set a
+new `FALCON_TOKEN` (`openssl rand -hex 32`) and update the same token in
+your switch adapter config. While Falcon is down the adapters fail open, so
+calls go through unscreened.
 
 ## Releases
 

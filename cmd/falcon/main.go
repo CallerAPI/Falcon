@@ -290,10 +290,10 @@ func main() {
 	go q.Run(ctx)
 	go store.Janitor(ctx, db, api.Retention)
 
+	if err := cfg.CheckToken(); err != nil {
+		log.Fatalf("falcon: %v", err)
+	}
 	if cfg.Token == "" {
-		if !cfg.ListensOnLoopback() && !cfg.AllowOpen {
-			log.Fatalf("falcon: FALCON_TOKEN is empty and FALCON_LISTEN=%s is not loopback. Set a token, or set FALCON_ALLOW_OPEN=true if a firewall in front of this host is the only thing you want.", cfg.Listen)
-		}
 		log.Printf("falcon: FALCON_TOKEN is empty. Switch API is open on %s.", cfg.Listen)
 	}
 	if cfg.MaxBody > 0 {

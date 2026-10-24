@@ -483,6 +483,39 @@ func (c Config) Validate() error {
 	return nil
 }
 
+// MinTokenLength is the shortest FALCON_TOKEN accepted on a non-loopback listen.
+const MinTokenLength = 32
+
+// placeholderTokens are token values shipped in examples and docs.
+var placeholderTokens = map[string]bool{
+	"change-me": true, "changeme": true, "replace-me": true, "replaceme": true,
+	"e2e-token": true, "secret": true, "token": true,
+}
+
+// CheckToken reports whether FALCON_TOKEN is fit for FALCON_LISTEN. A
+// loopback listen accepts any token. A non-loopback listen needs a token
+// of at least MinTokenLength characters that is not a shipped placeholder.
+// An empty token passes only with AllowOpen.
+func (c Config) CheckToken() error {
+	if c.ListensOnLoopback() {
+		return nil
+	}
+	token := strings.TrimSpace(c.Token)
+	if token == "" {
+		if c.AllowOpen {
+			return nil
+		}
+		return fmt.Errorf("FALCON_TOKEN is empty and FALCON_LISTEN=%s is not loopback. Generate a token with: openssl rand -hex 32. Or set FALCON_ALLOW_OPEN=true if a firewall in front of this host is the only thing you want", c.Listen)
+	}
+	if placeholderTokens[strings.ToLower(token)] {
+		return fmt.Errorf("FALCON_TOKEN is an example placeholder and FALCON_LISTEN=%s is not loopback. Generate a token with: openssl rand -hex 32", c.Listen)
+	}
+	if len(token) < MinTokenLength {
+		return fmt.Errorf("FALCON_TOKEN has %d characters and FALCON_LISTEN=%s is not loopback. Use at least %d. Generate one with: openssl rand -hex 32", len(token), c.Listen, MinTokenLength)
+	}
+	return nil
+}
+
 func addrIsLoopback(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {

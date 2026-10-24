@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+Changed
+
+- On a listen address other than loopback, Falcon refuses to start when
+  `FALCON_TOKEN` is shorter than 32 characters or is an example value.
+  `.env.example` ships with an empty token, and the Docker examples
+  publish port 8090 on `127.0.0.1` only.
+- Upgrade note: an install built from the earlier example should set a new
+  token (`openssl rand -hex 32`), update the switch adapter and any
+  dashboard bookmark to match, and publish port 8090 as
+  `127.0.0.1:8090:8090` or on a private address only.
+- If Falcon will not start after upgrading, check the log: on a
+  non-loopback listen it now refuses tokens under 32 characters or example
+  values. Set a new `FALCON_TOKEN` (`openssl rand -hex 32`) and update the
+  same token in your switch adapter config. While Falcon is down the
+  adapters fail open, so calls go through unscreened.
+
 Fixed
 
 - The bridge logs less from the SIP library. A line keeps only the
