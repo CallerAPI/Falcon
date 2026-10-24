@@ -3,7 +3,7 @@ services:
     build:
       context: .
       args:
-        VERSION: ${FALCON_VERSION:?set FALCON_VERSION to the release, for example 0.9.23}
+        VERSION: ${FALCON_VERSION:?set FALCON_VERSION to the release. make -s version prints the latest one}
     restart: unless-stopped
     ports:
       - "8090:8090"
