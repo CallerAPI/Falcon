@@ -211,9 +211,26 @@ fi
 mkdir -p "$E2E_TMP/freeswitch"
 sed "s#FALCON_E2E_SIP_IP#${FS_SIP_IP}#" adapters/e2e/freeswitch/freeswitch.xml >"$E2E_TMP/freeswitch/freeswitch.xml"
 
+# outcome_check <label> <cause>... passes when Falcon holds an outcome with
+# each hangup cause. Only a hangup handler that ran falcon_hangup.agi
+# posts one.
+outcome_check() {
+  label=$1; shift
+  for _ in $(seq 1 20); do
+    if curl -sf -H "X-Falcon-Token: $TOKEN" "http://127.0.0.1:${PORT}/v1/events?limit=200" \
+      | python3 -c 'import json,sys; got={e.get("hangup_cause") for e in json.load(sys.stdin)["data"]}; sys.exit(0 if set(sys.argv[1:])<=got else 1)' "$@"; then
+      echo "$label outcome: PASS"
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "$label outcome: FAIL (no outcome with causes $*)"; fail=1
+}
+
 # Real Asterisk from adapters/e2e/asterisk/Dockerfile. A reject hangs up
 # with cause 21, which is 403 on the wire. An allowed call lands in
-# from-internal and hangs up with cause 1, which is 404.
+# falcon-allowed-inbound and hangs up with cause 22, which is 410. The
+# hangup handler reports both outcomes to Falcon.
 if [ "${ASTERISK_E2E:-}" = "1" ]; then
   echo "== asterisk (real, Alpine package)"
   docker build -q -t falcon-e2e-asterisk adapters/e2e/asterisk >/dev/null
@@ -225,7 +242,8 @@ if [ "${ASTERISK_E2E:-}" = "1" ]; then
     -v "$PWD/adapters/asterisk/falcon_hangup.agi:/var/lib/asterisk/agi-bin/falcon_hangup.agi:ro" \
     falcon-e2e-asterisk >/dev/null
   wait_port falcon-e2e-asterisk 5060 || true
-  switch_check "asterisk real" falcon-e2e-asterisk 5060 403 404
+  switch_check "asterisk real" falcon-e2e-asterisk 5060 403 410
+  outcome_check "asterisk real" 21 22
 fi
 
 # Real FreeSWITCH with mod_curl and mod_lua. A reject hangs up with

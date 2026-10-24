@@ -237,20 +237,54 @@ AGI is the default path. It uses the Python standard library only.
 1. Copy `asterisk/falcon.agi` and `asterisk/falcon_hangup.agi` to
    `/var/lib/asterisk/agi-bin/` and make them executable. Asterisk logs
    `Permission denied` and continues the call when they are not.
-2. Include `asterisk/extensions.conf` in the inbound context. The patterns
-   are `_[+0-9]X.`, so E.164 destinations with a plus match.
-3. Set `FALCON_URL` and `FALCON_TOKEN` in the Asterisk environment
+2. Include `asterisk/extensions.conf` and point the trunk's inbound
+   context at `from-trunk-falcon`. The patterns are `_[+0-9]X.`, so E.164
+   destinations with a plus match.
+3. Allowed calls continue to `falcon-allowed-inbound`. Define that context,
+   or change the `Goto` to your own inbound context. Never use
+   `from-internal` or any context that can dial out. An outside caller sent
+   there gets internal dialing rights and can place toll calls.
+4. Set `FALCON_URL` and `FALCON_TOKEN` in the Asterisk environment
    (`/etc/default/asterisk` or the systemd unit). A channel variable with
    the same name wins, so one Asterisk can screen for several Falcon
    installs: put `set_var=FALCON_URL=...` and `set_var=FALCON_TOKEN=...` on
    each PJSIP endpoint.
 
-FreePBX, Issabel, VitalPBX, and PBX in a Flash: put the context in
-`extensions_custom.conf` and point the trunk's inbound context at
-`from-trunk-falcon`. Wazo: the same, in a custom dialplan file.
+The context pushes a hangup handler before the AGI. The handler runs
+`falcon_hangup.agi`, which reports how the call ended. It runs in every
+context the call reaches. An `h` extension does not.
+
+FreePBX, Issabel, VitalPBX, and PBX in a Flash: append
+`asterisk/extensions_freepbx.conf` to `extensions_custom.conf` and point
+the trunk's inbound context at `from-trunk-falcon`. Allowed calls continue
+to `from-pstn`, so inbound routes work as before. The AGI reads
+`FALCON_URL` and `FALCON_TOKEN` from the environment. If setting the
+Asterisk environment is awkward, uncomment the two `Set` lines in the file
+and paste the same token Falcon runs with. Wazo: use
+`asterisk/extensions.conf` in a custom dialplan file and set the `Goto` to
+your inbound context.
 
 The ARI app is `asterisk/falcon_ari.py`. Install `ari` from
-`asterisk/requirements-ari.txt`. Point `Stasis(falcon,from-internal,${EXTEN},1)` at it.
+`asterisk/requirements-ari.txt`. Set `FALCON_ARI_CONTEXT` to your inbound
+context (`from-pstn` on FreePBX). The app does not start without it.
+Point `Stasis(falcon,falcon-allowed-inbound,${EXTEN},1)` at it. A first
+Stasis argument overrides `FALCON_ARI_CONTEXT` for that call. The same
+rule applies to both: never `from-internal`. The app refuses the
+FreePBX internal contexts.
+
+### Upgrade from an earlier example
+
+If you copied `extensions.conf` or the ARI example before this change,
+make two edits:
+
+1. Change the context that allowed calls continue to. Use your inbound
+   context: `from-pstn` on FreePBX, or the context that routes your DIDs
+   on plain Asterisk. Do this in the `Goto` and in the first `Stasis`
+   argument.
+2. Replace `exten => h,1,AGI(falcon_hangup.agi)` with the hangup handler:
+   add `Set(CHANNEL(hangup_handler_push)=falcon-hangup,s,1)` before
+   `AGI(falcon.agi)` and add the `[falcon-hangup]` context from
+   `asterisk/extensions.conf`.
 
 ## FreeSWITCH
 

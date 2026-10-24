@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Asterisk h-extension AGI. Reports how the call ended to Falcon and, when
+"""Asterisk hangup handler AGI. Reports how the call ended to Falcon and, when
 Falcon asked for a clip, uploads the MixMonitor recording. Copy next to
 falcon.agi in agi-bin and make it executable."""
 

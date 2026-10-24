@@ -20,6 +20,14 @@ Changed
 
 Fixed
 
+- Asterisk adapter: safer example contexts. Allowed calls continue to an
+  inbound context (`falcon-allowed-inbound`, or `from-pstn` in the new
+  `extensions_freepbx.conf`). Call outcomes are reported by a hangup
+  handler, so they also arrive after the call moves to another context.
+  The ARI app needs `FALCON_ARI_CONTEXT` and does not start without it.
+  If you copied the earlier example, follow "Upgrade from an earlier
+  example" in `adapters/README.md`.
+
 - The bridge logs less from the SIP library. A line keeps only the
   transport, the local address, the network, the method, the duration,
   and an error category. It holds no numbers, SIP headers, or error text.

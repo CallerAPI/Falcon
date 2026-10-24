@@ -596,7 +596,7 @@ func buildUpsell(en Enrichment) Upsell {
 			Connected: en.FirewallOn,
 			URL:       en.FirewallURL,
 			Headline:  "Voice firewall",
-			Detail:    "Screen each INVITE against live reputation, or send signaling through the hosted SIP firewall.",
+			Detail:    "Screen each INVITE against live reputation.",
 		},
 	}
 }

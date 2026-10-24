@@ -57,7 +57,7 @@ Falcon and a real switch.
 
 | Switch | Files | Where |
 | --- | --- | --- |
-| Asterisk | `adapters/asterisk/falcon.agi`, `falcon_hangup.agi`, `extensions.conf` | agi-bin and the inbound and outbound contexts |
+| Asterisk | `adapters/asterisk/falcon.agi`, `falcon_hangup.agi`, `extensions.conf` (`extensions_freepbx.conf` on FreePBX) | agi-bin and the inbound and outbound contexts. Allowed calls never go to `from-internal` |
 | FreeSWITCH | `adapters/freeswitch/falcon.lua`, `falcon_hangup.lua`, `dialplan.xml` | scripts and the inbound dialplan |
 | Kamailio | `adapters/kamailio/falcon.cfg` | `import_file` and `route(FALCON_SCREEN)` on INVITE |
 | OpenSIPS | `adapters/opensips/falcon.cfg` | `include_file` and `route(falcon_screen)` on INVITE |

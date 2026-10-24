@@ -71,14 +71,14 @@ the FCC standing of every provider. See
 ## Share and get: the network is free
 
 Every Falcon that shares is a sensor on a different network. Together they
-see a bad signer or a new dialer tool within hours, on calls that never
+see a bad signer or a new dialer tool on calls that never
 reached you. Your install gets that back for free.
 
 | You get | Local only | Sharing (the default) | With a CallerAPI key |
 | --- | --- | --- | --- |
 | Screening, STIR/SHAKEN, lists, dashboard, bridge, FAS guard, traceback | Yes | Yes | Yes |
-| Network reputation: a score for every signer and dialer tool from every install, refreshed hourly | No | Yes | Yes |
-| FCC autopilot list: the FCC standing of every provider, refreshed every 6 hours | No | Yes | Yes |
+| Network reputation: a score for every signer and dialer tool, from the installs that share | No | Yes | Yes |
+| FCC carrier check: the FCC standing of your upstream carriers | No | Yes | Yes |
 | Business Caller ID verification | No | No | Yes, free |
 | Spam database feed, live reputation, voice AI | No | No | Paid add-ons |
 
@@ -86,9 +86,10 @@ What it costs you:
 
 - **Nothing on the call path.** Telemetry leaves after the decision, in the
   background. A slow or absent CallerAPI never slows a call.
-- **Nothing about your subscribers.** The called number, recordings,
-  transcripts, the PASSporT, and the SDP never leave the host. A clean call
-  leaves as a count in an hourly total, not as a record.
+- **No called numbers in telemetry.** Telemetry never carries the called
+  number, recordings, transcripts, the PASSporT, or the SDP. Most clean
+  calls leave as a count in an hourly total, not as a record. Other
+  outbound requests are listed in `SECURITY.md`, "What leaves the host".
 - **One day.** CallerAPI serves the feed and the FCC list after one day of
   sharing and 100 events. A CallerAPI key unlocks both at once, with or
   without sharing.
@@ -98,8 +99,9 @@ What it is worth:
 - The signer scores are the CallerAPI signer reputation API, a paid product
   for companies that do not run Falcon. A sharing install gets the same data
   inside the engine.
-- The FCC list keeps you inside 47 CFR 64.6305(g) and 64.1200(n)(3) without
-  anyone on your team reading FCC orders.
+- The FCC carrier check compares your upstream carriers with the FCC list
+  every 6 hours. It runs in monitor mode by default: it alerts and adds no
+  rules. `FALCON_FCC_MODE=enforce` adds deny rules.
 - Each install makes every score sharper for the others. The more installs
   share, the fewer calls a campaign gets through before the network names it.
 
@@ -118,18 +120,18 @@ How the network stays honest:
   CallerAPI spam database only when two reporters saw it, and one of them
   is on an account. Your deny list never lists a number for anyone else.
 
-`FALCON_SHARE=false` turns sharing off. Nothing leaves the host, and the
-engine still screens on its own.
+`FALCON_SHARE=false` turns sharing off. Telemetry stops, and the engine
+still screens on its own.
 
 ## Telemetry: on by default, called party redacted
 
 Falcon shares redacted screening events with CallerAPI. This is on by
 default. Every install that shares makes detection better for every other
-install, and it is how a free engine stays maintained. If you would rather
-not, one flag turns it off and nothing leaves the host.
+install, and it is how a free engine stays maintained. Telemetry never
+carries the called number. `FALCON_SHARE=false` turns it off.
 
 A call with a signal travels as an event, every 30 seconds, in batches of up
-to 100. A signal is a decision other than allow, a honeypot hit, a failed
+to 100. A signal is a decision other than allow, a call to a trap number, a failed
 verification, or a voice category. An event carries:
 
 | Field | Sent |
@@ -242,12 +244,11 @@ own. Where it earns its keep: a scam operation rotates numbers weekly and
 signers rarely, but it almost never rotates its dialer. New numbers from a
 tool the network already scored badly arrive pre-flagged.
 
-## Outbound: fraud from your own platform
+## Outbound: caller id checks for your own customers
 
-Inbound screening protects your subscribers. Outbound screening protects
-you. A robocall or a spoofed caller id that leaves your network under your
-STIR/SHAKEN certificate is what regulators fine, and the traceback lands
-on your desk.
+Outbound screening checks the calls your own customers send. Falcon
+compares each caller id with the numbers registered for that customer,
+labels every call with the customer, and alerts on reject rates.
 
 Register each customer and the numbers it may present:
 
@@ -285,8 +286,8 @@ outcomes, every screen sees the calling number's last hour: `caller_fanout` (30 
 `FALCON_FANOUT_PER_HOUR`), `sequential_dialing` (5 consecutive numbers,
 `FALCON_SEQUENTIAL_N`), `caller_low_asr` (20 completed calls, at most 20%
 answered), `caller_short_calls` (10 answered, at most 12 seconds on
-average), and `caller_hits_honeypots`. These are the numbers behind every
-robocall detector in the industry; here they run on your own switch.
+average), and `caller_hits_honeypots` (calls to trap numbers, below).
+They run on your own switch.
 
 The webhook payload a platform can act on without parsing prose:
 
@@ -309,8 +310,9 @@ kept the evidence.
 A number nobody has complained about yet cannot be in a list. It is found
 by what it does:
 
-1. **Honeypot numbers.** List the numbers and prefixes in your inventory
-   that are not assigned to anyone as `honeypot` rules
+1. **Trap numbers.** List the numbers and prefixes in your inventory
+   that are not assigned to anyone as trap rules. The rule kind in the
+   API is `honeypot`
    (`{"kind":"honeypot","subject":"number","value":"+1415555999*"}`).
    Nobody legitimate dials an unassigned number. A call to one scores 70;
    a caller that hits two in an hour scores 60 more.
@@ -319,16 +321,16 @@ by what it does:
 3. **The same recording again.** See voice analysis below: a perceptual
    hash of the first seconds catches a prerecorded message on its third
    play, with no model involved.
-4. **The network.** Telemetry carries the outcome, the honeypot flag, and
-   a keyed hash of the called party, so CallerAPI can see one number
+4. **The network.** Telemetry carries the outcome, the trap number flag,
+   and a keyed hash of the called party, so CallerAPI can see one number
    reaching many subscribers across installs. Numbers that two independent
    installs rejected, or one rejected with a failed verification, or that
-   hit honeypots, are filed to the spam database and reach the feed.
+   called trap numbers, are filed to the spam database.
 
 ## Voice analysis: when the model listens
 
 A model that hears every call is a cost nobody carries. Falcon lets
-signaling choose. A call is sampled when it is a honeypot target, a
+signaling choose. A call is sampled when it is to a trap number, a
 sequential dialer, a fan-out caller, a low-answer or short-call caller,
 scored by the network, or an outbound call that is not clean. The switch
 gets `X-Falcon-Sample: 1` and `X-Falcon-Sample-Seconds`, records the first
@@ -1018,7 +1020,7 @@ Each open case is on the Overview with the time left. Six hours before the
 deadline it turns critical.
 
 Threats, Upstreams is the month per upstream: calls, blocks, flags, spam
-list and honeypot hits, failed verification, unsigned or C-attested calls,
+list and trap number hits, failed verification, unsigned or C-attested calls,
 traceback cases, and the FCC standing. Traffic from an address that no
 upstream owns gets its own row. `GET /v1/upstreams/report.csv?month=YYYY-MM`
 is the file to keep as evidence that you know your upstreams.
@@ -1108,9 +1110,9 @@ Read `SECURITY.md` before the first install. In short: untrusted URLs are
 fetched only to public addresses over https with tight caps, the switch is
 never held longer than the budget, mutations refuse cross-site form
 submissions, the dashboard runs under a strict content security policy, a
-missing, short, or example token on a public listen stops startup, raw SIP has its own short
-retention, telemetry never carries the called party, and nothing leaves the
-host that Settings does not list.
+missing, short, or example token on a public listen stops startup, raw SIP
+has its own short retention, and telemetry never carries the called party.
+`SECURITY.md` lists every outbound request.
 
 If Falcon will not start after upgrading, check the log: on a non-loopback
 listen it now refuses tokens under 32 characters or example values. Set a
@@ -1137,7 +1139,7 @@ make build VERSION=0.9.23
 
 The value card is the summary the assistant reads: calls screened, calls
 blocked and the percentage, spoofed caller ids stopped leaving your
-platform, failed verifications, honeypot hits, replayed recordings, voice
+platform, failed verifications, trap number hits, replayed recordings, voice
 scams, customers flagged, and an estimate of the minutes of blocked traffic
 you did not carry. It is computed from your own database with no model.
 `GET /v1/value?range=24h` returns it.

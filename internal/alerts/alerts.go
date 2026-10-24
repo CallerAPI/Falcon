@@ -171,7 +171,7 @@ func (w *Watcher) Evaluate(ctx context.Context) []Fired {
 					out = append(out, Fired{
 						Key: "customer_reject:" + p.Name, Severity: "critical",
 						Title:  fmt.Sprintf("Customer %s rejected at %d%%", p.Name, pct),
-						Detail: fmt.Sprintf("%d of %d calls from customer %s were rejected in the last %s. Threshold %d%%. Fraud from your own platform is what regulators fine; review the account now.", p.Reject, p.Total, p.Name, window, th.CustomerRejectPct),
+						Detail: fmt.Sprintf("%d of %d calls from customer %s were rejected in the last %s. Threshold %d%%. Review the account.", p.Reject, p.Total, p.Name, window, th.CustomerRejectPct),
 						Data: map[string]any{"kind": "customer_reject_rate", "customer_id": p.Name, "calls": p.Total, "rejects": p.Reject, "reject_pct": pct,
 							"distinct_callees": p.Distinct, "window": window.String(), "suggested_action": "suspend_outbound_and_review"},
 					})
