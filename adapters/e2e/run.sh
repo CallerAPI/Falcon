@@ -21,7 +21,7 @@ export FALCON_TOKEN="$TOKEN"
 # A Falcon build carries its release. VERSION defaults to the latest public tag.
 VERSION="${VERSION:-$(git ls-remote --tags --refs --sort=-v:refname https://github.com/CallerAPI/Falcon.git 'v*' 2>/dev/null | head -1 | sed 's#.*refs/tags/v##')}"
 if [ -z "$VERSION" ] || [ "$VERSION" = "dev" ]; then
-  echo "set VERSION to the release, for example VERSION=0.9.32"
+  echo "set VERSION to the release, for example VERSION=\$(make -s version)"
   exit 1
 fi
 go build -ldflags "-X main.version=$VERSION" -o /tmp/falcon-e2e ./cmd/falcon

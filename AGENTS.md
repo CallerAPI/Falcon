@@ -21,14 +21,15 @@ embedded dashboard. Apache 2.0.
 Requirements: Go 1.23 or Docker. No database server, no other service.
 
 ```
-# 1. Build and run (Go). VERSION is required. A binary without it says dev.
-make build VERSION=0.9.23
+# 1. Build and run (Go). VERSION is the latest release tag. A binary without it says dev.
+git fetch --tags
+make build
 FALCON_TOKEN=change-me ./bin/falcon
-# expected: "Falcon 0.9.23 listening on 127.0.0.1:8090" and a telemetry line
+# expected: "Falcon <release> listening on 127.0.0.1:8090" and a telemetry line
 
 # 1. or Docker. FALCON_VERSION is required. Without it the image is not built.
 cp .env.example .env && sed -i 's/^FALCON_TOKEN=.*/FALCON_TOKEN=change-me/' .env
-FALCON_VERSION=0.9.23 docker compose up -d --build
+FALCON_VERSION=$(make -s version) docker compose up -d --build
 # expected: container up, http://127.0.0.1:8090/v1/health returns {"status":"ok"}
 
 # 2. Prove it screens
@@ -128,6 +129,11 @@ one that protects subscribers; never weaken it.
 - Every mutation through the API writes an audit row. Keep it that way.
 - Read `SECURITY.md` before touching `internal/safehttp`, `internal/shaken`,
   or the telemetry path.
+- Do not write a release number in the docs or in build messages. Every
+  push to `main` cuts a new release, so a written number is out of date
+  the next day. Use `make build` and `$(make -s version)`, which read the
+  latest release tag. `TestDocsHaveNoReleaseNumber` in `cmd/falcon` fails
+  on a hardcoded one. Release history goes in `CHANGELOG.md` only.
 
 ## Where things are
 

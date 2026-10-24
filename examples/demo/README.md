@@ -6,7 +6,7 @@ Every carrier, address, and phone number in the demo is fictional. The addresses
 
 ```
 cd falcon
-make build VERSION=0.9.26
+make build
 ./bin/falcon demo seed
 FALCON_DEMO=true FALCON_DEMO_PROFILE=free FALCON_ALLOW_OPEN=true \
   FALCON_DB_PATH=./examples/demo/live.db FALCON_LISTEN=127.0.0.1:8090 \

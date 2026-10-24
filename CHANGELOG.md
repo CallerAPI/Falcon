@@ -161,6 +161,9 @@ Fixed
   `Content-Type`.
 - An upstream name that ends with a period, such as `Example Inc.`, no
   longer shows two periods in the traceback views and on the Overview.
+- The docs and build messages no longer name an old release. `make build`
+  reads the latest release tag, and `make -s version` prints it for
+  `FALCON_VERSION`. A test fails when a doc names a release number.
 
 ## 0.9.x patches
 

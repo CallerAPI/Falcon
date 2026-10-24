@@ -388,11 +388,12 @@ Docker, built from source:
 
 ```bash
 cp .env.example .env
-FALCON_VERSION=0.9.26 docker compose up --build
+FALCON_VERSION=$(make -s version) docker compose up --build
 ```
 
-`FALCON_VERSION` is the release you build, such as `0.9.26`. The dashboard
-and the boot log show it.
+`FALCON_VERSION` is the release you build. `make -s version` prints the
+latest release tag in your checkout. Run `git fetch --tags` first. The
+dashboard and the boot log show it.
 
 Docker, the published image:
 
@@ -1109,8 +1110,10 @@ host that Settings does not list.
 
 ## Releases
 
-A push to `main` tags the next patch (`v0.9.1`, then `v0.9.2`) and publishes
-it. That release has binaries for linux and darwin on amd64 and arm64, a
+A push to `main` adds one to the patch number of the latest tag, tags the
+commit, and publishes it. The
+[releases page](https://github.com/CallerAPI/Falcon/releases/latest) shows
+the current release. That release has binaries for linux and darwin on amd64 and arm64, a
 `checksums.txt` signed with cosign (keyless, GitHub OIDC), an SBOM per
 archive, and multi-arch images at `ghcr.io/callerapi/falcon:<version>`
 signed the same way. The release notes carry the verify commands. Pin a
@@ -1119,8 +1122,12 @@ version in production. An install does not update itself.
 ## Build
 
 ```bash
-make build VERSION=0.9.23
+git fetch --tags
+make build
 ```
+
+`make build` stamps the binary with the latest release tag. Set
+`VERSION=<release>` to build a different one.
 
 ## Ask Falcon: the assistant
 
