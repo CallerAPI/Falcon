@@ -20,6 +20,12 @@ Changed
 
 Fixed
 
+- A fleet hub or member refuses to start when `FALCON_FLEET_TOKEN` is
+  shorter than 32 characters or is an example value. This applies on any
+  listen address. Upgrade note: a fleet that uses the README example value
+  must rotate it. Generate one value with `openssl rand -hex 32` on the
+  hub and set the same value on every member. A hub or member with a weak
+  fleet token will not start until then.
 - Asterisk adapter: safer example contexts. Allowed calls continue to an
   inbound context (`falcon-allowed-inbound`, or `from-pstn` in the new
   `extensions_freepbx.conf`). Call outcomes are reported by a hangup

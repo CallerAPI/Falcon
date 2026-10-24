@@ -914,18 +914,22 @@ it. Falcon does not download or install that release. You pin the image.
 One Falcon screens one switch. A second process, the hub, is the place
 you look at all of them. The hub is the same binary.
 
+Generate one fleet token on the hub with `openssl rand -hex 32`. Copy that
+same value to every member. A hub or member refuses to start when the
+token is shorter than 32 characters or is an example value.
+
 On the hub:
 
 ```
 FALCON_FLEET_HUB=true
-FALCON_FLEET_TOKEN=a-long-random-value
+FALCON_FLEET_TOKEN=<output of openssl rand -hex 32>
 ```
 
 On every switch, including the spare:
 
 ```
 FALCON_FLEET_URL=http://hub:8090
-FALCON_FLEET_TOKEN=a-long-random-value
+FALCON_FLEET_TOKEN=<the same value as the hub>
 ```
 
 Each member copies new events to the hub every 30 seconds. The copy

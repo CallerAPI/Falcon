@@ -14,7 +14,6 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -54,11 +53,8 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("falcon: %v", err)
 	}
-	if cfg.FleetHub && strings.TrimSpace(cfg.FleetToken) == "" {
-		log.Fatalf("falcon: FALCON_FLEET_HUB requires FALCON_FLEET_TOKEN")
-	}
-	if cfg.FleetURL != "" && strings.TrimSpace(cfg.FleetToken) == "" {
-		log.Fatalf("falcon: FALCON_FLEET_URL requires FALCON_FLEET_TOKEN")
+	if err := cfg.CheckFleetToken(); err != nil {
+		log.Fatalf("falcon: fleet: %v", err)
 	}
 	if cfg.FleetHub && cfg.FleetURL != "" {
 		log.Printf("falcon fleet: this process is the hub, so FALCON_FLEET_URL is ignored")
