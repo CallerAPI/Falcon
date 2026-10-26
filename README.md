@@ -738,7 +738,7 @@ The table is a CSV of CIDR blocks:
 ```
 cidr,provider,risk,tags,source
 192.0.2.128/27,Northwind Voice,trusted,official|voice,provider
-198.51.100.64/27,Unregistered cloud voice,block,voip,fraud
+198.51.100.64/27,Unregistered cloud voice,block,voip,abuse
 ```
 
 `risk` is `trusted`, `neutral`, `suspicious`, `hostile`, or `block`. A `block`
@@ -753,7 +753,7 @@ FALCON_IP_INTEL_REFRESH=1h
 
 Load a file, a URL, or both. A local row overrides a hosted one. With a
 CallerAPI key, `FALCON_IP_INTEL=true` loads the hosted table. A key alone
-gets the fraud list. The provider overlay needs the admin switch. The switch
+gets the abuse list. The provider overlay needs the admin switch. The switch
 gets `X-Falcon-Provider`. A starter file is in `examples/ipintel.csv`.
 
 Zoom walkthrough: `falcon demo seed`, then `FALCON_DEMO=true` and
@@ -861,7 +861,7 @@ that turns it on. `GET /v1/modules` returns the same list.
 | Add-on | Turn it on |
 | --- | --- |
 | STIR/SHAKEN verification | On by default |
-| Telecom IP fraud list | `FALCON_IP_INTEL=true` with a key, or `FALCON_IP_INTEL_FILE` |
+| Telecom IP abuse list | `FALCON_IP_INTEL=true` with a key, or `FALCON_IP_INTEL_FILE` |
 | Spam list | `CALLERAPI_API_KEY` and `FALCON_SPAM_FEED=true` |
 | Live reputation | `CALLERAPI_API_KEY` and `FALCON_VOICE_FIREWALL=true` |
 | Business Caller ID | `CALLERAPI_API_KEY` |
