@@ -20,6 +20,14 @@ Changed
 
 Fixed
 
+- Falcon now builds with Go 1.26.10. It refuses certificate chains
+  through the compromised eMudhra intermediate CAs (disclosed
+  2026-10-20). Falcon 0.9.48 and earlier use Go 1.23 and do not refuse
+  them. This affects every HTTPS call, which includes the calls to the
+  CallerAPI API.
+- Upgrade note: replace every Falcon binary and image with this release.
+  To build from source, use Go 1.26.10 or a later 1.26 release, or Go
+  1.27.3 or later.
 - A fleet hub or member refuses to start when `FALCON_FLEET_TOKEN` is
   shorter than 32 characters or is an example value. This applies on any
   listen address. Upgrade note: a fleet that uses the README example value
