@@ -4,5 +4,5 @@ cidr,provider,risk,tags,source
 192.0.2.0/28,Graystone Gateway LLC,neutral,voice|gateway|intermediate|stir-complete,provider
 203.0.113.16/28,Harborline Telecom LLC,neutral,voice|gateway|intermediate|stir-complete,provider
 198.51.100.32/28,Lakeshore Wholesale Inc.,suspicious,voice|foreign|stir-complete,provider
-198.51.100.64/27,Unregistered cloud voice,block,voip|datacenter,fraud
-198.51.100.160/27,Unregistered cloud voice,block,voip|datacenter,fraud
+198.51.100.64/27,Unregistered cloud voice,block,voip|datacenter,abuse
+198.51.100.160/27,Unregistered cloud voice,block,voip|datacenter,abuse
