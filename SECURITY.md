@@ -150,10 +150,13 @@ Logs name no phone numbers.
    network.
 3. Leave `FALCON_SHAKEN_ALLOW_HTTP` off. It is lab mode and it logs when on.
 4. Decide retention with your DPO. Shorten raw SIP first.
-5. Decide on telemetry with your DPO. It is on by default and the called
-   party never leaves the host. `FALCON_SHARE=false` turns it off. Turn it
-   off on any switch that screens outbound calls, because there the calling
-   number is your subscriber.
+5. Decide on telemetry with your DPO. It is on by default, and
+   `FALCON_SHARE=false` turns it off. Telemetry sends a keyed hash in place
+   of the called number, and the key never leaves the host. With a CallerAPI
+   key, Business Caller ID sends the calling and called numbers of each
+   screened INVITE. `FALCON_BCID=false` turns it off. Turn telemetry off on
+   any switch that screens outbound calls, because there the calling number
+   is your subscriber.
 6. Run as a non-root user. The container image is distroless and runs as
    `nonroot`.
 7. Pin a version. Read the changelog before upgrading.
