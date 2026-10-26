@@ -23,12 +23,9 @@ Changed
   values. Set a new `FALCON_TOKEN` (`openssl rand -hex 32`) and update the
   same token in your switch adapter config. While Falcon is down the
   adapters fail open, so calls go through unscreened.
-- The IP intel add-on title changes from Telecom IP fraud list to Telecom
-  IP abuse list in Settings, Add-ons and in `GET /v1/modules`. Match on its
-  id, `ip_intel`, which does not change. The dashboard, the reason text,
-  the demo calls, and the example CSV files also say abuse in place of
-  fraud. Reason codes and categories, settings keys, and CSV column names
-  do not change.
+- The IP intel add-on is now titled Telecom IP abuse list in Settings,
+  Add-ons and GET /v1/modules. Match on its id, ip_intel, which does not
+  change. Reason codes, settings keys and CSV columns do not change.
 
 Fixed
 
