@@ -15,8 +15,10 @@ back before any answer, so the switch routes them to the next vendor. It
 carries the suspicious calls, records both sides, and catches false answer
 supervision (FAS).
 
-One binary. One SQLite file. No external service. A laptop and a fleet of a
-thousand nodes run the same build with the same configuration.
+One binary. One SQLite file. Falcon works without an external service.
+Optional redacted telemetry is on by default. `FALCON_SHARE=false` turns it
+off. A laptop and a fleet of a thousand nodes run the same build with the
+same configuration.
 
 Installs that share redacted telemetry get the network back for free: a
 reputation score for every signer and dialer tool that any install saw, and
