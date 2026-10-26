@@ -46,8 +46,8 @@ var scamCalls = []demoCall{
 		{"callee", 5.0, 6.2, "My computer is fine."},
 		{"caller", 6.7, 10.9, "Please go to your computer now and open the website I give you so we can fix it."},
 	}},
-	{from: "+18445550160", to: "+16175550144", category: "Bank/Credit Card Company Imposter", score: 0.93, summary: "Automated fraud alert that dictates a callback number.", turns: []demoTurn{
-		{"caller", 0.3, 4.4, "This is an automated alert from your bank's fraud department. A charge of 899 dollars was detected."},
+	{from: "+18445550160", to: "+16175550144", category: "Bank/Credit Card Company Imposter", score: 0.93, summary: "Automated bank alert that dictates a callback number.", turns: []demoTurn{
+		{"caller", 0.3, 4.4, "This is an automated alert from your bank's security department. A charge of 899 dollars was detected."},
 		{"callee", 4.9, 6.0, "I did not make that."},
 		{"caller", 6.4, 10.1, "Press one, or call us back at 888 555 0142 to dispute the charge."},
 	}},

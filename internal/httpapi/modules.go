@@ -70,7 +70,7 @@ func (s *Server) modules(ctx context.Context) []Module {
 	}
 	out = append(out, live)
 
-	ip := Module{ID: "ip_intel", Title: "Telecom IP fraud list", Summary: "Names the network behind each source address and blocks known fraud ranges.", State: "off", Enable: "FALCON_IP_INTEL=true"}
+	ip := Module{ID: "ip_intel", Title: "Telecom IP abuse list", Summary: "Names the network behind each source address and blocks known abuse ranges.", State: "off", Enable: "FALCON_IP_INTEL=true"}
 	if s.IPIntel != nil {
 		n, at, errText := s.IPIntel.Status()
 		ip.State, ip.Enable, ip.Detail = "on", "", fmt.Sprintf("%d address blocks, updated %s", n, ago(at))

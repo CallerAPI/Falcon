@@ -1,5 +1,5 @@
 cidr,provider,risk,tags,source
-192.0.2.128/25,Datacenter,suspicious,datacenter|cloud,fraud
-198.51.100.32/28,Datacenter,suspicious,datacenter,fraud
-198.51.100.64/27,VoIP abuse,block,voip|datacenter,fraud
-198.51.100.160/27,VoIP abuse,block,voip|datacenter,fraud
+192.0.2.128/25,Datacenter,suspicious,datacenter|cloud,abuse
+198.51.100.32/28,Datacenter,suspicious,datacenter,abuse
+198.51.100.64/27,VoIP abuse,block,voip|datacenter,abuse
+198.51.100.160/27,VoIP abuse,block,voip|datacenter,abuse

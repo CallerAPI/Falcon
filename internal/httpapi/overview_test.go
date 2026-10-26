@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -248,5 +249,50 @@ func TestModulesListTheBuiltIns(t *testing.T) {
 	}
 	if w := do(t, srv, http.MethodGet, "/v1/numbercheck/view", nil); w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("number check without a key: %d", w.Code)
+	}
+}
+
+func TestDisplayTextSaysAbuseNotFraud(t *testing.T) {
+	srv, _ := newTestServer(t)
+	var out struct {
+		Data []Module `json:"data"`
+	}
+	_ = json.Unmarshal(do(t, srv, http.MethodGet, "/v1/modules", nil).Body.Bytes(), &out)
+	title := ""
+	for _, m := range out.Data {
+		if m.ID == "ip_intel" {
+			title = m.Title
+		}
+		for _, text := range []string{m.Title, m.Summary, m.Detail, m.Enable} {
+			if strings.Contains(strings.ToLower(text), "fraud") {
+				t.Errorf("module %s: %q", m.ID, text)
+			}
+		}
+	}
+	if title != "Telecom IP abuse list" {
+		t.Errorf("ip_intel title = %q", title)
+	}
+	for code, text := range plainReasons {
+		if strings.Contains(strings.ToLower(text), "fraud") {
+			t.Errorf("reason %s: %q", code, text)
+		}
+	}
+	err := fs.WalkDir(WebFS(), "web", func(name string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !(strings.HasSuffix(name, ".js") || strings.HasSuffix(name, ".html") || strings.HasSuffix(name, ".css")) {
+			return err
+		}
+		b, err := fs.ReadFile(WebFS(), name)
+		if err != nil {
+			return err
+		}
+		for n, line := range strings.Split(strings.ToLower(string(b)), "\n") {
+			if i := strings.Index(line, "fraud"); i >= 0 {
+				t.Errorf("%s:%d: %q", name, n+1, line[max(0, i-40):min(len(line), i+45)])
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
