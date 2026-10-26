@@ -1,6 +1,6 @@
 module github.com/callerapi/falcon
 
-go 1.23.0
+go 1.26.10
 
 require (
 	github.com/emiago/sipgo v1.6.1-0.20261020074914-bddd307b23d3
