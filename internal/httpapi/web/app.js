@@ -96,7 +96,7 @@
 
   const PLAIN = {
     spam_feed_hit: "On the CallerAPI spam list", voice_firewall_spam: "Live reputation says spam", bcid_spoofed: "Spoofed business number",
-    caller_id_not_owned: "Caller ID the customer does not own", ip_intel_block: "Telecom fraud network", ip_intel_hostile: "Hostile network",
+    caller_id_not_owned: "Caller ID the customer does not own", ip_intel_block: "Telecom abuse network", ip_intel_hostile: "Hostile network",
     ip_intel_suspicious: "Often abused network", caller_fanout: "Calls many different people", sequential_dialing: "Dials numbers in sequence",
     caller_low_asr: "Few calls answered", caller_short_calls: "Very short calls", caller_hits_honeypots: "Calls your unassigned numbers",
     honeypot_target: "Called an unassigned number", scanner_user_agent: "SIP scanner software", source_invite_flood: "Burst of calls from one source",
@@ -328,7 +328,7 @@
       } else if (st.mode === "monitor") {
         ring = "warn"; head = "Monitor mode: Falcon watches and blocks nothing"; sub = "Last call " + ago(st.last_call_at) + ".";
       } else {
-        sub = "Last call " + ago(st.last_call_at) + ". Falcon blocks hard fraud and flags the rest.";
+        sub = "Last call " + ago(st.last_call_at) + ". Falcon blocks clear abuse and flags the rest.";
       }
       const tags = ['<span class="tag ' + (st.mode === "monitor" ? "warn" : "good") + '">' + (st.mode === "monitor" ? "Monitor" : "Enforce") + "</span>"];
       if (sip.mode === "bridge" && sip.enabled) {
@@ -1129,7 +1129,7 @@
 
   // ================= SETTINGS =================
   const PRESETS = [
-    ["relaxed", "Relaxed", { flag_score: 50, challenge_score: 75, reject_score: 95 }, "Blocks only near-certain fraud."],
+    ["relaxed", "Relaxed", { flag_score: 50, challenge_score: 75, reject_score: 95 }, "Blocks only near-certain abuse."],
     ["balanced", "Balanced", { flag_score: 40, challenge_score: 60, reject_score: 80 }, "The default for a PBX trunk."],
     ["strict", "Strict", { flag_score: 30, challenge_score: 50, reject_score: 70 }, "Blocks more. Watch for false blocks."],
     ["carrier", "Carrier", { flag_score: 40, challenge_score: 101, reject_score: 101 }, "Scores only flag. Lists and hard checks still block."],
@@ -1155,7 +1155,7 @@
       const preset = PRESETS.find((p) => p[2].flag_score === e.flag_score && p[2].challenge_score === e.challenge_score && p[2].reject_score === e.reject_score);
       const bridge = sip.mode === "bridge" && sip.enabled;
       $("#setMain").innerHTML =
-        '<div class="set"><div><h3>Protection</h3><p>Enforce blocks hard fraud and tells the switch to drop it. Monitor records every decision and blocks nothing. Start a new switch in monitor for a week.</p></div><div class="ctl">' +
+        '<div class="set"><div><h3>Protection</h3><p>Enforce blocks clear abuse and tells the switch to drop it. Monitor records every decision and blocks nothing. Start a new switch in monitor for a week.</p></div><div class="ctl">' +
         '<div class="seg" id="modeSeg"><button type="button" data-v="enforce">Enforce</button><button type="button" data-v="monitor">Monitor</button></div></div></div>' +
         '<div class="set"><div><h3>Sensitivity</h3><p>How high a score has to be before Falcon flags, holds, or blocks a call.</p></div><div class="ctl">' +
         '<div class="seg" id="presetSeg">' + PRESETS.map((p) => '<button type="button" data-p="' + p[0] + '">' + p[1] + "</button>").join("") + "</div>" +
@@ -1181,7 +1181,7 @@
       };
       paintSegs();
       const apply = async (body, text) => { const eff = await saveSettings(body, text); if (eff) { this.eff = eff; paintSegs(); const tf = $("#threshForm"); ["flag_score", "challenge_score", "reject_score"].forEach((k) => { tf[k].value = eff[k]; }); loadStatus(); } };
-      $("#modeSeg").onclick = (ev) => { const b = ev.target.closest("[data-v]"); if (b && b.dataset.v !== this.eff.mode) apply({ mode: b.dataset.v }, b.dataset.v === "enforce" ? "Enforce: Falcon blocks hard fraud now" : "Monitor: Falcon records and blocks nothing"); };
+      $("#modeSeg").onclick = (ev) => { const b = ev.target.closest("[data-v]"); if (b && b.dataset.v !== this.eff.mode) apply({ mode: b.dataset.v }, b.dataset.v === "enforce" ? "Enforce: Falcon blocks clear abuse now" : "Monitor: Falcon records and blocks nothing"); };
       $("#fasSeg").onclick = (ev) => { const b = ev.target.closest("[data-v]"); if (b && b.dataset.v !== this.eff.fas_mode) apply({ fas_mode: b.dataset.v }, "FAS guard saved"); };
       $("#fccSeg").onclick = async (ev) => {
         const b = ev.target.closest("[data-v]");
@@ -1236,7 +1236,7 @@
         ["Profile", st.profile], ["SIP", st.sip && st.sip.enabled ? st.sip.mode + " on " + st.sip.listen : "Off"],
         ["STIR/SHAKEN", st.shaken && st.shaken.enabled ? (tr.roots ? tr.roots + " trusted roots" : "Trust list not loaded") : "Off"],
         ["Spam list", st.spam_feed && st.spam_feed.configured ? fmtN(st.spam_feed.count) + " numbers" : "Off"],
-        ["IP fraud list", st.ip_intel && st.ip_intel.configured ? fmtN(st.ip_intel.count) + " blocks" : "Off"],
+        ["IP abuse list", st.ip_intel && st.ip_intel.configured ? fmtN(st.ip_intel.count) + " blocks" : "Off"],
         ["Recordings", (cfg.bridge && cfg.bridge.recordings) || ""],
       ];
       $("#setSystem").innerHTML = '<div class="card-head"><h2>System</h2><div style="display:flex;gap:8px"><button type="button" class="btn sm" id="reloadBtn">Reload lists</button><a class="btn sm" href="' + esc(withToken("/metrics")) + '" target="_blank" rel="noreferrer">Prometheus</a><a class="btn sm" href="' + esc(withToken("/v1/events.csv?range=" + state.range)) + '">Export CSV</a></div></div>' +
