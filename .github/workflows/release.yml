@@ -21,7 +21,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version: "1.26.10"
       - run: go test ./...
       # A push to main cuts the next patch tag, then this same job publishes
       # it. The tag push uses the workflow token, which does not start a

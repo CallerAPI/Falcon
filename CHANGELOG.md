@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+Security
+
+- Falcon builds with Go 1.26.10. Its `crypto/x509` rejects certificate
+  chains that contain a compromised eMudhra intermediate CA key
+  (CVE-2026-111943). A build from source needs Go 1.26.10 or newer.
+
 Changed
 
 - On a listen address other than loopback, Falcon refuses to start when
