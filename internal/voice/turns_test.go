@@ -131,9 +131,9 @@ func TestCallerAPISendsStereoWholeAndReadsTurns(t *testing.T) {
 	}
 }
 
-// A long call goes in pieces. Only the first piece names the call, so
-// CallerAPI bills every piece for its own minutes.
-func TestCallerAPINamesTheCallOnTheFirstPieceOnly(t *testing.T) {
+// A long call goes in pieces. Every piece names the call.
+// Each scan costs the full minutes of that piece.
+func TestCallerAPINamesTheCallOnEveryPiece(t *testing.T) {
 	var calls []map[string]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mr, err := r.MultipartReader()
@@ -161,7 +161,7 @@ func TestCallerAPINamesTheCallOnTheFirstPieceOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(calls) != 2 || calls[0]["call_id"] != "abc" || calls[1]["call_id"] != "" {
+	if len(calls) != 2 || calls[0]["call_id"] != "abc" || calls[1]["call_id"] != "abc" {
 		t.Fatalf("call_id per piece %v", calls)
 	}
 	if calls[0]["report"] != "" || calls[1]["report"] != "true" {

@@ -323,14 +323,9 @@ func (c *CallerAPI) analyseStereo(ctx context.Context, clip Clip, meta Meta) (Ve
 	return best, nil
 }
 
-// pieceMeta is the metadata for piece i of n. Only the first piece names
-// the call: CallerAPI bills a scan for a call it has seen as the minutes
-// past the last scan, so a later piece that named it would be free. Only
-// the last piece files a report.
+// pieceMeta is the metadata for piece i of n. Every piece names the call.
+// Each scan costs the full minutes of that piece. Only the last piece files a report.
 func pieceMeta(meta Meta, i, n int) Meta {
-	if i > 0 {
-		meta.CallID = ""
-	}
 	meta.Report = meta.Report && i == n-1
 	return meta
 }

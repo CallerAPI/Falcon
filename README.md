@@ -880,8 +880,8 @@ Threats, Your numbers keeps a list of your own numbers and shows which
 ones carriers and apps flag. Import a file. Falcon sends it to CallerAPI
 with the API key, and CallerAPI reads the numbers out of it. CSV,
 spreadsheets, PDF, JSON, and plain text all work. The file does not need a
-fixed column. Each new number costs 1 credit. A number that was already
-checked is not charged again. Flagged numbers are first.
+fixed column. Each check costs 1 credit. A repeat check of the same
+number costs 1 credit. Flagged numbers are first.
 
 The same page rechecks that list on a schedule. Pick the interval, the
 days, the hours, and the time zone. Cron runs the checks. Each recheck
