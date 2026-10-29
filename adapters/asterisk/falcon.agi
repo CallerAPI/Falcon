@@ -115,6 +115,11 @@ def main():
     agi('SET VARIABLE FALCON_CALL_ID "%s"' % (headers.get("Call-ID") or "").replace('"', ""))
 
     to_set = body.get("headers_to_set") or {}
+    # Hide the caller ID when Falcon asks. The header is 1 only when
+    # withhold is enforce. The number stays on the channel for the operator.
+    withhold = str(to_set.get("X-Falcon-CLI-Withhold") or "") == "1"
+    if withhold:
+        agi('SET VARIABLE CALLERID(num-pres) "prohib"')
     bcid = body.get("bcid") or to_set.get("X-Falcon-BCID") or ""
     bcid_name = body.get("bcid_name") or to_set.get("X-Falcon-BCID-Name") or ""
     if bcid:
@@ -123,11 +128,13 @@ def main():
     if bcid_name:
         safe = str(bcid_name).replace('"', "")
         agi('SET VARIABLE FALCON_BCID_NAME "%s"' % safe)
-        agi('SET VARIABLE CALLERID(name) "%s"' % safe)
         agi('SET VARIABLE PJSIP_HEADER(add,X-Falcon-BCID-Name) "%s"' % safe)
-        rpid = to_set.get("Remote-Party-ID") or ""
-        if rpid:
-            agi('SET VARIABLE PJSIP_HEADER(add,Remote-Party-ID) "%s"' % str(rpid).replace('"', "'"))
+        # A withheld call must not put the caller ID back on Remote-Party-ID.
+        if not withhold:
+            agi('SET VARIABLE CALLERID(name) "%s"' % safe)
+            rpid = to_set.get("Remote-Party-ID") or ""
+            if rpid:
+                agi('SET VARIABLE PJSIP_HEADER(add,Remote-Party-ID) "%s"' % str(rpid).replace('"', "'"))
 
 
 if __name__ == "__main__":

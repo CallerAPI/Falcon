@@ -58,6 +58,7 @@ local payload = {
     ["Call-ID"] = var("sip_call_id") or "",
     ["User-Agent"] = var("sip_user_agent") or "",
     ["P-Asserted-Identity"] = first(var("sip_P-Asserted-Identity"), var("sip_h_P-Asserted-Identity")),
+    Privacy = first(var("sip_h_Privacy"), var("sip_privacy")),
     Identity = var("sip_h_Identity") or "",
     ["X-BCID-Assertion"] = first(var("sip_h_X-BCID-Assertion"), var("sip_h_X-Bcid-Assertion")),
     Contact = asSIP(var("sip_contact_uri")),
@@ -164,6 +165,14 @@ local toSet = {}
 if decoded and decoded.headers_to_set then
   toSet = decoded.headers_to_set
 end
+-- Hide a UK mobile caller ID when Falcon asks. The header is 1 only when
+-- withhold is enforce. privacy full hides the number from the callee.
+local withhold = false
+if decoded then
+  withhold = toSet["X-Falcon-CLI-Withhold"] == "1"
+elseif raw and raw:find('"X%-Falcon%-CLI%-Withhold"%s*:%s*"1"') then
+  withhold = true
+end
 local bcid = (decoded and decoded.bcid) or toSet["X-Falcon-BCID"] or ""
 local bcidName = (decoded and decoded.bcid_name) or toSet["X-Falcon-BCID-Name"] or ""
 if bcid ~= "" then
@@ -171,13 +180,19 @@ if bcid ~= "" then
 end
 if bcidName ~= "" then
   session:setVariable("sip_h_X-Falcon-BCID-Name", bcidName)
-  session:setVariable("effective_caller_id_name", bcidName)
+  if not withhold then
+    session:setVariable("effective_caller_id_name", bcidName)
+  end
 end
-if toSet["Remote-Party-ID"] then
+if toSet["Remote-Party-ID"] and not withhold then
   session:setVariable("sip_h_Remote-Party-ID", toSet["Remote-Party-ID"])
 end
-if toSet["Call-Info"] then
+if toSet["Call-Info"] and not withhold then
   session:setVariable("sip_h_Call-Info", toSet["Call-Info"])
+end
+if withhold then
+  session:setVariable("sip_h_Privacy", "id")
+  session:execute("privacy", "full")
 end
 -- Report the outcome at hangup, and the clip when one was taken.
 session:setVariable("api_hangup_hook", "lua falcon_hangup.lua")

@@ -28,6 +28,20 @@ func TestNormalize(t *testing.T) {
 	if _, err := Normalize(Rule{Kind: Deny, Subject: IP, Value: "not-an-ip"}); err == nil {
 		t.Fatal("bad ip accepted")
 	}
+	r, err = Normalize(Rule{Kind: International, Subject: IP, Value: "203.0.113.9"})
+	if err != nil || r.Value != "203.0.113.9/32" {
+		t.Fatalf("international: %+v %v", r, err)
+	}
+	if _, err := Normalize(Rule{Kind: International, Subject: Number, Value: "+447700900123"}); err == nil {
+		t.Fatal("international number accepted")
+	}
+	r, err = Normalize(Rule{Kind: Exempt, Subject: SPC, Value: " 12ab "})
+	if err != nil || r.Value != "12AB" {
+		t.Fatalf("exempt spc: %+v %v", r, err)
+	}
+	if _, err := Normalize(Rule{Kind: Exempt, Subject: Number, Value: "+447700900123"}); err == nil {
+		t.Fatal("exempt number accepted")
+	}
 }
 
 func TestMatchDenyBeatsAllowAndLongestPrefix(t *testing.T) {
@@ -63,5 +77,33 @@ func TestMatchDenyBeatsAllowAndLongestPrefix(t *testing.T) {
 	}
 	if _, ok := idx.Match("", "", ""); ok {
 		t.Fatal("empty input matched")
+	}
+}
+
+func TestInternationalAndExempt(t *testing.T) {
+	now := time.Now()
+	rules, err := PeerRules("203.0.113.0/24, 198.51.100.8", "192.0.2.10", "99ab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules = append(rules, Rule{ID: 9, Kind: Exempt, Subject: IP, Value: "203.0.113.50/32"})
+	idx := NewIndex(rules, now)
+	if !idx.International("203.0.113.9") || !idx.International("198.51.100.8") {
+		t.Fatal("international peer missed")
+	}
+	if idx.International("192.0.2.10") || idx.International("") {
+		t.Fatal("unlisted peer marked international")
+	}
+	if !idx.Exempt("192.0.2.10", "") || !idx.Exempt("203.0.113.50", "") || !idx.Exempt("198.51.100.1", "99AB") {
+		t.Fatal("exemption missed")
+	}
+	if idx.Exempt("203.0.113.9", "0000") {
+		t.Fatal("international peer was exempt")
+	}
+	if _, ok := idx.Match("+447700900123", "203.0.113.9", "99AB"); ok {
+		t.Fatal("international and exempt rules must not allow or deny")
+	}
+	if _, err := PeerRules("not-an-ip", "", ""); err == nil {
+		t.Fatal("bad peer accepted")
 	}
 }

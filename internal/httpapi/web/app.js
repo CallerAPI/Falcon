@@ -107,6 +107,7 @@
     invalid_from_number: "Invalid caller ID", synthetic_from: "Made-up caller ID", from_equals_to: "Caller ID equals the called number",
     privacy_id_spoof: "Hidden caller ID", anonymous_from_no_pai: "Anonymous, no network identity", invite_no_sdp: "No audio offer",
     from_pai_mismatch: "Caller ID differs from network identity", from_rpid_mismatch: "Caller ID differs from party ID",
+    uk_mobile_from_abroad: "UK mobile number from outside the UK",
     contact_private_src_public: "Private address on a public call", sdp_zero_connection: "Audio offer has no address",
     max_forwards_low: "Passed through many hops", via_hop_flood: "Unusual number of hops", missing_user_agent: "No software named",
     missing_call_id: "No Call-ID", missing_from: "No caller", shaken_iat_stale: "Signature too old", shaken_iat_future: "Signature dated in the future",
@@ -275,7 +276,8 @@
       root.innerHTML =
         '<section class="card status" id="ovStatus"><div class="status-main"><span class="ring idle"></span><div>' + sk("220px", 16) + "</div></div></section>" +
         '<section class="grid kpis" id="ovKpis">' + kpiCard("Calls screened", "screened") + kpiCard("Blocked", "blocked", "blocked") + kpiCard("Flagged", "flagged", "flagged") +
-        kpiCard("Latency Falcon adds", "latency") + '<article class="card kpi fas" data-k="fas" hidden><div class="kpi-label">False answers</div><div class="kpi-value num" data-v>0</div><div class="kpi-sub" data-s></div></article></section>' +
+        kpiCard("Latency Falcon adds", "latency") + '<article class="card kpi fas" data-k="fas" hidden><div class="kpi-label">False answers</div><div class="kpi-value num" data-v>0</div><div class="kpi-sub" data-s></div></article>' +
+        '<article class="card kpi" data-k="cli" hidden><div class="kpi-label">UK mobile from abroad</div><div class="kpi-value num" data-v>0</div><div class="kpi-sub" data-s></div></article></section>' +
         '<section class="grid main-split">' +
         '<div class="stack"><div class="card"><div class="card-head"><h2>Needs attention</h2><span class="hint" id="ovHint"></span></div><div class="insights" id="ovInsights">' + skRows(3) + "</div></div>" +
         '<div class="card"><div class="card-head"><h2>Calls over time</h2><div class="legend"><span><i style="background:#ef4444"></i>Blocked</span><span><i style="background:#f59e0b"></i>Flagged</span><span><i style="background:#3b4256"></i>Allowed</span></div></div><div class="chart-wrap"><canvas class="chart" id="ovChart"></canvas></div></div></div>' +
@@ -336,6 +338,7 @@
         const fm = { off: "FAS guard off", monitor: "FAS guard watching", enforce: "FAS guard holding" }[st.fas_mode] || "FAS guard";
         tags.push('<span class="tag ' + (st.fas_mode === "enforce" ? "good" : "") + '">' + fm + "</span>");
       }
+      if (st.cli_withhold === "enforce") tags.push('<span class="tag">UK caller ID withheld</span>');
       if (st.voice && st.voice !== "off") tags.push('<span class="tag">AI voice on</span>');
       if (st.update) tags.push('<a class="tag warn" href="https://github.com/CallerAPI/Falcon/releases" target="_blank" rel="noreferrer">Update ' + esc(st.update) + "</a>");
       patch($("#ovStatus"), '<div class="status-main"><span class="ring ' + ring + '"></span><div><strong>' + esc(head) + '</strong><div class="muted">' + esc(sub) + '</div></div></div><div class="status-tags">' + tags.join("") + "</div>");
@@ -353,11 +356,17 @@
       set("flagged", fmtN(t.flagged), t.recorded ? fmtN(t.recorded) + " recorded for review" : "Watched, not blocked");
       set("latency", lat.count ? fmtMs(lat.avg_ms) + "<small>ms</small>" : "0<small>ms</small>", lat.count ? "Average. 95% of calls under " + fmtMs(lat.p95_ms) + " ms" : "No calls measured yet");
       const fasCard = $('#ovKpis [data-k="fas"]');
+      const cliCard = $('#ovKpis [data-k="cli"]');
       const showFas = (t.bridged || 0) > 0 || (t.fas || 0) > 0;
+      const showCLI = (t.cli_withhold || 0) > 0;
       fasCard.hidden = !showFas;
-      $("#ovKpis").classList.toggle("five", showFas);
+      cliCard.hidden = !showCLI;
+      const extras = (showFas ? 1 : 0) + (showCLI ? 1 : 0);
+      $("#ovKpis").classList.toggle("five", extras === 1);
+      $("#ovKpis").classList.toggle("six", extras === 2);
       localStorage.setItem("falcon_kpi5", showFas ? "1" : "0");
       if (showFas) set("fas", fmtN(t.fas), t.fas ? seconds(t.fas_seconds || 0) + " billed falsely, " + fmtN(t.bridged) + " calls bridged" : fmtN(t.bridged) + " calls bridged, all clean");
+      if (showCLI) set("cli", fmtN(t.cli_withhold), (d.status || {}).cli_withhold === "enforce" ? "Caller ID withheld on these calls" : "Recorded. Caller ID was not changed");
     },
     renderInsights(d) {
       const list = d.insights || [];
@@ -417,6 +426,7 @@
       else if (msg.action === "flag" || msg.action === "challenge") t.flagged++;
       else t.allowed++;
       if (msg.held) t.held++;
+      if ((msg.reasons || []).some((r) => r.code === "uk_mobile_from_abroad")) t.cli_withhold = (t.cli_withhold || 0) + 1;
       this.renderKpis(this.data);
       if (msg.action !== "allow") {
         const list = (this.data.recent || []).slice();
@@ -597,7 +607,7 @@
       if (ev.recording_url || (voice && (voice.transcript || voice.turns))) html += '<div class="section" id="dwAudio"></div>';
       if (media && media.answer_ms) html += '<div class="section" id="dwFas"></div>';
       const why = ev.why || [];
-      html += '<div class="section"><h3>Why</h3>' + (why.length ? '<ul class="reasons">' + why.map((w) => '<li class="' + (w.evidence ? "ev" : "") + '"><div><div class="t">' + esc(w.text) + "</div>" + (w.detail ? '<div class="d">' + esc(w.detail) + "</div>" : "") + '</div><span class="w">' + (w.evidence ? "heard" : "+" + w.weight) + "</span></li>").join("") + "</ul>" : '<p class="muted">Nothing looked wrong.</p>') + "</div>";
+      html += '<div class="section"><h3>Why</h3>' + (why.length ? '<ul class="reasons">' + why.map((w) => '<li class="' + (w.evidence ? "ev" : "") + '"><div><div class="t">' + esc(w.text) + "</div>" + (w.detail ? '<div class="d">' + esc(w.detail) + "</div>" : "") + '</div><span class="w">' + (w.evidence ? "heard" : (w.weight ? "+" + w.weight : "note")) + "</span></li>").join("") + "</ul>" : '<p class="muted">Nothing looked wrong.</p>') + "</div>";
       const fasOn = state.status && state.status.fas && state.status.fas.mode === "enforce";
       const fasActs = media && media.fas ? (fasOn ? "" : '<button type="button" class="btn primary sm" data-fas="enforce">Hold false answers</button>') + '<a class="btn sm" href="#threats?tab=vendors">Compare vendors</a>' : "";
       html += '<div class="section"><h3>Act on it</h3><div class="actions" id="dwActs">' + fasActs +
@@ -993,14 +1003,14 @@
     mount(root) {
       root.innerHTML =
         '<div class="card"><div class="card-head"><h2>Add a rule</h2><span class="hint">Applies to the next call</span></div>' +
-        '<form id="ruleForm" class="form-row" style="grid-template-columns:150px 160px minmax(0,1.4fr) minmax(0,1fr) 130px auto">' +
-        '<label class="field">Do<select name="kind"><option value="deny">Block</option><option value="allow">Always allow</option><option value="honeypot">Honeypot</option></select></label>' +
+        '<form id="ruleForm" class="form-row" style="grid-template-columns:190px 160px minmax(0,1.4fr) minmax(0,1fr) 130px auto">' +
+        '<label class="field">Do<select name="kind"><option value="deny">Block</option><option value="allow">Always allow</option><option value="honeypot">Honeypot</option><option value="international">International peer</option><option value="exempt">Exempt UK check</option></select></label>' +
         '<label class="field">Match<select name="subject"><option value="number">Number</option><option value="ip">Address or range</option><option value="spc">Signer (SPC)</option></select></label>' +
         '<label class="field">Value<input name="value" type="text" placeholder="+14155550100, 203.0.113.0/24, or 1234" required></label>' +
         '<label class="field">Note<input name="note" type="text" placeholder="Why"></label>' +
         '<label class="field">For<select name="ttl"><option value="">Always</option><option value="1h">1 hour</option><option value="24h">1 day</option><option value="168h">7 days</option><option value="720h">30 days</option></select></label>' +
         '<button class="btn primary" type="submit">Save</button></form>' +
-        '<p class="muted small" style="margin:12px 0 0">Block rejects the call with SIP 603. Always allow skips every check. Honeypot marks your unassigned numbers: anyone who calls them is a robocaller.</p></div>' +
+        '<p class="muted small" style="margin:12px 0 0">Block rejects the call with SIP 603. Always allow skips every check. Honeypot marks your unassigned numbers: anyone who calls them is a robocaller. International peer marks a trunk from outside the UK. Exempt UK check skips only the UK mobile caller ID check.</p></div>' +
         '<div id="ruleList">' + '<div class="card">' + sk("100%", 80) + "</div></div>" +
         '<div class="card"><div class="card-head"><h2>Upstream carriers</h2><span class="hint" id="upHint">Falcon checks each one against FCC orders and the Robocall Mitigation Database</span></div>' +
         '<form id="upForm" class="stack" style="gap:10px"><input type="hidden" name="uid">' +
@@ -1016,11 +1026,27 @@
         '<label class="field">Account ID<input name="id" type="text" placeholder="acme" required></label><label class="field">Name<input name="name" type="text" placeholder="Acme Dialer"></label>' +
         '<label class="field">Its numbers and DIDs, comma separated. End a prefix with *<input name="dids" type="text" placeholder="+13125550100, +1312555*"></label><button class="btn primary" type="submit">Save</button></form>' +
         '<div id="custList" style="margin-top:14px"></div></div>';
+      const subjects = {
+        deny: [["number", "Number"], ["ip", "Address or range"], ["spc", "Signer (SPC)"]],
+        allow: [["number", "Number"], ["ip", "Address or range"], ["spc", "Signer (SPC)"]],
+        honeypot: [["number", "Number"]],
+        international: [["ip", "Address or range"]],
+        exempt: [["ip", "Address or range"], ["spc", "Signer (SPC)"]],
+      };
+      const paintSubjects = () => {
+        const form = $("#ruleForm");
+        const cur = form.subject.value;
+        const opts = subjects[form.kind.value] || subjects.deny;
+        form.subject.innerHTML = opts.map(([v, label]) => '<option value="' + v + '">' + label + "</option>").join("");
+        if (opts.some(([v]) => v === cur)) form.subject.value = cur;
+      };
+      $("#ruleForm").kind.onchange = paintSubjects;
       $("#ruleForm").onsubmit = async (e) => {
         e.preventDefault();
         const f = new FormData(e.target);
         const kind = f.get("kind");
-        if (await addRule({ kind, subject: f.get("subject"), value: f.get("value"), note: f.get("note"), ttl: f.get("ttl") }, kind === "deny" ? "Blocked" : kind === "allow" ? "Allowed" : "Honeypot saved")) { e.target.reset(); this.loadRules(); }
+        const saved = { deny: "Blocked", allow: "Allowed", honeypot: "Honeypot saved", international: "International peer saved", exempt: "Exemption saved" }[kind] || "Saved";
+        if (await addRule({ kind, subject: f.get("subject"), value: f.get("value"), note: f.get("note"), ttl: f.get("ttl") }, saved)) { e.target.reset(); paintSubjects(); this.loadRules(); }
       };
       $("#custForm").onsubmit = async (e) => {
         e.preventDefault();
@@ -1098,9 +1124,9 @@
       try {
         const res = await get("/v1/rules");
         const rows = (res.data || []).map((r) => {
-          const kind = r.kind === "deny" ? '<span class="pill blocked">Block</span>' : r.kind === "allow" ? '<span class="pill allowed">Allow</span>' : '<span class="pill flagged">Honeypot</span>';
+          const kind = { deny: '<span class="pill blocked">Block</span>', allow: '<span class="pill allowed">Allow</span>', honeypot: '<span class="pill flagged">Honeypot</span>', international: '<span class="pill">International</span>', exempt: '<span class="pill allowed">Exempt</span>' }[r.kind] || '<span class="pill">' + esc(r.kind) + "</span>";
           const exp = r.expires_at && r.expires_at.indexOf("0001") !== 0 ? "Until " + dayClock(r.expires_at) : "Always";
-          const from = { fleet: ", from the fleet hub", fcc: ", from the FCC autopilot" }[r.origin] || "";
+          const from = { fleet: ", from the fleet hub", fcc: ", from the FCC autopilot", config: ", from configuration" }[r.origin] || "";
           return "<tr><td>" + kind + "</td><td>" + esc({ number: "Number", ip: "Address", spc: "Signer" }[r.subject] || r.subject) + '</td><td class="mono">' + esc(r.value) + "</td><td>" + esc(r.note || "") +
             '</td><td class="muted small">' + esc(exp) + from + '</td><td class="acts">' + (from ? "" : '<button type="button" class="btn ghost sm" data-del="' + r.id + '">Remove</button>') + "</td></tr>";
         });
@@ -1170,11 +1196,14 @@
         '<div class="seg" id="fasSeg"><button type="button" data-v="off">Off</button><button type="button" data-v="monitor">Watch</button><button type="button" data-v="enforce">Hold</button></div>' +
         (bridge ? "" : '<p class="muted small" style="margin:0">Needs the call bridge.</p>') + "</div></div>" +
         '<div class="set"><div><h3>FCC autopilot</h3><p>Checks your upstream carriers against FCC orders and the Robocall Mitigation Database every 6 hours. Watch alerts you. Block adds deny rules for an upstream the FCC removed or ordered blocked. Add upstreams in Rules.</p></div><div class="ctl">' +
-        '<div class="seg" id="fccSeg"><button type="button" data-v="monitor">Watch</button><button type="button" data-v="enforce">Block</button></div><p class="muted small" id="fccHint" style="margin:0"></p></div></div>';
+        '<div class="seg" id="fccSeg"><button type="button" data-v="monitor">Watch</button><button type="button" data-v="enforce">Block</button></div><p class="muted small" id="fccHint" style="margin:0"></p></div></div>' +
+        '<div class="set"><div><h3>UK mobile caller ID</h3><p>Records a UK mobile caller ID that arrives from an international peer. Off does not change the call. Withhold hides that caller ID. The bridge rewrites the outbound leg. A script adapter reads the header X-Falcon-CLI-Withhold.</p></div><div class="ctl">' +
+        '<div class="seg" id="cliSeg"><button type="button" data-v="off">Off</button><button type="button" data-v="enforce">Withhold</button></div></div></div>';
       const paintSegs = () => {
         $$("#modeSeg button").forEach((b) => b.classList.toggle("on", b.dataset.v === this.eff.mode));
         $$("#fasSeg button").forEach((b) => b.classList.toggle("on", b.dataset.v === this.eff.fas_mode));
         $$("#fccSeg button").forEach((b) => b.classList.toggle("on", b.dataset.v === this.eff.fcc_mode));
+        $$("#cliSeg button").forEach((b) => b.classList.toggle("on", b.dataset.v === (this.eff.cli_withhold || "off")));
         const p = PRESETS.find((x) => x[2].flag_score === this.eff.flag_score && x[2].challenge_score === this.eff.challenge_score && x[2].reject_score === this.eff.reject_score);
         $$("#presetSeg button").forEach((b) => b.classList.toggle("on", !!p && b.dataset.p === p[0]));
         setText($("#presetHint"), p ? p[3] : "Custom levels");
@@ -1183,6 +1212,11 @@
       const apply = async (body, text) => { const eff = await saveSettings(body, text); if (eff) { this.eff = eff; paintSegs(); const tf = $("#threshForm"); ["flag_score", "challenge_score", "reject_score"].forEach((k) => { tf[k].value = eff[k]; }); loadStatus(); } };
       $("#modeSeg").onclick = (ev) => { const b = ev.target.closest("[data-v]"); if (b && b.dataset.v !== this.eff.mode) apply({ mode: b.dataset.v }, b.dataset.v === "enforce" ? "Enforce: Falcon blocks clear abuse now" : "Monitor: Falcon records and blocks nothing"); };
       $("#fasSeg").onclick = (ev) => { const b = ev.target.closest("[data-v]"); if (b && b.dataset.v !== this.eff.fas_mode) apply({ fas_mode: b.dataset.v }, "FAS guard saved"); };
+      $("#cliSeg").onclick = (ev) => {
+        const b = ev.target.closest("[data-v]");
+        if (!b || b.dataset.v === this.eff.cli_withhold) return;
+        apply({ cli_withhold: b.dataset.v }, b.dataset.v === "enforce" ? "UK mobile caller IDs from abroad are withheld" : "UK mobile caller IDs from abroad are recorded only");
+      };
       $("#fccSeg").onclick = async (ev) => {
         const b = ev.target.closest("[data-v]");
         if (!b || b.dataset.v === this.eff.fcc_mode) return;

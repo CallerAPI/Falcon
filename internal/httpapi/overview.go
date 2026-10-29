@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/callerapi/falcon/internal/score"
 	"github.com/callerapi/falcon/internal/store"
 )
 
@@ -36,21 +37,23 @@ type OverviewStatus struct {
 	Update      string         `json:"update,omitempty"`
 	Sharing     bool           `json:"sharing"`
 	Voice       string         `json:"voice"`
+	CLIWithhold string         `json:"cli_withhold"`
 	InstallID   string         `json:"install_id"`
 	RecordingOn bool           `json:"recording"`
 }
 
 // OverviewTotals counts calls by what Falcon did.
 type OverviewTotals struct {
-	Screened   int     `json:"screened"`
-	Blocked    int     `json:"blocked"`
-	Flagged    int     `json:"flagged"`
-	Allowed    int     `json:"allowed"`
-	Held       int     `json:"held"`
-	Bridged    int     `json:"bridged"`
-	Recorded   int     `json:"recorded"`
-	FAS        int     `json:"fas"`
-	FASSeconds float64 `json:"fas_seconds"`
+	Screened    int     `json:"screened"`
+	Blocked     int     `json:"blocked"`
+	Flagged     int     `json:"flagged"`
+	Allowed     int     `json:"allowed"`
+	Held        int     `json:"held"`
+	Bridged     int     `json:"bridged"`
+	Recorded    int     `json:"recorded"`
+	FAS         int     `json:"fas"`
+	FASSeconds  float64 `json:"fas_seconds"`
+	CLIWithhold int     `json:"cli_withhold"`
 }
 
 // RecentCall is one row of the home screen list: the newest stopped call
@@ -105,6 +108,9 @@ func (s *Server) overview(ctx context.Context, rng string, from, to time.Time) (
 	if n, err := s.Store.HeldCount(ctx, from, to); err == nil {
 		ov.Totals.Held = n
 	}
+	if n, err := s.Store.CountReason(ctx, from, to, score.ReasonUKMobileFromAbroad); err == nil {
+		ov.Totals.CLIWithhold = n
+	}
 	if mt, err := s.Store.MediaTotals(ctx, from, to); err == nil {
 		ov.Totals.Bridged, ov.Totals.FAS, ov.Totals.FASSeconds = mt.Bridged, mt.FAS, mt.FASSeconds
 		ov.Totals.Recorded = mt.Recorded
@@ -122,7 +128,7 @@ func (s *Server) overview(ctx context.Context, rng string, from, to time.Time) (
 		ov.Latency = lat
 	}
 	ov.Status = OverviewStatus{
-		Mode: settings.Mode, FASMode: settings.FASMode, Profile: s.Cfg.Profile, SIP: s.sipStatus(),
+		Mode: settings.Mode, FASMode: settings.FASMode, CLIWithhold: settings.CLIWithhold, Profile: s.Cfg.Profile, SIP: s.sipStatus(),
 		Version: Version, Sharing: s.Cfg.Share, Voice: providerName(s.VoiceProvider), InstallID: s.InstallID,
 		RecordingOn: s.Media != nil || (s.Sampler != nil && s.Sampler.Enabled),
 	}

@@ -29,6 +29,33 @@ func TestExplicitVariableBeatsProfile(t *testing.T) {
 	}
 }
 
+func TestCLIWithholdDefaultsOff(t *testing.T) {
+	t.Setenv("FALCON_CLI_WITHHOLD", "")
+	t.Setenv("FALCON_INTERNATIONAL_PEERS", "203.0.113.0/24")
+	t.Setenv("FALCON_CLI_EXEMPT_PEERS", "192.0.2.10")
+	t.Setenv("FALCON_CLI_EXEMPT_SPCS", "99ab")
+	c := Load()
+	if c.CLIWithhold != CLIOff {
+		t.Fatalf("withhold = %q", c.CLIWithhold)
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FALCON_CLI_WITHHOLD", "enforce")
+	if Load().CLIWithhold != CLIEnforce {
+		t.Fatal("enforce not read")
+	}
+	t.Setenv("FALCON_CLI_WITHHOLD", "block")
+	if err := Load().Validate(); err == nil {
+		t.Fatal("bad withhold accepted")
+	}
+	t.Setenv("FALCON_CLI_WITHHOLD", "off")
+	t.Setenv("FALCON_INTERNATIONAL_PEERS", "not-an-ip")
+	if err := Load().Validate(); err == nil {
+		t.Fatal("bad peer accepted")
+	}
+}
+
 func TestTrunkIsTheDefaultProfile(t *testing.T) {
 	t.Setenv("FALCON_PROFILE", "")
 	c := Load()

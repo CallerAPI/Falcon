@@ -264,8 +264,15 @@ func (s *Server) enrich(ctx context.Context, snap sipmsg.Snapshot) (score.Enrich
 	if en.Shaken != nil {
 		spc = en.Shaken.SignerSPC
 	}
+	// A withheld call keeps From on the response. The spam feed, live
+	// reputation, and number rules use the network number. Nothing here
+	// copies that number into a header the callee can see.
+	number := score.ReputationNumber(snap)
+	en.CLIEnforce = s.CLIWithhold(ctx) == config.CLIEnforce
 	if idx := s.ruleIndex(); idx != nil {
-		if hit, ok := idx.Match(snap.FromUser, snap.SourceIP, spc); ok {
+		en.International = idx.International(snap.SourceIP)
+		en.CLIExempt = idx.Exempt(snap.SourceIP, spc)
+		if hit, ok := idx.Match(number, snap.SourceIP, spc); ok {
 			en.List = &score.ListHit{Kind: string(hit.Kind), Subject: string(hit.Subject), Value: hit.Value, Note: hit.Note, RuleID: hit.ID}
 		}
 	}
@@ -275,16 +282,18 @@ func (s *Server) enrich(ctx context.Context, snap sipmsg.Snapshot) (score.Enrich
 		}
 	}
 	if s.Feed != nil && s.Cfg.FeedEnabled() {
-		en.FeedHit = s.Feed.Contains(snap.FromUser)
+		en.FeedHit = s.Feed.Contains(number)
 	}
-	if s.Live != nil && s.Cfg.FirewallEnabled() && snap.FromUser != "" {
+	if s.Live != nil && s.Cfg.FirewallEnabled() && number != "" {
 		fctx, fcancel := context.WithTimeout(ctx, 1500*time.Millisecond)
-		if lu, err := s.Live.Lookup(fctx, snap.FromUser); err == nil {
+		if lu, err := s.Live.Lookup(fctx, number); err == nil {
 			en.FirewallSpam = lu.IsSpam || lu.SpamScore >= 70
 		}
 		fcancel()
 	}
-	if s.Live != nil && s.Cfg.BCIDEnabled() && snap.FromUser != "" && snap.ToUser != "" {
+	// Do not ask for a display name on a withheld call. A name would show
+	// the caller to the callee.
+	if s.Live != nil && s.Cfg.BCIDEnabled() && snap.FromUser != "" && snap.ToUser != "" && !score.WithheldIdentity(snap) {
 		vctx, vcancel := context.WithTimeout(ctx, 800*time.Millisecond)
 		if v, err := s.Live.Verify(vctx, snap.FromUser, snap.ToUser, snap.BCIDAssertion); err == nil && v.Verdict != "" {
 			row := &score.BCID{Verdict: v.Verdict, Action: v.Action, Reason: v.Reason}

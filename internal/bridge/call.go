@@ -118,6 +118,7 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 	c := &call{
 		s: s, id: callIDOf(req), peer: peer, host: s.mediaHost(peer.Addr()), started: received,
 		route: route, reason: d.Reason, aReq: req, aTx: tx, aOffer: offer, done: make(chan struct{}),
+		withhold: res.Headers[score.HeaderCLIWithhold] == "1",
 	}
 	if !s.track(&s.setups) {
 		res.Headers["X-Falcon-Bridge"] = "stopping"
@@ -137,13 +138,14 @@ func (s *Server) base() context.Context {
 
 // call is one bridged call: leg A from the switch, leg B back out.
 type call struct {
-	s       *Server
-	id      string
-	peer    netip.AddrPort
-	host    string
-	started time.Time
-	route   *store.Route
-	reason  string
+	s        *Server
+	id       string
+	peer     netip.AddrPort
+	host     string
+	started  time.Time
+	route    *store.Route
+	reason   string
+	withhold bool
 
 	aReq   *sip.Request
 	aTx    sip.ServerTransaction
@@ -405,6 +407,9 @@ func (c *call) buildB() (*sip.Request, error) {
 			req.AppendHeader(sip.NewHeader(name, h.Value()))
 		}
 	}
+	if c.withhold {
+		applyCLIWithhold(req)
+	}
 	for _, h := range c.aReq.Headers() {
 		name := h.Name()
 		if strings.HasPrefix(strings.ToLower(name), "x-") && !strings.HasPrefix(strings.ToLower(name), "x-falcon-") {
@@ -421,6 +426,23 @@ func (c *call) buildB() (*sip.Request, error) {
 	req.SetBody(body)
 	req.SetTransport(c.aReq.Transport())
 	return req, nil
+}
+
+// applyCLIWithhold hides the presentation number on the outbound INVITE.
+// The From user becomes anonymous and Privacy is id. P-Asserted-Identity
+// stays, so the network number remains inside the trusted network.
+func applyCLIWithhold(req *sip.Request) {
+	if req == nil {
+		return
+	}
+	if f := req.From(); f != nil {
+		f.DisplayName = "Anonymous"
+		f.Address.User = "anonymous"
+		f.Address.Host = "anonymous.invalid"
+	}
+	for req.RemoveHeader("Privacy") {
+	}
+	req.AppendHeader(sip.NewHeader("Privacy", "id"))
 }
 
 // onResponse passes ringing and early audio to the caller.

@@ -120,6 +120,7 @@ label.field > input, label.field > select { color: var(--text); }
 .grid { display: grid; gap: 16px; }
 .grid.kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .grid.kpis.five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.grid.kpis.six { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .grid.main-split { grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); align-items: start; }
 .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .stack { display: flex; flex-direction: column; gap: 16px; }
@@ -325,7 +326,7 @@ pre { margin: 12px 0 0; white-space: pre-wrap; word-break: break-word; backgroun
 
 /* Responsive */
 @media (max-width: 1180px) {
-  .grid.kpis, .grid.kpis.five { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid.kpis, .grid.kpis.five, .grid.kpis.six { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .grid.main-split, .grid.two { grid-template-columns: minmax(0, 1fr); }
   .calls .row-item, .calls .row-head { grid-template-columns: 70px 96px minmax(0, 1fr) minmax(0, 1fr); }
   .calls .row-item > :nth-child(n+5), .calls .row-head > :nth-child(n+5) { display: none; }
@@ -346,7 +347,7 @@ pre { margin: 12px 0 0; white-space: pre-wrap; word-break: break-word; backgroun
   .view { padding: 16px 14px 80px; }
   .status { flex-direction: column; align-items: flex-start; }
   .status-tags { justify-content: flex-start; }
-  .grid.kpis, .grid.kpis.five { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .grid.kpis, .grid.kpis.five, .grid.kpis.six { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .kpi-value { font-size: 24px; }
   .insight { grid-template-columns: minmax(0, 1fr); }
   .calls .row-item, .calls .row-head { grid-template-columns: 96px minmax(0, 1fr); }
