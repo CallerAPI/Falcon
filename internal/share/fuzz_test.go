@@ -21,6 +21,8 @@ func FuzzRedact(f *testing.F) {
 	f.Add("000\r\n\r\n", "0000000", "1111000000000000000000")
 	// CI found this: compact To keeps a longer digit run in front of tel:.
 	f.Add("0\r\nT: 4155550123tel:+14155550123\r\n\r\n", "4155550", "0")
+	// CI found this: compact To with digits glued to a tel: scheme.
+	f.Add("0\nT:4155550123tel:\n\n", "4155550", "0")
 	f.Fuzz(func(t *testing.T, raw, to, from string) {
 		ev := store.Event{
 			ReceivedAt: time.Now(), Action: score.ActionReject, From: from, To: to,
