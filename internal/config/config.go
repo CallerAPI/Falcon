@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/callerapi/falcon/internal/lists"
 )
 
 // Config is process configuration from the environment.
@@ -81,6 +83,15 @@ type Config struct {
 	FCCMode    string
 	FCCRefresh time.Duration
 	FCCFile    string
+
+	// InternationalPeers lists source addresses and ranges that send calls
+	// from outside the UK. CLIExemptPeers and CLIExemptSPCs skip the UK
+	// mobile caller ID check. CLIWithhold is off or enforce. Off records
+	// the call. Enforce asks the switch to hide the caller ID.
+	InternationalPeers string
+	CLIExemptPeers     string
+	CLIExemptSPCs      string
+	CLIWithhold        string
 
 	// Behaviour thresholds over the last hour; zero means the default.
 	FanoutPerHour int
@@ -249,6 +260,9 @@ const (
 	FASOff     = "off"
 	FASMonitor = "monitor"
 	FASEnforce = "enforce"
+
+	CLIOff     = "off"
+	CLIEnforce = "enforce"
 )
 
 func Load() Config {
@@ -331,6 +345,11 @@ func Load() Config {
 		FCCMode:    strings.ToLower(env("FALCON_FCC_MODE", ModeMonitor)),
 		FCCRefresh: envDuration("FALCON_FCC_REFRESH", 6*time.Hour),
 		FCCFile:    env("FALCON_FCC_FILE", ""),
+
+		InternationalPeers: env("FALCON_INTERNATIONAL_PEERS", ""),
+		CLIExemptPeers:     env("FALCON_CLI_EXEMPT_PEERS", ""),
+		CLIExemptSPCs:      env("FALCON_CLI_EXEMPT_SPCS", ""),
+		CLIWithhold:        strings.ToLower(env("FALCON_CLI_WITHHOLD", CLIOff)),
 
 		IPIntel:        envBool("FALCON_IP_INTEL", false),
 		IPIntelFile:    env("FALCON_IP_INTEL_FILE", ""),
@@ -464,6 +483,12 @@ func (c Config) Validate() error {
 	if c.FCCMode != ModeMonitor && c.FCCMode != ModeEnforce {
 		return fmt.Errorf("FALCON_FCC_MODE must be monitor or enforce, got %q", c.FCCMode)
 	}
+	if c.CLIWithhold != CLIOff && c.CLIWithhold != CLIEnforce {
+		return fmt.Errorf("FALCON_CLI_WITHHOLD must be off or enforce, got %q", c.CLIWithhold)
+	}
+	if _, err := lists.PeerRules(c.InternationalPeers, c.CLIExemptPeers, c.CLIExemptSPCs); err != nil {
+		return err
+	}
 	if c.BridgeCarry != CarrySuspicious && c.BridgeCarry != CarryAll {
 		return fmt.Errorf("FALCON_BRIDGE_CARRY must be suspicious or all, got %q", c.BridgeCarry)
 	}
@@ -569,6 +594,7 @@ func (c Config) Redacted() map[string]any {
 			"fanout_every": c.BridgeFanoutEvery, "clean_every": c.BridgeCleanEvery, "carry": c.BridgeCarry, "direction": c.SIPDirection, "recordings": c.RecordingsPath(), "record_max_seconds": c.RecordMaxSeconds},
 		"fas": map[string]any{"mode": c.FASMode, "hold": c.FASHold.String(), "max_ringback": c.FASMaxRingback.String()},
 		"fcc": map[string]any{"enabled": c.FCC, "mode": c.FCCMode, "refresh": c.FCCRefresh.String(), "file": c.FCCFile},
+		"cli": map[string]any{"withhold": c.CLIWithhold, "international_peers": c.InternationalPeers, "exempt_peers": c.CLIExemptPeers, "exempt_spcs": c.CLIExemptSPCs},
 	}
 }
 

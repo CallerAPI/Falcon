@@ -53,6 +53,7 @@ var plainReasons = map[string]string{
 	"privacy_id_spoof":           "The caller hides its number in a way spoofers use.",
 	"anonymous_from_no_pai":      "The call is anonymous and has no network identity.",
 	"from_pai_mismatch":          "The caller ID differs from the network identity.",
+	"uk_mobile_from_abroad":      "The caller ID is a UK mobile number on a call from outside the UK.",
 	"from_rpid_mismatch":         "The caller ID differs from the party ID.",
 	"contact_private_src_public": "The SIP headers show a private address on a public call.",
 	"invite_no_sdp":              "The call has no audio offer.",
@@ -73,6 +74,10 @@ var plainReasons = map[string]string{
 // evidenceReasons carry no weight. They record what was heard after the
 // INVITE was scored.
 var evidenceReasons = map[string]bool{"voice_scam": true, "fas_ringback": true, "fas_busy": true, "fas_sit": true, "fas_dead_air": true}
+
+// informReasons carry no weight and still belong on the call. They do not
+// change the action.
+var informReasons = map[string]bool{"uk_mobile_from_abroad": true}
 
 // plainReason is the sentence for one code.
 func plainReason(code string) string {
@@ -104,7 +109,7 @@ func explain(reasons []score.Reason) []Why {
 	out := make([]Why, 0, len(reasons))
 	for _, r := range reasons {
 		ev := evidenceReasons[r.Code]
-		if r.Weight <= 0 && !ev && len(reasons) > 1 {
+		if r.Weight <= 0 && !ev && !informReasons[r.Code] && len(reasons) > 1 {
 			continue
 		}
 		out = append(out, Why{Code: r.Code, Text: plainReason(r.Code), Detail: r.Detail, Weight: r.Weight, Evidence: ev})

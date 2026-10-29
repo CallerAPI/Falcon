@@ -13,6 +13,21 @@ to ask:
 In the first two ways the switch keeps signaling and media. Fail open if
 Falcon does not answer. Every adapter here does.
 
+## UK mobile caller ID
+
+When Falcon sends `X-Falcon-CLI-Withhold: 1`, the adapter hides the caller
+ID. Falcon sends that header only when `FALCON_CLI_WITHHOLD=enforce`. The
+default is off, so the adapter leaves the call unchanged.
+
+Each script adapter also sends the Privacy header on the screen request.
+Falcon uses it to tell a withheld call from a mismatch.
+
+- Kamailio and OpenSIPS set the From user to anonymous and add `Privacy: id`.
+  P-Asserted-Identity stays.
+- Asterisk sets `CALLERID(num-pres)` to `prohib`. The number stays on the
+  channel for your own records.
+- FreeSWITCH runs `privacy full` and sets `Privacy: id`.
+
 ## Which adapter for which platform
 
 | Platform | Adapter | Tested |

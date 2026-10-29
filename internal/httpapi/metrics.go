@@ -31,6 +31,7 @@ type metrics struct {
 	monologue int64
 	repeats   int64
 	held      int64
+	ukMobile  int64
 }
 
 func (m *metrics) outcome(answered bool, seconds int) {
@@ -84,6 +85,12 @@ func (m *metrics) observe(res score.Result, v *shaken.Result, d time.Duration) {
 	if res.Headers["X-Falcon-Block"] != "" {
 		m.hardBlock++
 	}
+	for _, r := range res.Reasons {
+		if r.Code == score.ReasonUKMobileFromAbroad {
+			m.ukMobile++
+			break
+		}
+	}
 	m.latencyNs += d.Nanoseconds()
 	m.latencyN++
 }
@@ -93,6 +100,7 @@ func (m *metrics) write(w io.Writer, s *Server) {
 	screens, pending, hard := m.screens, m.pending, m.hardBlock
 	latNs, latN := m.latencyNs, m.latencyN
 	outcomes, answered, talk, clips, mono, repeats, held := m.outcomes, m.answered, m.talkSecs, m.clips, m.monologue, m.repeats, m.held
+	ukMobile := m.ukMobile
 	actions := copyMap(m.byAction)
 	verstats := copyMap(m.byVerstat)
 	attests := copyMap(m.byAttest)
@@ -113,6 +121,7 @@ func (m *metrics) write(w io.Writer, s *Server) {
 	fmt.Fprintf(w, "# HELP falcon_voice_monologue_total Clips where one side talked into silence.\n# TYPE falcon_voice_monologue_total counter\nfalcon_voice_monologue_total %d\n", mono)
 	fmt.Fprintf(w, "# HELP falcon_voice_repeats_total Clips that matched an earlier recording.\n# TYPE falcon_voice_repeats_total counter\nfalcon_voice_repeats_total %d\n", repeats)
 	fmt.Fprintf(w, "# HELP falcon_monitor_holds_total Decisions recorded but not enforced.\n# TYPE falcon_monitor_holds_total counter\nfalcon_monitor_holds_total %d\n", held)
+	fmt.Fprintf(w, "# HELP falcon_uk_mobile_from_abroad_total Calls with a UK mobile caller ID from an international peer.\n# TYPE falcon_uk_mobile_from_abroad_total counter\nfalcon_uk_mobile_from_abroad_total %d\n", ukMobile)
 	fmt.Fprintf(w, "# HELP falcon_sip_datagrams_dropped_total SIP datagrams dropped by the input guard before parsing.\n# TYPE falcon_sip_datagrams_dropped_total counter\nfalcon_sip_datagrams_dropped_total %d\n", sipguard.Dropped())
 	fmt.Fprintf(w, "# HELP falcon_sip_parse_failures_total SIP messages that did not parse, logged or not.\n# TYPE falcon_sip_parse_failures_total counter\nfalcon_sip_parse_failures_total %d\n", sipguard.ParseFailures())
 	fmt.Fprintf(w, "# HELP falcon_sip_unhandled_responses_total SIP responses that matched no transaction.\n# TYPE falcon_sip_unhandled_responses_total counter\nfalcon_sip_unhandled_responses_total %d\n", sipguard.UnhandledResponses())

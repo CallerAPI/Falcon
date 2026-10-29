@@ -119,7 +119,11 @@ func (s *Server) ReloadRules(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	idx := lists.NewIndex(rules, time.Now())
+	extra, err := lists.PeerRules(s.Cfg.InternationalPeers, s.Cfg.CLIExemptPeers, s.Cfg.CLIExemptSPCs)
+	if err != nil {
+		return err
+	}
+	idx := lists.NewIndex(lists.Merge(rules, extra), time.Now())
 	s.rulesMu.Lock()
 	s.rules = idx
 	s.rulesMu.Unlock()

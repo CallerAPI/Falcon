@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+Added
+
+- UK mobile caller IDs from international peers are recorded as
+  `uk_mobile_from_abroad`. The weight is 0, so the reason does not block
+  a call. Mark peers with `FALCON_INTERNATIONAL_PEERS` or an
+  `international` rule. Exempt a peer or a signer with an `exempt` rule,
+  `FALCON_CLI_EXEMPT_PEERS`, or `FALCON_CLI_EXEMPT_SPCS`. The Overview
+  counts these calls.
+- `FALCON_CLI_WITHHOLD=enforce` hides that caller ID. The default is
+  `off`, which records the call and does not change it. Bridge mode
+  rewrites From, adds `Privacy: id`, and keeps P-Asserted-Identity. The
+  Kamailio, OpenSIPS, Asterisk, and FreeSWITCH adapters do the same when
+  `X-Falcon-CLI-Withhold` is `1`.
+
+Fixed
+
+- A call with From anonymous and Privacy id is no longer scored as a
+  caller ID mismatch. The spam feed, live reputation, and number rules
+  use the P-Asserted-Identity number. That number is not shown to the
+  callee.
+
 Security
 
 - Falcon builds with Go 1.26.10. Its `crypto/x509` rejects certificate

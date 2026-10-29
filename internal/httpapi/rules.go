@@ -20,6 +20,12 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		extra, err := lists.PeerRules(s.Cfg.InternationalPeers, s.Cfg.CLIExemptPeers, s.Cfg.CLIExemptSPCs)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		rules = lists.Merge(rules, extra)
 		if rules == nil {
 			rules = []lists.Rule{}
 		}

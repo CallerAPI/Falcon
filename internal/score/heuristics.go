@@ -45,6 +45,12 @@ type Enrichment struct {
 	// Honeypot marks a call to a number the operator listed as unassigned.
 	// Nobody legitimate dials an unassigned number.
 	Honeypot bool
+	// International is true when the source peer sends calls from outside
+	// the UK. CLIExempt skips the UK mobile caller ID check. CLIEnforce
+	// asks the switch to hide that caller ID.
+	International bool
+	CLIExempt     bool
+	CLIEnforce    bool
 	// BCID is the CallerAPI proof check. Nil when the key is missing, the
 	// flag is off, or the check failed open.
 	BCID *BCID
@@ -246,7 +252,9 @@ func (e *Engine) Score(s sipmsg.Snapshot, en Enrichment) Result {
 	if isAnonymous(from) && s.PAIUser == "" {
 		add("anonymous_from_no_pai", "identity", "Anonymous From without P-Asserted-Identity", 25)
 	}
-	if numbersDiffer(from, s.PAIUser) {
+	// A withheld call puts anonymous in From and the network number in
+	// P-Asserted-Identity. That pair is not a mismatch.
+	if !(isAnonymous(from) && privacyHas(s.Privacy, "id")) && numbersDiffer(from, s.PAIUser) {
 		add("from_pai_mismatch", "identity", "From user does not match P-Asserted-Identity", 35)
 	}
 	if numbersDiffer(from, s.RPIDUser) {
@@ -254,6 +262,13 @@ func (e *Engine) Score(s sipmsg.Snapshot, en Enrichment) Result {
 	}
 	if hasPrivacyID(s.Privacy) && !isAnonymous(from) && s.PAIUser != "" && numbersDiffer(from, s.PAIUser) {
 		add("privacy_id_spoof", "identity", "Privacy id with a From that does not match PAI", 25)
+	}
+	// Weight 0 informs. It does not move the score and it does not block.
+	if en.International && !en.CLIExempt && UKMobile(PresentationNumber(s)) {
+		reasons = append(reasons, Reason{
+			Code: ReasonUKMobileFromAbroad, Weight: 0, Category: "identity",
+			Detail: "UK mobile presentation number on an international peer",
+		})
 	}
 
 	if s.Identity.Raw == "" {
@@ -475,6 +490,9 @@ func (e *Engine) finish(s sipmsg.Snapshot, en Enrichment, reasons []Reason, tota
 	}
 	if action == ActionReject && blockSource != "" {
 		headers["X-Falcon-Block"] = blockSource
+	}
+	if en.CLIEnforce && reasonHas(reasons, ReasonUKMobileFromAbroad) {
+		headers[HeaderCLIWithhold] = "1"
 	}
 	sig := Signals{
 		Method:       s.Method,

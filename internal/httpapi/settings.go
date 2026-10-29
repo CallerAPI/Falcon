@@ -20,6 +20,7 @@ type Settings struct {
 	Mode                   string `json:"mode"`
 	FASMode                string `json:"fas_mode"`
 	FCCMode                string `json:"fcc_mode"`
+	CLIWithhold            string `json:"cli_withhold"`
 	RetentionDays          int    `json:"retention_days"`
 	RawSIPRetentionDays    int    `json:"raw_sip_retention_days"`
 	RecordingRetentionDays int    `json:"recording_retention_days"`
@@ -35,6 +36,7 @@ const (
 	kvMode         = "mode"
 	kvFASMode      = "fas_mode"
 	kvFCCMode      = "fcc_mode"
+	kvCLIWithhold  = "cli_withhold"
 	kvRetention    = "retention_days"
 	kvRawRetention = "raw_sip_retention_days"
 	kvRecRetention = "recording_retention_days"
@@ -51,7 +53,7 @@ const (
 
 func (s *Server) defaults() Settings {
 	out := Settings{
-		Mode: s.Cfg.Mode, FASMode: s.Cfg.FASMode, FCCMode: s.Cfg.FCCMode,
+		Mode: s.Cfg.Mode, FASMode: s.Cfg.FASMode, FCCMode: s.Cfg.FCCMode, CLIWithhold: s.Cfg.CLIWithhold,
 		RetentionDays: s.Cfg.RetentionDays, RawSIPRetentionDays: s.Cfg.RawSIPRetentionDays, RecordingRetentionDays: s.Cfg.RecordingRetentionDays,
 		BridgeFanoutEvery: s.Cfg.BridgeFanoutEvery, BridgeCleanEvery: s.Cfg.BridgeCleanEvery, BridgeCarry: s.Cfg.BridgeCarry,
 		FlagScore: s.Cfg.FlagScore, ChallengeScore: s.Cfg.ChallengeScore, RejectScore: s.Cfg.RejectScore,
@@ -64,6 +66,9 @@ func (s *Server) defaults() Settings {
 	}
 	if out.FCCMode == "" {
 		out.FCCMode = config.ModeMonitor
+	}
+	if out.CLIWithhold == "" {
+		out.CLIWithhold = config.CLIOff
 	}
 	if out.BridgeCarry == "" {
 		out.BridgeCarry = config.CarrySuspicious
@@ -116,6 +121,9 @@ func (s *Server) loadSettings(ctx context.Context) Settings {
 	if v, _ := s.Store.KVGet(ctx, kvFCCMode); v == config.ModeMonitor || v == config.ModeEnforce {
 		out.FCCMode = v
 	}
+	if v, _ := s.Store.KVGet(ctx, kvCLIWithhold); v == config.CLIOff || v == config.CLIEnforce {
+		out.CLIWithhold = v
+	}
 	if v, _ := s.Store.KVGet(ctx, kvBridgeCarry); v == config.CarrySuspicious || v == config.CarryAll {
 		out.BridgeCarry = v
 	}
@@ -156,6 +164,9 @@ func (s *Server) FASMode(ctx context.Context) string { return s.Settings(ctx).FA
 
 // FCCMode is monitor or enforce right now.
 func (s *Server) FCCMode(ctx context.Context) string { return s.Settings(ctx).FCCMode }
+
+// CLIWithhold is off or enforce right now.
+func (s *Server) CLIWithhold(ctx context.Context) string { return s.Settings(ctx).CLIWithhold }
 
 // CarryAll reports whether the bridge carries every call that is not a
 // hard block.
@@ -199,6 +210,7 @@ type settingsPatch struct {
 	Mode                   *string `json:"mode"`
 	FASMode                *string `json:"fas_mode"`
 	FCCMode                *string `json:"fcc_mode"`
+	CLIWithhold            *string `json:"cli_withhold"`
 	RetentionDays          *int    `json:"retention_days"`
 	RawSIPRetentionDays    *int    `json:"raw_sip_retention_days"`
 	RecordingRetentionDays *int    `json:"recording_retention_days"`
@@ -219,6 +231,9 @@ func (p settingsPatch) apply(cur *Settings) {
 	}
 	if p.FCCMode != nil {
 		cur.FCCMode = *p.FCCMode
+	}
+	if p.CLIWithhold != nil {
+		cur.CLIWithhold = *p.CLIWithhold
 	}
 	if p.BridgeCarry != nil {
 		cur.BridgeCarry = *p.BridgeCarry
@@ -246,6 +261,8 @@ func validSettings(cur Settings) string {
 		return "fas_mode must be off, monitor, or enforce"
 	case cur.FCCMode != config.ModeMonitor && cur.FCCMode != config.ModeEnforce:
 		return "fcc_mode must be monitor or enforce"
+	case cur.CLIWithhold != config.CLIOff && cur.CLIWithhold != config.CLIEnforce:
+		return "cli_withhold must be off or enforce"
 	case cur.BridgeCarry != config.CarrySuspicious && cur.BridgeCarry != config.CarryAll:
 		return "bridge_carry must be suspicious or all"
 	case cur.RetentionDays < 1 || cur.RetentionDays > maxRetention:
@@ -285,7 +302,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		pairs := map[string]string{
-			kvMode: cur.Mode, kvFASMode: cur.FASMode, kvFCCMode: cur.FCCMode,
+			kvMode: cur.Mode, kvFASMode: cur.FASMode, kvFCCMode: cur.FCCMode, kvCLIWithhold: cur.CLIWithhold,
 			kvRetention: strconv.Itoa(cur.RetentionDays), kvRawRetention: strconv.Itoa(cur.RawSIPRetentionDays),
 			kvRecRetention: strconv.Itoa(cur.RecordingRetentionDays),
 			kvFanoutEvery:  strconv.Itoa(cur.BridgeFanoutEvery), kvCleanEvery: strconv.Itoa(cur.BridgeCleanEvery), kvBridgeCarry: cur.BridgeCarry,

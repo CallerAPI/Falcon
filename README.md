@@ -811,7 +811,66 @@ curl -sS -X POST http://127.0.0.1:8090/v1/rules -H "X-Falcon-Token: $FALCON_TOKE
 
 `subject` is `number`, `ip` (an address or a CIDR), or `spc`. `ttl` is
 optional. Rules apply on the next INVITE. The dashboard adds and removes them
-from any row.
+from any row. International peers and UK mobile exemptions are in the next
+section.
+
+## UK mobile caller ID from outside the UK
+
+Ofcom CLI Guidance paragraph 4.18A covers calls from outside the UK.
+The first UK provider hides a +447 caller ID on those calls.
+The network number stays on the call. Falcon records these calls. It hides
+the caller ID only when you turn enforcement on.
+
+Falcon does not guess which trunks are international. You mark them.
+
+1. Set `FALCON_INTERNATIONAL_PEERS` to the source addresses or ranges.
+   Separate the values with commas.
+2. Or add a rule with kind `international` and subject `ip`.
+
+```bash
+curl -sS -X POST http://127.0.0.1:8090/v1/rules -H "X-Falcon-Token: $FALCON_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"kind":"international","subject":"ip","value":"203.0.113.0/24","note":"international gateway"}'
+```
+
+The check reads the caller ID. That is the From user. When Privacy is
+`none`, Falcon uses the P-Asserted-Identity user instead. Falcon ignores
+Diversion and History-Info.
+
+When the peer is international, the caller ID starts with +447, and the
+peer is not exempt, Falcon adds the reason `uk_mobile_from_abroad`. The
+weight is 0. The reason does not change the action. The Overview counts
+these calls. The call text says the caller ID is a UK mobile number on a
+call from outside the UK.
+
+Exempt a peer that already checks the caller ID. A home routed roaming
+path is one example. Add a rule with kind `exempt` and subject `ip` or
+`spc`. `FALCON_CLI_EXEMPT_PEERS` and `FALCON_CLI_EXEMPT_SPCS` do the same
+job. An allow rule on that address or signer still ends scoring, so this
+check does not run.
+
+`FALCON_CLI_WITHHOLD` is `off` by default. Settings can change it while
+Falcon runs. Off records the call and does not change it. `enforce` adds
+the header `X-Falcon-CLI-Withhold: 1`.
+
+In bridge mode Falcon rewrites the outbound leg. The From user becomes
+anonymous. Falcon adds `Privacy: id`. P-Asserted-Identity stays. Falcon
+does not answer the caller before the far end answers.
+
+In redirect mode the adapter reads that header.
+
+- Kamailio and OpenSIPS set the From user to anonymous and add `Privacy: id`.
+- Asterisk sets `CALLERID(num-pres)` to `prohib`.
+- FreeSWITCH hides the number.
+
+The header is absent when withhold is off. The adapters then leave the
+call unchanged. A switch with no script cannot rewrite From. Use the
+bridge, or an adapter, when you enforce the check.
+
+A withheld call has From `anonymous` and Privacy `id`. Falcon does not
+score that pair as a caller ID mismatch. The spam feed, live reputation,
+and your number rules use the P-Asserted-Identity number. Falcon does not
+copy that number onto a header the callee can see.
 
 ## API
 
